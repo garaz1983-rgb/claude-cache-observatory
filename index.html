@@ -86,8 +86,14 @@ table.hm{border-collapse:separate; border-spacing:2px; font-family:ui-monospace,
 table.hm th{font-weight:500; color:var(--muted); padding:2px 2px; text-align:center; font-size:.66rem}
 table.hm th.day{text-align:right; padding-right:6px; font-size:.72rem}
 table.hm td{width:27px; height:26px; text-align:center; border-radius:4px; background:var(--grid); color:var(--muted)}
-table.hm td.hit{color:#fff; font-weight:600; cursor:pointer}
-table.hm td.hit.sel{outline:2px solid var(--ink); outline-offset:-1px}
+/* --hm-fg is set per cell by charts.js: the cell background is a theme mix
+   whose luminance varies with the loss count, so the text colour has to be
+   derived from that mix rather than fixed (a hardcoded #fff measured 2.23:1
+   on the lightest light-theme cell). The fallback keeps text visible if the
+   script ever fails to set it. The selection outline reuses the same colour,
+   which also fixes its own contrast against a bright dark-theme cell. */
+table.hm td.hit{color:var(--hm-fg,var(--ink)); font-weight:600; cursor:pointer}
+table.hm td.hit.sel{outline:2px solid var(--hm-fg,var(--ink)); outline-offset:-1px}
 /* Per-event detail popover — same behaviour as check.html: fixed position,
    anchored to the clicked cell in script and clamped into the viewport, so a
    top-row cell does not throw the panel off-screen. */
@@ -113,6 +119,26 @@ table.subs th:first-child{text-align:left}
 table.subs td{padding:6px 8px; border-bottom:1px solid var(--grid); font-family:ui-monospace,'Cascadia Mono',Consolas,monospace; font-variant-numeric:tabular-nums; white-space:nowrap; text-align:right}
 table.subs td.nick{font-family:inherit; text-align:left}
 table.subs td.crit{color:var(--crit); font-weight:600}
+/* --- Environment breakdown ------------------------------------------------
+   Real submissions only. The thin-sample notice is deliberately NOT amber:
+   amber is the example-data marker on this page and the two must not read as
+   the same thing. */
+.axis-pick{display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:10px}
+.axis-btn{font:inherit; font-size:.8rem; padding:5px 12px; border-radius:99px; border:1px solid var(--line); background:var(--bg); color:var(--muted); cursor:pointer}
+.axis-btn:hover{border-color:var(--muted)}
+.axis-btn[aria-pressed="true"]{border-color:var(--ok); color:var(--ok); font-weight:700}
+.axis-filter{font-size:.8rem; color:var(--muted); margin:0 0 10px}
+.axis-filter button{font:inherit; font-size:.76rem; margin-left:8px; padding:2px 9px; border-radius:99px; border:1px solid var(--line); background:var(--surface); color:var(--ink); cursor:pointer}
+.axis-filter button:hover{border-color:var(--muted)}
+.env-thin{font-size:.85rem; padding:12px 14px; border-left:3px solid var(--muted); background:var(--bg); border-radius:0 6px 6px 0; margin-bottom:12px}
+table.env td.grp{font-family:ui-monospace,'Cascadia Mono',Consolas,monospace; text-align:left}
+table.env td.na{color:var(--muted); font-family:inherit}
+table.env tr.pick{cursor:pointer}
+table.env tr.pick:hover td{background:var(--grid)}
+table.env tr.on td{background:var(--ok-soft)}
+.env-raw{margin-top:12px}
+.env-limits{margin:14px 0 0; padding-left:20px; font-size:.82rem; color:var(--muted)}
+.env-limits li{margin:4px 0}
 .story p{margin:0 0 10px; font-size:.9rem}
 .story p:last-child{margin-bottom:0}
 details.faq{border:1px solid var(--line); border-radius:8px; background:var(--bg); margin-top:10px}
@@ -215,6 +241,45 @@ a{color:inherit}
   </div>
 </section>
 
+<section id="secEnv">
+  <h2>Breakdown by environment <span class="badge real h2-badge">Real submissions</span></h2>
+  <p class="desc">The same submissions, grouped by one self-reported environment field. The sample size is printed on every row, and a group below the floor shows its counts without a rate.</p>
+  <div class="card">
+    <div class="axis-pick" role="group" aria-label="Breakdown axis">
+      <button type="button" class="axis-btn" data-axis="client" aria-pressed="true">Client</button>
+      <button type="button" class="axis-btn" data-axis="plan" aria-pressed="false">Plan</button>
+      <button type="button" class="axis-btn" data-axis="concurrent_sessions" aria-pressed="false">Concurrent sessions</button>
+    </div>
+    <p class="axis-filter" id="envFilter" hidden></p>
+    <div class="env-thin" id="envThin" hidden></div>
+    <div class="tbl-scroll">
+      <table class="subs env" id="envTable">
+        <thead><tr>
+          <th>Value</th><th>Submissions (n)</th><th>Requests</th><th>In-TTL losses</th><th>Loss rate</th>
+        </tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <details class="faq env-raw" id="envRaw">
+      <summary>Raw values, one row per submission</summary>
+      <div class="body tbl-scroll">
+        <table class="subs">
+          <thead><tr>
+            <th>Nickname</th><th>Client</th><th>Plan</th><th>Sessions</th><th>Requests</th><th>In-TTL</th><th>Loss rate</th>
+          </tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </details>
+    <ul class="env-limits">
+      <li>Every environment field is <b>self-reported</b> at submission time. Nothing in the pipeline can verify it.</li>
+      <li id="envSoft">–</li>
+      <li>Request volume differs by an order of magnitude between accounts, so these denominators are not comparable in size: one heavy account can carry a whole group.</li>
+      <li>Groups with fewer than <b id="envMinN">5</b> submissions show counts only. Rows are ordered, not ranked; what a row supports is "this is what has been submitted so far".</li>
+    </ul>
+  </div>
+</section>
+
 <section id="secSubs">
   <h2>Submissions <span class="badge real h2-badge">Real submissions</span></h2>
   <p class="desc">Aggregate totals per submission. No timestamps, no session IDs, no file paths; the schema cannot carry them.</p>
@@ -222,7 +287,7 @@ a{color:inherit}
     <table class="subs" id="subsTable">
       <thead><tr>
         <th>Nickname</th><th>Period</th><th>Requests</th><th>In-TTL</th><th>Iron</th>
-        <th>Re-billed tokens</th><th>Loss rate</th><th>Plan</th><th>Client</th>
+        <th>Re-billed tokens</th><th>Loss rate</th><th>Plan</th><th>Client</th><th>Sessions</th>
       </tr></thead>
       <tbody></tbody>
     </table>
@@ -347,8 +412,186 @@ function renderTable(subs){
       "<td>" + fmtPct(rate) + "</td>" +
       "<td>" + esc(s.plan) + "</td>" +
       "<td>" + esc(s.client) + "</td>" +
+      "<td>" + esc(s.concurrent_sessions || "unknown") + "</td>" +
       "</tr>";
   }).join("");
+}
+
+/* ===== Environment breakdown ============================================
+   Real submissions only (data/submissions.json). Shares no code path and no
+   data with the synthetic preview above.
+
+   ENV_MIN_N is the sample floor a group must clear before its loss rate is
+   printed. It is not a power calculation, it is a floor, and it has two
+   reasons:
+     (1) requests are pooled per group, so below it the largest account
+         routinely holds most of a group's denominator and the "group rate"
+         is really that one account's rate wearing a group label;
+     (2) at n = 5 no single submission is a majority of its group by count.
+   Below the floor the group still shows n, requests and losses; only the
+   derived rate is withheld. This matters more here than elsewhere on the
+   page: the site's whole argument is that one account cannot separate a
+   broken environment from a widespread problem, and a rate computed from
+   three submissions would put exactly that inference back on screen. */
+var ENV_MIN_N = 5;
+var ENV_AXES = ["client", "plan", "concurrent_sessions"];
+var ENV_AXIS = "client";   // the axis the question was actually asked about
+var ENV_FILTER = null;     // {axis, value}: narrows the chart and the list
+var ENV_RAW_OPENED = false;
+
+function envValue(s, axis){ return s[axis] || "unknown"; }
+
+function envGroups(subs, axis){
+  var m = new Map();
+  subs.forEach(function(s){
+    var k = envValue(s, axis);
+    var g = m.get(k);
+    if(!g){ g = { value: k, n: 0, requests: 0, losses: 0 }; m.set(k, g); }
+    g.n++;
+    g.requests += s.totals.requests;
+    g.losses += s.totals.in_ttl_losses;
+  });
+  var out = Array.from(m.values());
+  out.forEach(function(g){
+    g.enough = g.n >= ENV_MIN_N;
+    g.rate = g.requests > 0 ? 100 * g.losses / g.requests : null;
+  });
+  // Groups that clear the floor sort by loss rate; the rest follow by sample
+  // size. A rate we refuse to print must not order rows either.
+  out.sort(function(a, b){
+    if(a.enough !== b.enough) return a.enough ? -1 : 1;
+    if(a.enough) return b.rate - a.rate;
+    if(b.n !== a.n) return b.n - a.n;
+    return a.value < b.value ? -1 : 1;
+  });
+  return out;
+}
+
+function filteredSubs(){
+  if(!SUBS) return [];
+  if(!ENV_FILTER) return SUBS;
+  return SUBS.filter(function(s){ return envValue(s, ENV_FILTER.axis) === ENV_FILTER.value; });
+}
+
+function renderEnvFilter(){
+  var el = document.getElementById("envFilter");
+  if(!ENV_FILTER){ el.hidden = true; el.innerHTML = ""; return; }
+  el.hidden = false;
+  el.innerHTML = "Filtered to <b>" + esc(ENV_FILTER.axis) + " = " + esc(ENV_FILTER.value) +
+    "</b> (n " + filteredSubs().length + "). Applied to the fleet chart above and the " +
+    "submission list below; the KPIs stay on the whole dataset." +
+    "<button type='button' id='envClear'>clear</button>";
+  document.getElementById("envClear").addEventListener("click", function(){
+    ENV_FILTER = null;
+    applyEnvFilter();
+  });
+}
+
+function renderEnv(){
+  if(!SUBS) return;
+  var axis = ENV_AXIS, total = SUBS.length;
+  var groups = envGroups(SUBS, axis);
+  document.getElementById("envMinN").textContent = String(ENV_MIN_N);
+
+  var thin = document.getElementById("envThin");
+  if(total < ENV_MIN_N){
+    thin.hidden = false;
+    thin.textContent = "Not enough has been submitted to compare environments yet: " +
+      total + " submission" + (total === 1 ? "" : "s") + " in total, against a floor of " +
+      ENV_MIN_N + " per group. Counts are shown below, rates are not. The raw " +
+      "per-submission values are in the panel underneath.";
+  } else {
+    thin.hidden = true;
+  }
+
+  var soft = 0;
+  SUBS.forEach(function(s){
+    var v = envValue(s, axis);
+    if(v === "unknown" || v === "mixed") soft++;
+  });
+  document.getElementById("envSoft").innerHTML =
+    "On this axis <b>" + soft + " of " + total + "</b> submission" +
+    (total === 1 ? "" : "s") + " reports <span class='mono'>unknown</span> or " +
+    "<span class='mono'>mixed</span>" +
+    (total > 0 ? " (" + Math.round(100 * soft / total) + "%)" : "") +
+    ". The larger that share is, the less this breakdown separates anything.";
+
+  document.querySelector("#envTable tbody").innerHTML = groups.map(function(g){
+    var on = ENV_FILTER && ENV_FILTER.axis === axis && ENV_FILTER.value === g.value;
+    return "<tr class='pick" + (on ? " on" : "") + "' data-value='" + esc(g.value) + "'>" +
+      "<td class='grp'>" + esc(g.value) + "</td>" +
+      "<td>" + fmtInt(g.n) + "</td>" +
+      "<td>" + fmtInt(g.requests) + "</td>" +
+      "<td class='crit'>" + fmtInt(g.losses) + "</td>" +
+      (g.enough ? "<td>" + fmtPct(g.rate) + "</td>"
+                : "<td class='na'>not enough data</td>") +
+      "</tr>";
+  }).join("");
+
+  document.querySelector("#envRaw tbody").innerHTML = SUBS.map(function(s){
+    var rate = s.totals.requests > 0 ? 100 * s.totals.in_ttl_losses / s.totals.requests : 0;
+    return "<tr>" +
+      "<td class='nick'>" + esc(s.nickname || "anonymous") + "</td>" +
+      "<td>" + esc(s.client || "unknown") + "</td>" +
+      "<td>" + esc(s.plan || "unknown") + "</td>" +
+      "<td>" + esc(s.concurrent_sessions || "unknown") + "</td>" +
+      "<td>" + fmtInt(s.totals.requests) + "</td>" +
+      "<td class='crit'>" + fmtInt(s.totals.in_ttl_losses) + "</td>" +
+      "<td>" + fmtPct(rate) + "</td>" +
+      "</tr>";
+  }).join("");
+  // Below the floor the raw rows are the only thing the reader can act on, so
+  // open the panel once. Re-opening on every render would fight the reader.
+  if(total < ENV_MIN_N && !ENV_RAW_OPENED){
+    document.getElementById("envRaw").open = true;
+    ENV_RAW_OPENED = true;
+  }
+
+  renderEnvFilter();
+}
+
+/* The filter narrows the fleet chart and the submission list. It deliberately
+   leaves the KPIs alone: those are the observatory's headline totals and must
+   keep meaning "everything submitted". */
+function applyEnvFilter(){
+  var fs = filteredSubs();
+  renderLegend(fs);
+  renderTable(fs);
+  FLEET_MODEL = buildFleetModel(fs);
+  renderEnv();
+  drawAll();
+}
+
+function bindEnvControls(){
+  var btns = document.querySelectorAll(".axis-btn");
+  Array.prototype.forEach.call(btns, function(b){
+    b.addEventListener("click", function(){
+      var axis = b.getAttribute("data-axis");
+      if(ENV_AXES.indexOf(axis) === -1) return;
+      ENV_AXIS = axis;
+      Array.prototype.forEach.call(btns, function(o){
+        o.setAttribute("aria-pressed", o === b ? "true" : "false");
+      });
+      // A filter pinned to the previous axis cannot survive the switch.
+      if(ENV_FILTER && ENV_FILTER.axis !== axis){
+        ENV_FILTER = null;
+        applyEnvFilter();
+        return;
+      }
+      renderEnv();
+    });
+  });
+  document.querySelector("#envTable tbody").addEventListener("click", function(ev){
+    var tr = ev.target.closest("tr.pick");
+    if(!tr) return;
+    var value = tr.getAttribute("data-value");
+    if(ENV_FILTER && ENV_FILTER.axis === ENV_AXIS && ENV_FILTER.value === value){
+      ENV_FILTER = null;
+    } else {
+      ENV_FILTER = { axis: ENV_AXIS, value: value };
+    }
+    applyEnvFilter();
+  });
 }
 
 function drawAll(){
@@ -505,6 +748,8 @@ fetch("data/submissions.json")
     renderLegend(SUBS);
     renderTable(SUBS);
     FLEET_MODEL = buildFleetModel(SUBS);
+    bindEnvControls();
+    renderEnv();
     drawAll();
   })
   .catch(function(){
@@ -524,6 +769,13 @@ window.addEventListener("resize", function(){
 });
 if(window.matchMedia){
   window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", drawAll);
+}
+/* The heatmap now derives its cell and text colours from the theme tokens at
+   render time, so an explicit data-theme override (a toggle, or a test that
+   sets it) has to redraw exactly like a system-theme change does. */
+if(window.MutationObserver){
+  new MutationObserver(function(){ drawAll(); }).observe(
+    document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
 }
 </script>
 </body>

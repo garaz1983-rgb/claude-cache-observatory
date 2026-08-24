@@ -29,6 +29,119 @@
     return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
   }
 
+  /* --- Heatmap cell legibility -------------------------------------------
+   * The heatmap prints the loss count inside a cell whose background is
+   * --grid mixed toward --crit by a value-dependent ratio, so one fixed text
+   * colour cannot stay legible across the ramp AND across both themes.
+   * Measured in Chromium with the old hardcoded white text (target 4.5:1):
+   * light theme scored 2.24 / 2.82 / 3.58 / 4.38 for 1..4 losses — every step
+   * failed — while dark theme failed at the other end of the ramp, 3.63 and
+   * 2.79 on its two brightest cells. Swapping white for --ink only moves the
+   * failure across (light 3.53 at 4 losses, dark 2.35 at 4 losses), so no one
+   * fixed colour fixes both.
+   *
+   * So the mix is computed here instead of being handed to CSS color-mix:
+   * knowing the resulting sRGB triple lets the script take its relative
+   * luminance, pick whichever theme extreme contrasts better, and — for the
+   * luminance band where NEITHER extreme can reach the target (a real band,
+   * because --ink is not black and the dark theme's --ink is not white) —
+   * nudge the background to the nearer edge of that band before painting it.
+   * The nudge is monotone in the mix ratio, so the ramp keeps its ordering.
+   * Every colour used is derived from the theme's own custom properties;
+   * cssVar() is re-read on each render, so a theme flip re-derives them.
+   */
+  var TEXT_CONTRAST_MIN = 4.5;   // WCAG AA for the digit inside a cell
+  var TEXT_CONTRAST_AIM = 4.6;   // searched-for margin, so integer rounding
+                                 // cannot land a nudged cell under the min
+
+  // Custom properties come back as authored (e.g. "#D64545"), not resolved,
+  // so hex is the case that matters; rgb()/rgba() is accepted for safety.
+  function parseColor(str) {
+    if (!str) return null;
+    var s = String(str).trim();
+    var m = s.match(/^#([0-9a-fA-F]{3,8})$/);
+    if (m) {
+      var hex = m[1];
+      if (hex.length === 3 || hex.length === 4) {
+        return [parseInt(hex[0] + hex[0], 16), parseInt(hex[1] + hex[1], 16),
+                parseInt(hex[2] + hex[2], 16)];
+      }
+      if (hex.length === 6 || hex.length === 8) {
+        return [parseInt(hex.slice(0, 2), 16), parseInt(hex.slice(2, 4), 16),
+                parseInt(hex.slice(4, 6), 16)];
+      }
+      return null;
+    }
+    m = s.match(/^rgba?\(([^)]+)\)$/i);
+    if (!m) return null;
+    var parts = m[1].split(/[\s,\/]+/).filter(function (p) { return p !== ""; });
+    if (parts.length < 3) return null;
+    var out = [];
+    for (var i = 0; i < 3; i++) {
+      var v = parts[i].indexOf("%") >= 0 ? parseFloat(parts[i]) * 2.55
+                                         : parseFloat(parts[i]);
+      if (!isFinite(v)) return null;
+      out.push(Math.max(0, Math.min(255, Math.round(v))));
+    }
+    return out;
+  }
+
+  function mixColor(a, b, t) {
+    return [
+      Math.round(a[0] + (b[0] - a[0]) * t),
+      Math.round(a[1] + (b[1] - a[1]) * t),
+      Math.round(a[2] + (b[2] - a[2]) * t)
+    ];
+  }
+
+  function rgbStr(c) { return "rgb(" + c[0] + "," + c[1] + "," + c[2] + ")"; }
+
+  // WCAG 2.x relative luminance.
+  function luminance(c) {
+    var w = [0.2126, 0.7152, 0.0722], out = 0;
+    for (var i = 0; i < 3; i++) {
+      var v = c[i] / 255;
+      out += w[i] * (v <= 0.03928 ? v / 12.92
+                                  : Math.pow((v + 0.055) / 1.055, 2.4));
+    }
+    return out;
+  }
+
+  function contrastOf(l1, l2) {
+    return (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05);
+  }
+
+  /*
+   * Given a cell background and the theme's darkest/lightest available
+   * colours, return { bg, fg } (both [r,g,b]) that clear TEXT_CONTRAST_MIN.
+   * `bg` is returned unchanged whenever one of the two extremes already
+   * clears it; only a dead-band background is moved, and only as far as the
+   * nearer edge (the search runs on the rounded integer triple, so the
+   * ratio reported here is the ratio that actually renders).
+   */
+  function legibleCell(base, darkC, lightC) {
+    var lb = luminance(base), ld = luminance(darkC), ll = luminance(lightC);
+    var cd = contrastOf(lb, ld), cl = contrastOf(lb, ll);
+    if (cd >= TEXT_CONTRAST_MIN || cl >= TEXT_CONTRAST_MIN) {
+      return cd >= cl ? { bg: base, fg: darkC, ratio: cd }
+                      : { bg: base, fg: lightC, ratio: cl };
+    }
+    var belowForLight = (ll + 0.05) / TEXT_CONTRAST_AIM - 0.05;
+    var aboveForDark = TEXT_CONTRAST_AIM * (ld + 0.05) - 0.05;
+    var goDark = (lb - belowForLight) <= (aboveForDark - lb);
+    var anchor = goDark ? darkC : lightC;
+    var fg = goDark ? lightC : darkC;
+    var lf = luminance(fg);
+    var best = base, bestRatio = contrastOf(lb, lf);
+    for (var i = 1; i <= 100; i++) {
+      var cand = mixColor(base, anchor, i / 100);
+      var ratio = contrastOf(luminance(cand), lf);
+      if (ratio > bestRatio) { bestRatio = ratio; best = cand; }
+      if (ratio >= TEXT_CONTRAST_AIM) return { bg: cand, fg: fg, ratio: ratio };
+    }
+    return { bg: best, fg: fg, ratio: bestRatio };
+  }
+
   function setupCanvas(c) {
     var dpr = window.devicePixelRatio || 1;
     var w = c.clientWidth;
@@ -239,6 +352,36 @@
     });
     capReq = Math.min(capReq, 400);
 
+    // Theme extremes for the cell text: the darkest and the lightest of the
+    // three neutral tokens, whichever way round the current theme has them.
+    var critC = parseColor(critRGB), gridC = parseColor(cssVar("--grid"));
+    var neutrals = [cssVar("--ink"), cssVar("--bg"), cssVar("--surface")]
+      .map(parseColor)
+      .filter(function (c) { return !!c; })
+      .sort(function (a, b) { return luminance(a) - luminance(b); });
+    var darkC = neutrals[0], lightC = neutrals[neutrals.length - 1];
+    // If a token is missing or unparsable, fall back to the old CSS mix; the
+    // stylesheet's `var(--hm-fg, var(--ink))` then supplies the text colour.
+    var derive = !!(critC && gridC && darkC && lightC && darkC !== lightC);
+
+    // 24 x days cells share at most maxLoss distinct ramp steps.
+    var hitStyleCache = {};
+    function hitStyle(v) {
+      var key = String(v);
+      if (hitStyleCache[key]) return hitStyleCache[key];
+      var a = 0.3 + 0.7 * Math.min(v, maxLoss) / maxLoss;
+      var css;
+      if (derive) {
+        var cell = legibleCell(mixColor(gridC, critC, a), darkC, lightC);
+        css = "background:" + rgbStr(cell.bg) + ";--hm-fg:" + rgbStr(cell.fg);
+      } else {
+        css = "background:color-mix(in srgb, " + critRGB + " " +
+          Math.round(a * 100) + "%, var(--grid))";
+      }
+      hitStyleCache[key] = css;
+      return css;
+    }
+
     var html = "<tr><th class='day'></th>" +
       Array.from({ length: 24 }, function (_, x) {
         return "<th>" + String(x).padStart(2, "0") + "</th>";
@@ -249,10 +392,8 @@
         var rq = r.usage[hi];
         var tip = "title=\"" + cellTitle(r, hi, rq, v) + "\"";
         if (v > 0) {
-          var a = 0.3 + 0.7 * Math.min(v, maxLoss) / maxLoss;
           return "<td class='hit' " + tip + " data-r='" + ri + "' data-h='" + hi +
-            "' style='background:color-mix(in srgb, " + critRGB + " " +
-            Math.round(a * 100) + "%, var(--grid))'>" + v + "</td>";
+            "' style='" + hitStyle(v) + "'>" + v + "</td>";
         }
         if (rq > 0) {
           var u = 12 + Math.round(38 * Math.min(rq, capReq) / capReq);

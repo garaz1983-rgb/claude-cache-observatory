@@ -103,8 +103,12 @@ table.hm{border-collapse:separate; border-spacing:2px; font-family:ui-monospace,
 table.hm th{font-weight:500; color:var(--muted); padding:2px 2px; text-align:center; font-size:.66rem}
 table.hm th.day{text-align:right; padding-right:6px; font-size:.72rem}
 table.hm td{width:27px; height:26px; text-align:center; border-radius:4px; background:var(--grid); color:var(--muted)}
-table.hm td.hit{color:#fff; font-weight:600; cursor:pointer}
-table.hm td.hit.sel{outline:2px solid var(--ink); outline-offset:-1px}
+/* --hm-fg는 charts.js가 셀마다 지정한다. 셀 배경은 유실 건수에 따라
+   휘도가 바뀌는 테마 혼합색이라, 고정색으로는 명암비를 맞힐 수 없다
+   (기존 #fff 고정값은 라이트 1건 셀에서 2.23:1). 폴백은 스크립트가
+   값을 못 심었을 때의 보호막이다. 선택 테두리도 같은 색을 쓴다. */
+table.hm td.hit{color:var(--hm-fg,var(--ink)); font-weight:600; cursor:pointer}
+table.hm td.hit.sel{outline:2px solid var(--hm-fg,var(--ink)); outline-offset:-1px}
 /* 건별 상세는 히트맵 위에 뜨는 팝오버다. 표 아래 고정이면 위쪽 행을 눌렀을 때
    상세가 화면 밖으로 밀려나 바로 확인이 안 된다. 위치는 스크립트가 셀 기준으로
    잡고 뷰포트 안으로 clamp한다. */
@@ -1044,6 +1048,13 @@ window.addEventListener("resize", function(){
 });
 if(window.matchMedia){
   window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", drawCharts);
+}
+/* 히트맵은 셀색과 글자색을 렌더 시점의 테마 토큰에서 파읽한다.
+   그래서 data-theme으로 테마를 명시 지정하는 경로(토글 또는 테스트)도
+   시스템 테마 변경과 똑같이 다시 그려야 한다. */
+if(window.MutationObserver){
+  new MutationObserver(function(){ drawCharts(); }).observe(
+    document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
 }
 </script>
 </body>

@@ -85,8 +85,12 @@ table.hm{border-collapse:separate; border-spacing:2px; font-family:ui-monospace,
 table.hm th{font-weight:500; color:var(--muted); padding:2px 2px; text-align:center; font-size:.66rem}
 table.hm th.day{text-align:right; padding-right:6px; font-size:.72rem}
 table.hm td{width:27px; height:26px; text-align:center; border-radius:4px; background:var(--grid); color:var(--muted)}
-table.hm td.hit{color:#fff; font-weight:600; cursor:pointer}
-table.hm td.hit.sel{outline:2px solid var(--ink); outline-offset:-1px}
+/* --hm-fg는 charts.js가 셀마다 지정한다. 셀 배경은 유실 건수에 따라
+   휘도가 바뀌는 테마 혼합색이라, 고정색으로는 명암비를 맞힐 수 없다
+   (기존 #fff 고정값은 라이트 1건 셀에서 2.23:1). 폴백은 스크립트가
+   값을 못 심었을 때의 보호막이다. 선택 테두리도 같은 색을 쓴다. */
+table.hm td.hit{color:var(--hm-fg,var(--ink)); font-weight:600; cursor:pointer}
+table.hm td.hit.sel{outline:2px solid var(--hm-fg,var(--ink)); outline-offset:-1px}
 /* 건별 상세 팝오버. check.html과 동작을 맞춘다: position:fixed로 두고 스크립트에서
    클릭한 셀 기준으로 배치하며 뷰포트 안으로 clamp한다. 그래야 첫 행 셀을 눌러도
    패널이 화면 밖으로 나가지 않는다. */
@@ -112,6 +116,25 @@ table.subs th:first-child{text-align:left}
 table.subs td{padding:6px 8px; border-bottom:1px solid var(--grid); font-family:ui-monospace,'Cascadia Mono',Consolas,monospace; font-variant-numeric:tabular-nums; white-space:nowrap; text-align:right}
 table.subs td.nick{font-family:inherit; text-align:left}
 table.subs td.crit{color:var(--crit); font-weight:600}
+/* 환경별 분해. 실제 제출 데이터 전용이다. 표본 부족 안내는 일부러 앰버를
+   쓰지 않는다. 이 페이지에서 앰버는 예시 데이터 표시색이고, 둘이 같은
+   것으로 읽히면 안 된다. */
+.axis-pick{display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:10px}
+.axis-btn{font:inherit; font-size:.8rem; padding:5px 12px; border-radius:99px; border:1px solid var(--line); background:var(--bg); color:var(--muted); cursor:pointer}
+.axis-btn:hover{border-color:var(--muted)}
+.axis-btn[aria-pressed="true"]{border-color:var(--ok); color:var(--ok); font-weight:700}
+.axis-filter{font-size:.8rem; color:var(--muted); margin:0 0 10px}
+.axis-filter button{font:inherit; font-size:.76rem; margin-left:8px; padding:2px 9px; border-radius:99px; border:1px solid var(--line); background:var(--surface); color:var(--ink); cursor:pointer}
+.axis-filter button:hover{border-color:var(--muted)}
+.env-thin{font-size:.85rem; padding:12px 14px; border-left:3px solid var(--muted); background:var(--bg); border-radius:0 6px 6px 0; margin-bottom:12px}
+table.env td.grp{font-family:ui-monospace,'Cascadia Mono',Consolas,monospace; text-align:left}
+table.env td.na{color:var(--muted); font-family:inherit}
+table.env tr.pick{cursor:pointer}
+table.env tr.pick:hover td{background:var(--grid)}
+table.env tr.on td{background:var(--ok-soft)}
+.env-raw{margin-top:12px}
+.env-limits{margin:14px 0 0; padding-left:20px; font-size:.82rem; color:var(--muted)}
+.env-limits li{margin:4px 0}
 .story p{margin:0 0 10px; font-size:.9rem}
 .story p:last-child{margin-bottom:0}
 details.faq{border:1px solid var(--line); border-radius:8px; background:var(--bg); margin-top:10px}
@@ -214,6 +237,45 @@ a{color:inherit}
   </div>
 </section>
 
+<section id="secEnv">
+  <h2>환경별 분해 <span class="badge real h2-badge">실제 제출 데이터</span></h2>
+  <p class="desc">같은 제출 데이터를 환경 항목 하나로 묶어 본 것이다. 표본 수는 모든 행에 함께 적는다. 기준 미만인 그룹은 건수만 보여주고 유실률은 내지 않는다.</p>
+  <div class="card">
+    <div class="axis-pick" role="group" aria-label="분해 축">
+      <button type="button" class="axis-btn" data-axis="client" aria-pressed="true">클라이언트</button>
+      <button type="button" class="axis-btn" data-axis="plan" aria-pressed="false">플랜</button>
+      <button type="button" class="axis-btn" data-axis="concurrent_sessions" aria-pressed="false">동시 세션</button>
+    </div>
+    <p class="axis-filter" id="envFilter" hidden></p>
+    <div class="env-thin" id="envThin" hidden></div>
+    <div class="tbl-scroll">
+      <table class="subs env" id="envTable">
+        <thead><tr>
+          <th>값</th><th>표본 수 (n)</th><th>합산 요청</th><th>in-TTL 유실</th><th>유실률</th>
+        </tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <details class="faq env-raw" id="envRaw">
+      <summary>원자료 보기 (제출 1건 = 1행)</summary>
+      <div class="body tbl-scroll">
+        <table class="subs">
+          <thead><tr>
+            <th>닉네임</th><th>클라이언트</th><th>플랜</th><th>동시 세션</th><th>총 요청</th><th>in-TTL</th><th>유실률</th>
+          </tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </details>
+    <ul class="env-limits">
+      <li>환경 항목은 전부 제출자가 <b>스스로 적은 값</b>이다. 검증할 수단이 없다.</li>
+      <li id="envSoft">–</li>
+      <li>계정마다 요청 규모가 자릿수 단위로 다르다. 여기 유실률의 분모는 서로 크기가 비대칭이고, 큰 계정 하나가 그룹 전체를 끌고 갈 수 있다.</li>
+      <li>제출 <b id="envMinN">5</b>건 미만인 그룹은 건수만 표시한다. 행 순서는 정렬이지 순위가 아니다. 한 행이 뒷받침하는 것은 "지금까지 제출된 것이 이렇다"까지다.</li>
+    </ul>
+  </div>
+</section>
+
 <section id="secSubs">
   <h2>제출 목록 <span class="badge real h2-badge">실제 제출 데이터</span></h2>
   <p class="desc">제출별 집계 합계. 시각·세션 ID·파일 경로는 없다. 스키마 차원에서 담을 수 없다.</p>
@@ -221,7 +283,7 @@ a{color:inherit}
     <table class="subs" id="subsTable">
       <thead><tr>
         <th>닉네임</th><th>기간</th><th>총 요청</th><th>in-TTL</th><th>iron</th>
-        <th>재과금 토큰</th><th>유실률</th><th>플랜</th><th>클라이언트</th>
+        <th>재과금 토큰</th><th>유실률</th><th>플랜</th><th>클라이언트</th><th>동시 세션</th>
       </tr></thead>
       <tbody></tbody>
     </table>
@@ -346,8 +408,182 @@ function renderTable(subs){
       "<td>" + fmtPct(rate) + "</td>" +
       "<td>" + esc(s.plan) + "</td>" +
       "<td>" + esc(s.client) + "</td>" +
+      "<td>" + esc(s.concurrent_sessions || "unknown") + "</td>" +
       "</tr>";
   }).join("");
+}
+
+/* ===== 환경별 분해 ======================================================
+   실제 제출 데이터(data/submissions.json)만 쓴다. 위 예시 미리보기와
+   코드 경로도 데이터도 공유하지 않는다.
+
+   ENV_MIN_N은 그룹 유실률을 화면에 내기 전에 넘어야 하는 표본 하한이다.
+   통계적 검정력 계산이 아니라 하한선이고, 근거는 두 가지다.
+     (1) 요청 수는 그룹 단위로 합산된다. 하한 아래에서는 가장 큰 계정이
+         그룹 분모의 대부분을 차지해서, "그룹 유실률"이 사실상 그 계정
+         하나의 유실률에 그룹 이름표를 붙인 값이 된다.
+     (2) n = 5면 제출 1건이 그룹 건수의 과반이 될 수 없다.
+   하한 미만이어도 n·요청·유실 건수는 그대로 보여주고, 파생값인 유실률만
+   빼둔다. 이 페이지에서는 이 구분이 특히 중요하다. 이 사이트의 주장 자체가
+   "계정 하나로는 개인 환경 문제와 광범위한 문제를 가를 수 없다"인데,
+   제출 3건짜리 유실률을 띄우면 바로 그 추론을 화면에 되돌려 놓는 셈이다. */
+var ENV_MIN_N = 5;
+var ENV_AXES = ["client", "plan", "concurrent_sessions"];
+var ENV_AXIS = "client";   // 사용자가 실제로 물은 축
+var ENV_FILTER = null;     // {axis, value}: 차트와 목록을 좁힌다
+var ENV_RAW_OPENED = false;
+
+function envValue(s, axis){ return s[axis] || "unknown"; }
+
+function envGroups(subs, axis){
+  var m = new Map();
+  subs.forEach(function(s){
+    var k = envValue(s, axis);
+    var g = m.get(k);
+    if(!g){ g = { value: k, n: 0, requests: 0, losses: 0 }; m.set(k, g); }
+    g.n++;
+    g.requests += s.totals.requests;
+    g.losses += s.totals.in_ttl_losses;
+  });
+  var out = Array.from(m.values());
+  out.forEach(function(g){
+    g.enough = g.n >= ENV_MIN_N;
+    g.rate = g.requests > 0 ? 100 * g.losses / g.requests : null;
+  });
+  // 하한을 넘은 그룹만 유실률로 정렬하고, 나머지는 표본 수 순으로 뒤에
+  // 붙인다. 화면에 내지 않기로 한 값이 행 순서를 정하면 안 된다.
+  out.sort(function(a, b){
+    if(a.enough !== b.enough) return a.enough ? -1 : 1;
+    if(a.enough) return b.rate - a.rate;
+    if(b.n !== a.n) return b.n - a.n;
+    return a.value < b.value ? -1 : 1;
+  });
+  return out;
+}
+
+function filteredSubs(){
+  if(!SUBS) return [];
+  if(!ENV_FILTER) return SUBS;
+  return SUBS.filter(function(s){ return envValue(s, ENV_FILTER.axis) === ENV_FILTER.value; });
+}
+
+function renderEnvFilter(){
+  var el = document.getElementById("envFilter");
+  if(!ENV_FILTER){ el.hidden = true; el.innerHTML = ""; return; }
+  el.hidden = false;
+  el.innerHTML = "필터 적용: <b>" + esc(ENV_FILTER.axis) + " = " + esc(ENV_FILTER.value) +
+    "</b> (n " + filteredSubs().length + "). 위 fleet 추이 차트와 아래 제출 목록에 " +
+    "반영된다. 상단 KPI는 전체 데이터 그대로다." +
+    "<button type='button' id='envClear'>해제</button>";
+  document.getElementById("envClear").addEventListener("click", function(){
+    ENV_FILTER = null;
+    applyEnvFilter();
+  });
+}
+
+function renderEnv(){
+  if(!SUBS) return;
+  var axis = ENV_AXIS, total = SUBS.length;
+  var groups = envGroups(SUBS, axis);
+  document.getElementById("envMinN").textContent = String(ENV_MIN_N);
+
+  var thin = document.getElementById("envThin");
+  if(total < ENV_MIN_N){
+    thin.hidden = false;
+    thin.textContent = "아직 환경을 비교할 만큼 모이지 않았다. 지금까지 제출 " +
+      total + "건, 그룹당 기준은 " + ENV_MIN_N + "건이다. 아래에 건수는 그대로 " +
+      "보여주되 유실률은 내지 않는다. 제출별 원자료는 그 아래 패널에 있다.";
+  } else {
+    thin.hidden = true;
+  }
+
+  var soft = 0;
+  SUBS.forEach(function(s){
+    var v = envValue(s, axis);
+    if(v === "unknown" || v === "mixed") soft++;
+  });
+  document.getElementById("envSoft").innerHTML =
+    "이 축에서 <span class='mono'>unknown</span>·<span class='mono'>mixed</span> 응답이 <b>" +
+    soft + "건 / 전체 " + total + "건</b>" +
+    (total > 0 ? " (" + Math.round(100 * soft / total) + "%)" : "") +
+    ". 이 비중이 클수록 분해가 흐려진다.";
+
+  document.querySelector("#envTable tbody").innerHTML = groups.map(function(g){
+    var on = ENV_FILTER && ENV_FILTER.axis === axis && ENV_FILTER.value === g.value;
+    return "<tr class='pick" + (on ? " on" : "") + "' data-value='" + esc(g.value) + "'>" +
+      "<td class='grp'>" + esc(g.value) + "</td>" +
+      "<td>" + fmtInt(g.n) + "</td>" +
+      "<td>" + fmtInt(g.requests) + "</td>" +
+      "<td class='crit'>" + fmtInt(g.losses) + "</td>" +
+      (g.enough ? "<td>" + fmtPct(g.rate) + "</td>"
+                : "<td class='na'>표본 부족</td>") +
+      "</tr>";
+  }).join("");
+
+  document.querySelector("#envRaw tbody").innerHTML = SUBS.map(function(s){
+    var rate = s.totals.requests > 0 ? 100 * s.totals.in_ttl_losses / s.totals.requests : 0;
+    return "<tr>" +
+      "<td class='nick'>" + esc(s.nickname || "anonymous") + "</td>" +
+      "<td>" + esc(s.client || "unknown") + "</td>" +
+      "<td>" + esc(s.plan || "unknown") + "</td>" +
+      "<td>" + esc(s.concurrent_sessions || "unknown") + "</td>" +
+      "<td>" + fmtInt(s.totals.requests) + "</td>" +
+      "<td class='crit'>" + fmtInt(s.totals.in_ttl_losses) + "</td>" +
+      "<td>" + fmtPct(rate) + "</td>" +
+      "</tr>";
+  }).join("");
+  // 하한 미만이면 원자료 행이 독자가 볼 수 있는 유일한 실체다. 한 번만
+  // 펼쳐 둔다. 렌더할 때마다 다시 펼치면 독자가 닫은 걸 되돌리게 된다.
+  if(total < ENV_MIN_N && !ENV_RAW_OPENED){
+    document.getElementById("envRaw").open = true;
+    ENV_RAW_OPENED = true;
+  }
+
+  renderEnvFilter();
+}
+
+/* 필터는 fleet 추이 차트와 제출 목록만 좁힌다. 상단 KPI는 일부러 건드리지
+   않는다. 그건 관측소의 헤드라인 합계라서 "제출된 전부"라는 뜻을 유지해야
+   한다. */
+function applyEnvFilter(){
+  var fs = filteredSubs();
+  renderLegend(fs);
+  renderTable(fs);
+  FLEET_MODEL = buildFleetModel(fs);
+  renderEnv();
+  drawAll();
+}
+
+function bindEnvControls(){
+  var btns = document.querySelectorAll(".axis-btn");
+  Array.prototype.forEach.call(btns, function(b){
+    b.addEventListener("click", function(){
+      var axis = b.getAttribute("data-axis");
+      if(ENV_AXES.indexOf(axis) === -1) return;
+      ENV_AXIS = axis;
+      Array.prototype.forEach.call(btns, function(o){
+        o.setAttribute("aria-pressed", o === b ? "true" : "false");
+      });
+      // 이전 축에 걸린 필터는 축이 바뀌면 유지될 수 없다.
+      if(ENV_FILTER && ENV_FILTER.axis !== axis){
+        ENV_FILTER = null;
+        applyEnvFilter();
+        return;
+      }
+      renderEnv();
+    });
+  });
+  document.querySelector("#envTable tbody").addEventListener("click", function(ev){
+    var tr = ev.target.closest("tr.pick");
+    if(!tr) return;
+    var value = tr.getAttribute("data-value");
+    if(ENV_FILTER && ENV_FILTER.axis === ENV_AXIS && ENV_FILTER.value === value){
+      ENV_FILTER = null;
+    } else {
+      ENV_FILTER = { axis: ENV_AXIS, value: value };
+    }
+    applyEnvFilter();
+  });
 }
 
 function drawAll(){
@@ -503,6 +739,8 @@ fetch("../data/submissions.json")
     renderLegend(SUBS);
     renderTable(SUBS);
     FLEET_MODEL = buildFleetModel(SUBS);
+    bindEnvControls();
+    renderEnv();
     drawAll();
   })
   .catch(function(){
@@ -522,6 +760,13 @@ window.addEventListener("resize", function(){
 });
 if(window.matchMedia){
   window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", drawAll);
+}
+/* 히트맵은 셀색과 글자색을 렌더 시점의 테마 토큰에서 파읽한다.
+   그래서 data-theme으로 테마를 명시 지정하는 경로(토글 또는 테스트)도
+   시스템 테마 변경과 똑같이 다시 그려야 한다. */
+if(window.MutationObserver){
+  new MutationObserver(function(){ drawAll(); }).observe(
+    document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
 }
 </script>
 </body>

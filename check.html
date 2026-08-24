@@ -103,8 +103,14 @@ table.hm{border-collapse:separate; border-spacing:2px; font-family:ui-monospace,
 table.hm th{font-weight:500; color:var(--muted); padding:2px 2px; text-align:center; font-size:.66rem}
 table.hm th.day{text-align:right; padding-right:6px; font-size:.72rem}
 table.hm td{width:27px; height:26px; text-align:center; border-radius:4px; background:var(--grid); color:var(--muted)}
-table.hm td.hit{color:#fff; font-weight:600; cursor:pointer}
-table.hm td.hit.sel{outline:2px solid var(--ink); outline-offset:-1px}
+/* --hm-fg is set per cell by charts.js: the cell background is a theme mix
+   whose luminance varies with the loss count, so the text colour has to be
+   derived from that mix rather than fixed (a hardcoded #fff measured 2.23:1
+   on the lightest light-theme cell). The fallback keeps text visible if the
+   script ever fails to set it. The selection outline reuses the same colour,
+   which also fixes its own contrast against a bright dark-theme cell. */
+table.hm td.hit{color:var(--hm-fg,var(--ink)); font-weight:600; cursor:pointer}
+table.hm td.hit.sel{outline:2px solid var(--hm-fg,var(--ink)); outline-offset:-1px}
 /* Per-event detail is a popover over the heatmap. Pinned under the table it
    lands off-screen when a top row is clicked. Placement is done in script,
    anchored to the clicked cell and clamped into the viewport. */
@@ -1051,6 +1057,13 @@ window.addEventListener("resize", function(){
 });
 if(window.matchMedia){
   window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", drawCharts);
+}
+/* The heatmap now derives its cell and text colours from the theme tokens at
+   render time, so an explicit data-theme override (a toggle, or a test that
+   sets it) has to redraw exactly like a system-theme change does. */
+if(window.MutationObserver){
+  new MutationObserver(function(){ drawCharts(); }).observe(
+    document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
 }
 </script>
 </body>
