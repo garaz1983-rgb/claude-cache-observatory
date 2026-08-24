@@ -252,7 +252,7 @@ a{color:inherit}
     </div>
     <p class="axis-filter" id="envFilter" hidden></p>
     <div class="env-thin" id="envThin" hidden></div>
-    <div class="tbl-scroll">
+    <div class="tbl-scroll" id="envTableWrap">
       <table class="subs env" id="envTable">
         <thead><tr>
           <th>Value</th><th>Submissions (n)</th><th>Requests</th><th>In-TTL losses</th><th>Loss rate</th>
@@ -493,16 +493,21 @@ function renderEnv(){
   var groups = envGroups(SUBS, axis);
   document.getElementById("envMinN").textContent = String(ENV_MIN_N);
 
+  // Below the floor for the whole axis there is nothing to compare, so the
+  // notice takes the comparison table's place outright rather than sitting
+  // above a table of one row. The raw per-submission values stay readable.
   var thin = document.getElementById("envThin");
-  if(total < ENV_MIN_N){
+  var enoughAxis = total >= ENV_MIN_N;
+  if(!enoughAxis){
     thin.hidden = false;
     thin.textContent = "Not enough has been submitted to compare environments yet: " +
       total + " submission" + (total === 1 ? "" : "s") + " in total, against a floor of " +
-      ENV_MIN_N + " per group. Counts are shown below, rates are not. The raw " +
-      "per-submission values are in the panel underneath.";
+      ENV_MIN_N + ". There is no comparison to show here. The raw per-submission " +
+      "values are in the panel below.";
   } else {
     thin.hidden = true;
   }
+  document.getElementById("envTableWrap").hidden = !enoughAxis;
 
   var soft = 0;
   SUBS.forEach(function(s){

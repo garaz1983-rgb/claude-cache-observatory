@@ -248,7 +248,7 @@ a{color:inherit}
     </div>
     <p class="axis-filter" id="envFilter" hidden></p>
     <div class="env-thin" id="envThin" hidden></div>
-    <div class="tbl-scroll">
+    <div class="tbl-scroll" id="envTableWrap">
       <table class="subs env" id="envTable">
         <thead><tr>
           <th>값</th><th>표본 수 (n)</th><th>합산 요청</th><th>in-TTL 유실</th><th>유실률</th>
@@ -487,15 +487,19 @@ function renderEnv(){
   var groups = envGroups(SUBS, axis);
   document.getElementById("envMinN").textContent = String(ENV_MIN_N);
 
+  // 축 전체가 기준 미만이면 비교할 것 자체가 없다. 한 줄짜리 표 위에 안내를
+  // 얹는 대신 비교표 자리를 안내가 대신한다. 제출별 원자료는 계속 볼 수 있다.
   var thin = document.getElementById("envThin");
-  if(total < ENV_MIN_N){
+  var enoughAxis = total >= ENV_MIN_N;
+  if(!enoughAxis){
     thin.hidden = false;
     thin.textContent = "아직 환경을 비교할 만큼 모이지 않았다. 지금까지 제출 " +
-      total + "건, 그룹당 기준은 " + ENV_MIN_N + "건이다. 아래에 건수는 그대로 " +
-      "보여주되 유실률은 내지 않는다. 제출별 원자료는 그 아래 패널에 있다.";
+      total + "건, 기준은 " + ENV_MIN_N + "건이다. 여기 보여줄 비교 결과가 없다. " +
+      "제출별 원자료는 아래 패널에서 볼 수 있다.";
   } else {
     thin.hidden = true;
   }
+  document.getElementById("envTableWrap").hidden = !enoughAxis;
 
   var soft = 0;
   SUBS.forEach(function(s){
