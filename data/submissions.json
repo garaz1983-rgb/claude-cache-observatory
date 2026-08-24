@@ -109,37 +109,6 @@
         }
       ],
       "script_version": "cli-2.1"
-    },
-    {
-      "id": "sub-20260824041703-6a2a",
-      "submitted_at": "2026-08-24",
-      "nickname": "e2e-test",
-      "plan": "max20x",
-      "client": "cli",
-      "concurrent_sessions": "single",
-      "period_start": "2026-08-23",
-      "period_end": "2026-08-24",
-      "totals": {
-        "requests": 150,
-        "in_ttl_losses": 3,
-        "iron_losses": 1,
-        "wasted_tokens": 70000
-      },
-      "daily": [
-        {
-          "date": "2026-08-23",
-          "requests": 100,
-          "losses": 2,
-          "wasted_tokens": 50000
-        },
-        {
-          "date": "2026-08-24",
-          "requests": 50,
-          "losses": 1,
-          "wasted_tokens": 20000
-        }
-      ],
-      "script_version": "e2e-1.0"
     }
   ]
 }
