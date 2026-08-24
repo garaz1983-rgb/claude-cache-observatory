@@ -24,14 +24,23 @@ Dedups by requestId (one response is logged once per content block; naive
 counting inflates totals 2-3x).
 
 Requires Python 3.8+, stdlib only. Run:  python check_cache_loss.py
+
+--json prints a machine-readable aggregate (totals + daily[]) instead of the
+table, for pasting into the observatory's check page (paste fallback). The
+flag only changes the OUTPUT SHAPE - the judgment logic above is identical.
+(This flag is an observatory-repo addition on top of the original v2.1
+script; the classification rules are unchanged.)
 """
-import json, glob, os
+import json, glob, os, sys
 from collections import defaultdict
 from datetime import datetime
+
+JSON_MODE = "--json" in sys.argv[1:]
 
 ROOT = os.path.join(os.path.expanduser("~"), ".claude", "projects")
 
 months = defaultdict(lambda: defaultdict(int))
+days = defaultdict(lambda: defaultdict(int))
 seen = set()
 nfiles = 0
 
@@ -81,8 +90,10 @@ for f in glob.glob(os.path.join(ROOT, "**", "*.jsonl"), recursive=True):
     for i, (dt, cc, rtype) in enumerate(reqs):
         mo = dt.strftime("%Y-%m")
         d = months[mo]
+        dd = days[dt.strftime("%Y-%m-%d")]  # daily bucket for --json (same dt)
         d["req"] += 1
         d["cc"] += cc
+        dd["req"] += 1
         if rtype != "previous_message_not_found":
             continue
         d["pmnf_raw"] += 1
@@ -93,9 +104,32 @@ for f in glob.glob(os.path.join(ROOT, "**", "*.jsonl"), recursive=True):
         if in_ttl:
             d["loss"] += 1
             d["loss_cc"] += cc
+            dd["loss"] += 1
+            dd["loss_cc"] += cc
             if gap < 300:
                 d["iron"] += 1
                 d["iron_cc"] += cc
+                dd["iron"] += 1
+
+if JSON_MODE:
+    # Output shaping only - buckets above were filled by the unchanged
+    # judgment loop. Shape mirrors the web engine (assets/parse.js).
+    out = {
+        "script_version": "cli-2.1",
+        "totals": {
+            "requests": sum(d["req"] for d in days.values()),
+            "in_ttl_losses": sum(d["loss"] for d in days.values()),
+            "iron_losses": sum(d["iron"] for d in days.values()),
+            "wasted_tokens": sum(d["loss_cc"] for d in days.values()),
+        },
+        "daily": [
+            {"date": k, "requests": days[k]["req"], "losses": days[k]["loss"],
+             "wasted_tokens": days[k]["loss_cc"]}
+            for k in sorted(days)
+        ],
+    }
+    print(json.dumps(out, indent=2))
+    sys.exit(0)
 
 print("Claude Code prompt-cache loss self-check (TTL-aware)")
 print(f"scanned {nfiles} session files, {len(seen)} unique API requests\n")

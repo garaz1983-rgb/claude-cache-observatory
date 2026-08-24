@@ -178,7 +178,10 @@
 
     var n = days.length, slot = iw / n, bw = Math.max(2, Math.min(26, slot * 0.55));
     var step = labelStep(n, 12);
-    var showCountLabels = slot > 17;
+    // Counts are the primary reading of this chart (prototype behavior):
+    // draw the number above every bar unless slots are too narrow to fit
+    // two digits at all.
+    var showCountLabels = slot >= 9;
     days.forEach(function (d, i) {
       var x = padL + slot * i + slot / 2;
       if (d.count > 0) {

@@ -3,8 +3,14 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>내 데이터 진단 — 캐시 유실 관측소</title>
-<meta name="description" content="내 로컬 로그로 Claude Code 프롬프트 캐시 유실을 진단 — 전부 브라우저 안에서 파싱, 업로드 없음.">
+<title>내 데이터 진단 · 캐시 유실 관측소</title>
+<meta name="description" content="내 로컬 로그로 Claude Code 프롬프트 캐시 유실을 진단. 전부 브라우저 안에서 파싱, 업로드 없음.">
+<meta property="og:type" content="website">
+<meta property="og:title" content="내 데이터 진단 · 캐시 유실 관측소">
+<meta property="og:description" content="Claude Code 프롬프트 캐시 유실을 브라우저에서 자가진단. 데이터는 내 기기를 떠나지 않습니다.">
+<meta property="og:url" content="https://claude-cache-observatory.pages.dev/ko/check.html">
+<meta property="og:image" content="https://claude-cache-observatory.pages.dev/assets/og.png">
+<meta name="twitter:card" content="summary_large_image">
 <style>
 :root{
   --bg:#F4F6F8; --surface:#FFFFFF; --ink:#1C2530; --muted:#5B6B7A;
@@ -60,6 +66,15 @@ section .desc{color:var(--muted); font-size:.85rem; margin:0 0 14px}
 .dropzone .or{font-size:.72rem; letter-spacing:.08em}
 .dropzone button{font:inherit; font-weight:600; padding:8px 16px; border-radius:8px; border:1px solid var(--line); background:var(--surface); color:var(--ink); cursor:pointer}
 .dropzone button:hover{border-color:var(--muted)}
+details.paste{border:1px solid var(--line); border-radius:8px; background:var(--bg); margin-top:14px}
+details.paste summary{cursor:pointer; padding:10px 14px; font-size:.85rem; font-weight:600; color:var(--muted)}
+details.paste .body{padding:0 14px 14px; font-size:.85rem}
+details.paste .body p{margin:0 0 10px}
+details.paste textarea{width:100%; min-height:130px; font-family:ui-monospace,'Cascadia Mono',Consolas,monospace; font-size:.76rem; line-height:1.5; padding:8px 10px; border:1px solid var(--line); border-radius:6px; background:var(--surface); color:var(--ink); resize:vertical}
+details.paste .actions{display:flex; align-items:center; gap:12px; margin-top:10px; flex-wrap:wrap}
+details.paste button{font:inherit; font-weight:600; padding:7px 14px; border-radius:8px; border:1px solid var(--line); background:var(--surface); color:var(--ink); cursor:pointer}
+details.paste button:hover{border-color:var(--muted)}
+details.paste .hint{font-size:.76rem; color:var(--muted)}
 .progress{margin-top:12px; font-family:ui-monospace,'Cascadia Mono',Consolas,monospace; font-variant-numeric:tabular-nums; font-size:.82rem; color:var(--muted)}
 .err{font-size:.85rem; margin-top:12px; padding:12px 14px; border-left:3px solid var(--crit); background:var(--crit-soft); border-radius:0 6px 6px 0}
 .kpis{display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:12px; margin:0 0 8px}
@@ -119,7 +134,7 @@ a{color:inherit}
 <div class="wrap">
 
 <div class="topbar">
-  <span class="badge">커뮤니티 도구 — Anthropic 공식 아님</span>
+  <span class="badge">커뮤니티 도구 · Anthropic 공식 아님</span>
   <nav class="lang"><a href="../check.html">EN</a> · <b>한국어</b></nav>
 </div>
 
@@ -127,10 +142,10 @@ a{color:inherit}
 
 <header>
   <h1>내 데이터 진단하기</h1>
-  <p class="sub">전부 <b>브라우저 안에서 로컬로</b> 실행된다 — 로그 파일은 이 기기를 떠나지 않는다. 업로드도, 가입도 없다.</p>
+  <p class="sub">전부 <b>브라우저 안에서 로컬로</b> 실행된다. 로그 파일은 이 기기를 떠나지 않는다. 업로드도, 가입도 없다.</p>
 </header>
 
-<div class="notice"><b>데스크톱 브라우저 필요.</b> 로그는 Claude Code가 실행되는 기기(<span class="mono">~/.claude/projects</span>)에 있다 — 모바일 브라우저에서는 접근할 수 없다.</div>
+<div class="notice"><b>데스크톱 브라우저 필요.</b> 로그는 Claude Code가 실행되는 기기(<span class="mono">~/.claude/projects</span>)에 있다. 모바일 브라우저에서는 접근할 수 없다.</div>
 
 <section>
   <h2>1 · 세션 로그 불러오기</h2>
@@ -146,14 +161,28 @@ a{color:inherit}
       <p class="or">또는</p>
       <p><button id="pickBtn" type="button">폴더 선택…</button></p>
     </div>
+    <div class="notice" id="singleFileNote" hidden><b>낱개 .jsonl 파일이 드롭되었다.</b> 낱개 파일은 <span class="mono">subagents</span> 폴더 판별이 불가능해 전부 메인 세션(30분 TTL)으로 분류된다. 정확한 판정을 원하면 폴더째 드롭하거나 폴더 선택을 권장.</div>
     <div class="progress" id="progress" hidden></div>
     <div class="err" id="parseErr" hidden></div>
+    <details class="paste" id="pasteDetails">
+      <summary>폴더 접근이 안 되면? CLI 스크립트의 JSON 출력 붙여넣기</summary>
+      <div class="body">
+        <p>로그가 있는 기기에서 <span class="mono">python scripts/check_cache_loss.py --json</span>(이 repo에 포함된 스크립트)을 실행하고, 출력 전체를 아래에 붙여넣는다. 붙여넣는 JSON에는 집계만 담긴다: 총계와 일별 카운트.</p>
+        <textarea id="pasteBox" spellcheck="false" placeholder='{"script_version": "cli-2.1", "totals": {...}, "daily": [...]}'></textarea>
+        <div class="actions">
+          <button id="pasteBtn" type="button">붙여넣은 JSON 렌더</button>
+          <span class="hint">참고: <span class="mono">--json</span> 플래그는 이 repo 사본에 추가된 것이고, 판정 규칙은 v2.1 그대로다.</span>
+        </div>
+        <div class="err" id="pasteErr" hidden></div>
+      </div>
+    </details>
   </div>
 </section>
 
 <section id="results" hidden>
   <h2>2 · 내 결과</h2>
-  <p class="desc">TTL-strict 판정 v2.1 — 캐시 TTL 안쪽에서 일어난 유실만 집계하고, 정당한 만료는 제외한다.</p>
+  <p class="desc">TTL-strict 판정 v2.1: 캐시 TTL 안쪽에서 일어난 유실만 집계하고, 정당한 만료는 제외한다.</p>
+  <div class="notice" id="pasteSrcNote" hidden>붙여넣은 CLI JSON(집계 전용)으로 렌더되어 시간대별 히트맵은 표시되지 않는다. 공유를 포함한 나머지 기능은 동일하게 동작한다.</div>
 
   <div class="kpis">
     <div class="kpi"><div class="label">스캔한 요청</div><div class="val" id="kRequests">–</div></div>
@@ -172,16 +201,16 @@ a{color:inherit}
     </div>
   </div>
 
-  <section>
-    <h2>일 × 1시간 히트맵 — 사용량 대비 유실</h2>
-    <p class="desc">바탕 회청색 = 그 시간의 요청량(진할수록 많이 사용). 빨강 숫자 = in-TTL 유실 건수. 이렇게 보면 "안 써서 0"과 "많이 썼는데도 0"이 구분된다. <b>빨간 셀을 클릭</b>하면 건별 상세(시각·유휴 간격·토큰)가 열린다 — 이 상세도 브라우저 밖으로 나가지 않는다.</p>
+  <section id="hmSection">
+    <h2>일 × 1시간 히트맵: 사용량 대비 유실</h2>
+    <p class="desc">바탕 회청색 = 그 시간의 요청량(진할수록 많이 사용). 빨강 숫자 = in-TTL 유실 건수. 이렇게 보면 "안 써서 0"과 "많이 썼는데도 0"이 구분된다. <b>빨간 셀을 클릭</b>하면 건별 상세(시각·유휴 간격·토큰)가 열린다. 이 상세도 브라우저 밖으로 나가지 않는다.</p>
     <div class="card hm-scroll">
       <table class="hm" id="heatmap"></table>
       <div class="evt-panel" id="evtPanel"></div>
       <div class="legend">
-        <span><i class="chip" style="background:var(--grid)"></i>미사용</span>
-        <span><i class="chip" id="lg-use"></i>사용량 (진할수록 ↑)</span>
-        <span><i class="chip" style="background:var(--crit)"></i>유실 발생 (숫자 = 건수)</span>
+        <span><i class="chip" style="background:var(--grid)"></i>미사용(요청 0)</span>
+        <span><i class="chip" id="lg-use"></i>회색 음영 = 그 시간대 요청량(진할수록 많음)</span>
+        <span><i class="chip" style="background:var(--crit)"></i>적색 = 유실 건수(셀 안 숫자, 클릭하면 건별 상세)</span>
       </div>
     </div>
   </section>
@@ -190,18 +219,18 @@ a{color:inherit}
     <summary>유실 판정 기준 (TTL-strict, v2.1)</summary>
     <div class="body">
       <ul>
-        <li><b>후보</b> — 서버가 직접 <span class="mono">message.diagnostics.cache_miss_reason = previous_message_not_found</span>를 찍은 레코드만. 추정은 없다.</li>
-        <li><b>in-TTL 유실</b> — 같은 세션 파일에서 직전 요청과의 유휴 간격이 <b>30분 미만</b>(메인 세션) / <b>5분 미만</b>(서브에이전트)일 때. 그보다 길면 정당한 TTL 만료로 보고 집계하지 <b>않는다</b>.</li>
-        <li><b>iron 유실</b> — 유휴 간격 <b>5분 미만</b>: 공표된 어떤 TTL로도 캐시가 만료됐을 수 없다.</li>
-        <li><b>중복 제거</b> — <span class="mono">requestId</span>당 1건. 같은 요청의 후속 레코드는 빠진 사유를 보강하는 데만 쓴다.</li>
-        <li><b>비용</b> — 유실 1건의 재과금 비용 = 그 요청의 <span class="mono">cache_creation_input_tokens</span>.</li>
+        <li><b>후보</b>: 서버가 직접 <span class="mono">message.diagnostics.cache_miss_reason = previous_message_not_found</span>를 찍은 레코드만. 추정은 없다.</li>
+        <li><b>in-TTL 유실</b>: 같은 세션 파일에서 직전 요청과의 유휴 간격이 <b>30분 미만</b>(메인 세션) / <b>5분 미만</b>(서브에이전트)일 때. 그보다 길면 정당한 TTL 만료로 보고 집계하지 <b>않는다</b>.</li>
+        <li><b>iron 유실</b>: 유휴 간격 <b>5분 미만</b>. 공표된 어떤 TTL로도 캐시가 만료됐을 수 없다.</li>
+        <li><b>중복 제거</b>: <span class="mono">requestId</span>당 1건. 같은 요청의 후속 레코드는 빠진 사유를 보강하는 데만 쓴다.</li>
+        <li><b>비용</b>: 유실 1건의 재과금 비용 = 그 요청의 <span class="mono">cache_creation_input_tokens</span>.</li>
       </ul>
     </div>
   </details>
 
   <section id="submitSection">
     <h2>3 · 관측소에 집계 공유하기 (선택)</h2>
-    <p class="desc">전송되는 것은 아래 JSON <b>전문 그대로</b>다 — 기간·총계·일별 카운트뿐. 로그·파일 경로·세션 내용·건별 상세는 절대 전송되지 않는다.</p>
+    <p class="desc">전송되는 것은 아래 JSON <b>전문 그대로</b>다. 기간·총계·일별 카운트뿐. 로그·파일 경로·세션 내용·건별 상세는 절대 전송되지 않는다.</p>
     <div class="card">
       <div class="submit-form">
         <div>
@@ -253,7 +282,7 @@ a{color:inherit}
 </section>
 
 <footer>
-  커뮤니티 운영 도구 — Anthropic과 무관합니다. 엔진: <code>assets/parse.js</code> (판정 규칙 v2.1, <code>scripts/check_cache_loss.py</code>와 동일). 증거 스레드: <a href="https://github.com/anthropics/claude-code/issues/87966">anthropics/claude-code#87966</a>
+  커뮤니티 운영 도구, Anthropic과 무관합니다. 엔진: <code>assets/parse.js</code> (판정 규칙 v2.1, <code>scripts/check_cache_loss.py</code>와 동일). 증거 스레드: <a href="https://github.com/anthropics/claude-code/issues/87966">anthropics/claude-code#87966</a>
 </footer>
 
 </div>
@@ -262,7 +291,7 @@ a{color:inherit}
 <script>
 "use strict";
 
-var LAST = null;     // {result, census}
+var LAST = null;     // {result, census, source_version}, census null = 붙여넣은 CLI JSON(시간별 데이터 없음)
 var EVT_MAP = null;  // "date#hour" -> [events]
 
 function fmtInt(n){ return n.toLocaleString("ko-KR"); }
@@ -276,7 +305,7 @@ function mdLabel(iso){ return (+iso.slice(5,7)) + "/" + (+iso.slice(8,10)); }
 function hh(h){ return String(h).padStart(2, "0"); }
 
 /* 타임스탬프 처리는 assets/parse.js와 동일(레코드 자체의 UTC 오프셋 유지,
-   오프셋 없는 값은 UTC 고정). 카운팅 전용 — 판정 로직 아님. */
+   오프셋 없는 값은 UTC 고정). 카운팅 전용, 판정 로직 아님. */
 function tsParse(ts){
   if(typeof ts !== "string" || ts === "") return null;
   var offsetMinutes = 0, hasOffset = false;
@@ -301,7 +330,7 @@ function tsDateHour(ts){
 function isObj(v){ return v !== null && typeof v === "object" && !Array.isArray(v); }
 
 /* 히트맵 바탕용 시간별 요청 집계. parse.js의 요청 카운팅 규칙을 그대로
-   따른다(usage 라인, requestId 중복 제거, 첫 레코드 우선) — 음영용 볼륨
+   따른다(usage 라인, requestId 중복 제거, 첫 레코드 우선). 음영용 볼륨
    카운팅일 뿐, 유실 판정이 아니다. */
 function usageCensus(files){
   var seen = new Set();
@@ -339,6 +368,7 @@ if(!window.showDirectoryPicker){
     try{ dir = await window.showDirectoryPicker(); }
     catch(e){ return; } // 사용자 취소
     var out = [];
+    document.getElementById("singleFileNote").hidden = true;
     setProgress("폴더 스캔 중…");
     try{ await walkDir(dir, dir.name + "/", out); }
     catch(e){ showError("폴더를 읽을 수 없다: " + e.message); return; }
@@ -367,16 +397,23 @@ dz.addEventListener("drop", async function(e){
     return it.webkitGetAsEntry ? it.webkitGetAsEntry() : null;
   }).filter(Boolean);
   var out = [];
+  var filesOnly = true; // 드롭 항목에 디렉토리가 없음
   setProgress("드롭 항목 스캔 중…");
   try{
     if(entries.length){
-      for(var i = 0; i < entries.length; i++) await walkEntry(entries[i], out);
+      for(var i = 0; i < entries.length; i++){
+        if(entries[i].isDirectory) filesOnly = false;
+        await walkEntry(entries[i], out);
+      }
     } else {
       Array.prototype.slice.call(e.dataTransfer.files || []).forEach(function(f){
         if(f.name.endsWith(".jsonl")) out.push({ name: f.name, file: f });
       });
     }
   } catch(err){ showError("드롭한 항목을 읽을 수 없다: " + err.message); return; }
+  // 낱개 파일 드롭: subagents 폴더 표식이 사라지므로 경고만 한다
+  // (분류 로직 자체는 CLI 패리티 그대로).
+  document.getElementById("singleFileNote").hidden = !(filesOnly && out.length > 0);
   processList(out);
 });
 function entryFile(entry){ return new Promise(function(res, rej){ entry.file(res, rej); }); }
@@ -411,7 +448,7 @@ function showError(msg){
 async function processList(list){
   document.getElementById("parseErr").hidden = true;
   if(!list.length){
-    showError(".jsonl 파일을 찾지 못했다 — ~/.claude/projects 폴더(또는 그 안의 .jsonl 파일)를 드롭할 것.");
+    showError(".jsonl 파일을 찾지 못했다. ~/.claude/projects 폴더(또는 그 안의 .jsonl 파일)를 드롭할 것.");
     return;
   }
   var files = [];
@@ -432,14 +469,121 @@ async function processList(list){
     showError("파싱 실패: " + e.message);
     return;
   }
-  setProgress("완료 — 파일 " + files.length + "개 · 요청 " + fmtInt(result.totals.requests) + "건 스캔.");
-  LAST = { result: result, census: census };
+  setProgress("완료: 파일 " + files.length + "개 · 요청 " + fmtInt(result.totals.requests) + "건 스캔.");
+  LAST = { result: result, census: census, source_version: null };
   buildEvtMap(result.events);
+  document.getElementById("pasteSrcNote").hidden = true;
   // Unhide BEFORE drawing: canvases in a hidden section have zero width.
   document.getElementById("results").hidden = false;
   renderResults();
   document.getElementById("results").scrollIntoView({ behavior: "smooth" });
 }
+
+/* ---------- 입력: CLI --json 출력 붙여넣기 (FR-07, 최후 폴백) ---------- */
+function isCountInt(v){
+  return typeof v === "number" && isFinite(v) && Math.floor(v) === v && v >= 0;
+}
+/* CLI --json 집계의 필드별 검증 (06 스펙 E3). {script_version?, totals, daily}
+   정확히 그 형태만 허용한다(/api/submit과 같은 화이트리스트 방식). */
+function validateCliJson(text){
+  var errs = [];
+  var o;
+  try{ o = JSON.parse(text); }
+  catch(e){ return { errors: ["유효한 JSON이 아니다: " + e.message] }; }
+  if(!isObj(o)) return { errors: ["최상위는 JSON 객체여야 한다 (--json으로 실행한 출력 전체를 붙여넣을 것)"] };
+  Object.keys(o).forEach(function(k){
+    if(["script_version", "totals", "daily"].indexOf(k) === -1) errs.push("정의되지 않은 필드: " + k);
+  });
+  var t = o.totals;
+  if(!isObj(t)){
+    errs.push("totals: 없거나 객체가 아니다");
+    t = null;
+  } else {
+    Object.keys(t).forEach(function(k){
+      if(["requests", "in_ttl_losses", "iron_losses", "wasted_tokens"].indexOf(k) === -1) errs.push("정의되지 않은 필드: totals." + k);
+    });
+    ["requests", "in_ttl_losses", "iron_losses", "wasted_tokens"].forEach(function(k){
+      if(!isCountInt(t[k])) errs.push("totals." + k + ": 0 이상의 정수여야 한다");
+    });
+    if(isCountInt(t.requests) && isCountInt(t.in_ttl_losses) && t.in_ttl_losses > t.requests) errs.push("totals.in_ttl_losses가 totals.requests를 초과한다");
+    if(isCountInt(t.in_ttl_losses) && isCountInt(t.iron_losses) && t.iron_losses > t.in_ttl_losses) errs.push("totals.iron_losses가 totals.in_ttl_losses를 초과한다");
+  }
+  var d = o.daily;
+  if(!Array.isArray(d) || d.length === 0){
+    errs.push("daily: 비어 있지 않은 배열이어야 한다");
+  } else {
+    var sums = { requests: 0, losses: 0, wasted_tokens: 0 };
+    var seenDates = {};
+    var prevDate = "";
+    d.forEach(function(e, i){
+      if(!isObj(e)){ errs.push("daily[" + i + "]: 객체여야 한다"); return; }
+      Object.keys(e).forEach(function(k){
+        if(["date", "requests", "losses", "wasted_tokens"].indexOf(k) === -1) errs.push("정의되지 않은 필드: daily[" + i + "]." + k);
+      });
+      if(typeof e.date !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(e.date)){
+        errs.push("daily[" + i + "].date: YYYY-MM-DD 형식이어야 한다");
+      } else {
+        if(seenDates[e.date]) errs.push("daily[" + i + "].date: 중복 " + e.date);
+        seenDates[e.date] = true;
+        if(e.date < prevDate) errs.push("daily[" + i + "].date: 오름차순이 아니다");
+        prevDate = e.date;
+      }
+      ["requests", "losses", "wasted_tokens"].forEach(function(k){
+        if(!isCountInt(e[k])) errs.push("daily[" + i + "]." + k + ": 0 이상의 정수여야 한다");
+        else sums[k] += e[k];
+      });
+      if(isCountInt(e.requests) && isCountInt(e.losses) && e.losses > e.requests) errs.push("daily[" + i + "].losses가 daily[" + i + "].requests를 초과한다");
+    });
+    if(t){
+      if(isCountInt(t.requests) && sums.requests !== t.requests) errs.push("daily requests 합 " + sums.requests + " != totals.requests " + t.requests);
+      if(isCountInt(t.in_ttl_losses) && sums.losses !== t.in_ttl_losses) errs.push("daily losses 합 " + sums.losses + " != totals.in_ttl_losses " + t.in_ttl_losses);
+      if(isCountInt(t.wasted_tokens) && sums.wasted_tokens !== t.wasted_tokens) errs.push("daily wasted_tokens 합 " + sums.wasted_tokens + " != totals.wasted_tokens " + t.wasted_tokens);
+    }
+  }
+  var sv = o.script_version;
+  if(sv !== undefined && (typeof sv !== "string" || sv.length === 0 || sv.length > 32 || !/^[A-Za-z0-9._-]+$/.test(sv))){
+    errs.push("script_version: cli-2.1 같은 짧은 태그여야 한다");
+  }
+  if(errs.length) return { errors: errs };
+  return {
+    errors: [],
+    version: typeof sv === "string" ? sv : "cli-2.1",
+    result: {
+      totals: { requests: t.requests, in_ttl_losses: t.in_ttl_losses, iron_losses: t.iron_losses, wasted_tokens: t.wasted_tokens },
+      daily: d.map(function(e){ return { date: e.date, requests: e.requests, losses: e.losses, wasted_tokens: e.wasted_tokens }; }),
+      events: []
+    }
+  };
+}
+
+document.getElementById("pasteBtn").addEventListener("click", function(){
+  var errBox = document.getElementById("pasteErr");
+  errBox.hidden = true;
+  errBox.textContent = "";
+  var text = document.getElementById("pasteBox").value.trim();
+  if(!text){
+    errBox.hidden = false;
+    errBox.textContent = "붙여넣은 내용이 없다. 실행: python scripts/check_cache_loss.py --json";
+    return;
+  }
+  var v = validateCliJson(text);
+  if(v.errors.length){
+    errBox.hidden = false;
+    errBox.textContent = "붙여넣은 JSON이 CLI --json 스키마와 맞지 않는다:\n" +
+      v.errors.map(function(m){ return "· " + m; }).join("\n");
+    errBox.style.whiteSpace = "pre-wrap";
+    return;
+  }
+  document.getElementById("parseErr").hidden = true;
+  document.getElementById("singleFileNote").hidden = true;
+  setProgress("붙여넣은 CLI JSON 렌더 완료: 요청 " + fmtInt(v.result.totals.requests) + "건, " + v.result.daily.length + "일.");
+  LAST = { result: v.result, census: null, source_version: v.version };
+  buildEvtMap(v.result.events);
+  document.getElementById("pasteSrcNote").hidden = false;
+  document.getElementById("results").hidden = false;
+  renderResults();
+  document.getElementById("results").scrollIntoView({ behavior: "smooth" });
+});
 
 function buildEvtMap(events){
   EVT_MAP = new Map();
@@ -470,7 +614,7 @@ function renderResults(){
 var SUBMIT_BUSY = false;
 var SUBMIT_DONE = false;
 
-/* 집계 + 일별만 — 건별 상세(LAST.result.events)는 이 payload에 절대 넣지 않는다. */
+/* 집계 + 일별만. 건별 상세(LAST.result.events)는 이 payload에 절대 넣지 않는다. */
 function buildSubmitPayload(){
   if(!LAST || !LAST.result.daily.length) return null;
   var r = LAST.result;
@@ -491,7 +635,8 @@ function buildSubmitPayload(){
   payload.daily = r.daily.map(function(d){
     return { date: d.date, requests: d.requests, losses: d.losses, wasted_tokens: d.wasted_tokens };
   });
-  payload.script_version = CacheObservatory.SCRIPT_VERSION;
+  // 붙여넣기 경로의 결과는 CLI 자체 버전 태그(예: cli-2.1)를 가져간다.
+  payload.script_version = LAST.source_version || CacheObservatory.SCRIPT_VERSION;
   return payload;
 }
 
@@ -522,7 +667,7 @@ function updateSubmitCard(){
   pre.textContent = JSON.stringify(payload, null, 2);
   if(payload.daily.length > 92){
     btn.disabled = true;
-    submitMsg("bad", "스캔 기간이 92일을 넘는다 — 관측소는 최대 92일까지 받는다. 더 짧은 범위로 다시 돌려서 공유할 것.");
+    submitMsg("bad", "스캔 기간이 92일을 넘는다. 관측소는 최대 92일까지 받는다. 더 짧은 범위로 다시 돌려서 공유할 것.");
     return;
   }
   btn.disabled = SUBMIT_BUSY || SUBMIT_DONE;
@@ -550,20 +695,20 @@ document.getElementById("subBtn").addEventListener("click", async function(){
   }catch(e){
     SUBMIT_BUSY = false;
     updateSubmitCard();
-    submitMsg("bad", "네트워크 오류 — 제출이 전달되지 않았다. 다시 시도할 것.");
+    submitMsg("bad", "네트워크 오류: 제출이 전달되지 않았다. 다시 시도할 것.");
     return;
   }
   SUBMIT_BUSY = false;
   if(res.ok && data && data.ok){
     SUBMIT_DONE = true;
     updateSubmitCard();
-    submitMsg("ok", "제출 완료 — 관측소 반영까지 1~2분(봇 커밋이 재배포를 트리거한다).", [
+    submitMsg("ok", "제출 완료. 관측소 반영까지 1~2분(봇 커밋이 재배포를 트리거한다).", [
       { href: data.commit_url || "https://github.com", label: "봇 커밋 보기" },
       { href: "index.html", label: "관측소 열기" }
     ]);
   } else if(res.status === 400){
     updateSubmitCard();
-    var el = submitMsg("bad", "데이터 정합 오류 — 관측소가 이 payload를 거부했다.");
+    var el = submitMsg("bad", "데이터 정합 오류: 관측소가 이 payload를 거부했다.");
     if(data && data.detail){
       var d = document.createElement("span");
       d.className = "detail";
@@ -573,10 +718,10 @@ document.getElementById("subBtn").addEventListener("click", async function(){
   } else if(res.status === 429){
     updateSubmitCard();
     var mins = Math.max(1, Math.ceil(((data && data.retry_after) || 3600) / 60));
-    submitMsg("bad", "이 연결에서 제출이 너무 잦다 — 약 " + mins + "분 뒤 다시 시도할 것.");
+    submitMsg("bad", "이 연결에서 제출이 너무 잦다. 약 " + mins + "분 뒤 다시 시도할 것.");
   } else {
     updateSubmitCard();
-    submitMsg("bad", "저장소가 일시적으로 응답하지 않는다 — 잠시 후 재시도. (관측소 조회에는 영향 없음)");
+    submitMsg("bad", "저장소가 일시적으로 응답하지 않는다. 잠시 후 재시도. (관측소 조회에는 영향 없음)");
   }
 });
 
@@ -588,6 +733,13 @@ function drawCharts(){
   if(days.length){
     ObservatoryCharts.renderDailyBars(document.getElementById("daily"), days);
   }
+  // 붙여넣은 CLI JSON은 일별 집계뿐이라 시간별 히트맵을 그릴 수 없다.
+  var hmSection = document.getElementById("hmSection");
+  if(!LAST.census){
+    hmSection.hidden = true;
+    return;
+  }
+  hmSection.hidden = false;
   var zeros = new Array(24).fill(0);
   var dates = Array.from(LAST.census.keys()).sort();
   var rows = dates.map(function(date){
@@ -613,7 +765,7 @@ function showEvents(date, hour){
   var rows = EVT_MAP.get(date + "#" + hour) || [];
   if(!rows.length){ hideEvents(); return; }
   var tot = rows.reduce(function(a, e){ return a + e.tokens; }, 0);
-  var html = "<h3>" + date + " " + hh(hour) + "시 — 유실 " + rows.length +
+  var html = "<h3>" + date + " " + hh(hour) + "시 · 유실 " + rows.length +
     "건 · 재과금 " + (tot / 1e6).toFixed(2) + "M 토큰 " +
     "<span style='font-weight:400;color:var(--muted)'>(셀을 다시 클릭하면 닫힘)</span></h3>";
   html += "<table><tr><th>시각</th><th>직전 요청과의 간격</th><th>재과금 토큰</th><th>세션</th></tr>";

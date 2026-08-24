@@ -4,7 +4,13 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>캐시 유실 관측소</title>
-<meta name="description" content="Claude Code in-TTL 프롬프트 캐시 유실을 추적하는 커뮤니티 관측소 — 자발적 제출자의 브라우저 로컬 파싱 집계만 수집.">
+<meta name="description" content="Claude Code in-TTL 프롬프트 캐시 유실을 추적하는 커뮤니티 관측소. 자발적 제출자의 브라우저 로컬 파싱 집계만 수집.">
+<meta property="og:type" content="website">
+<meta property="og:title" content="캐시 유실 관측소">
+<meta property="og:description" content="Claude Code 프롬프트 캐시 유실을 브라우저에서 자가진단. 데이터는 내 기기를 떠나지 않습니다.">
+<meta property="og:url" content="https://claude-cache-observatory.pages.dev/ko/">
+<meta property="og:image" content="https://claude-cache-observatory.pages.dev/assets/og.png">
+<meta name="twitter:card" content="summary_large_image">
 <style>
 :root{
   --bg:#F4F6F8; --surface:#FFFFFF; --ink:#1C2530; --muted:#5B6B7A;
@@ -70,6 +76,11 @@ table.subs th:first-child{text-align:left}
 table.subs td{padding:6px 8px; border-bottom:1px solid var(--grid); font-family:ui-monospace,'Cascadia Mono',Consolas,monospace; font-variant-numeric:tabular-nums; white-space:nowrap; text-align:right}
 table.subs td.nick{font-family:inherit; text-align:left}
 table.subs td.crit{color:var(--crit); font-weight:600}
+.story p{margin:0 0 10px; font-size:.9rem}
+.story p:last-child{margin-bottom:0}
+details.faq{border:1px solid var(--line); border-radius:8px; background:var(--bg); margin-top:10px}
+details.faq summary{cursor:pointer; padding:10px 14px; font-weight:600; font-size:.88rem}
+details.faq .body{padding:0 14px 12px; font-size:.85rem}
 .rules{margin:0 0 14px; padding-left:20px; font-size:.88rem}
 .rules li{margin:5px 0}
 .trust-note{font-size:.85rem; margin-top:14px; padding:12px 14px; border-left:3px solid var(--ok); background:var(--ok-soft); border-radius:0 6px 6px 0}
@@ -88,13 +99,13 @@ a{color:inherit}
 <div class="wrap">
 
 <div class="topbar">
-  <span class="badge">커뮤니티 도구 — Anthropic 공식 아님</span>
+  <span class="badge">커뮤니티 도구 · Anthropic 공식 아님</span>
   <nav class="lang"><a href="../index.html">EN</a> · <b>한국어</b></nav>
 </div>
 
 <header>
   <h1>캐시 유실 관측소</h1>
-  <p class="sub">Claude Code in-TTL <span class="mono">previous_message_not_found</span> 프롬프트 캐시 유실을 계정 단위로 추적한다 — 아래 모든 수치는 자발적 제출자의 <b>브라우저에서 로컬로 파싱</b>되어, 본인이 승인한 집계 숫자만 제출된 것이다.</p>
+  <p class="sub">Claude Code in-TTL <span class="mono">previous_message_not_found</span> 프롬프트 캐시 유실을 계정 단위로 추적한다. 아래 모든 수치는 자발적 제출자의 <b>브라우저에서 로컬로 파싱</b>되어, 본인이 승인한 집계 숫자만 제출된 것이다.</p>
 </header>
 
 <div class="kpis">
@@ -106,7 +117,19 @@ a{color:inherit}
 
 <a class="cta" href="check.html">내 데이터 진단하기 →</a>
 
-<div class="err" id="loadErr" hidden><span class="mono">data/submissions.json</span>을 불러오지 못했다 — 관측소 데이터 파일이 없거나 읽을 수 없다.</div>
+<div class="err" id="loadErr" hidden><span class="mono">data/submissions.json</span>을 불러오지 못했다. 관측소 데이터 파일이 없거나 읽을 수 없다.</div>
+
+<section id="secWhy">
+  <h2>왜 이 관측소가 있나</h2>
+  <p class="desc">짧은 경위. 헤드라인에 불리한 사실도 함께 적는다.</p>
+  <div class="card story">
+    <p>2026년 봄부터 일부 Claude Code 사용자에게서 사용량이 비정상적으로 빨리 소진되는 일이 반복됐다. 5시간 한도 창이 수십 분 만에 바닥나는 수준이었다. 5월의 GitHub 신고(<a href="https://github.com/anthropics/claude-code/issues/63282">#63282</a>)는 응답 없이 자동으로 닫혔다.</p>
+    <p>8월, 서버가 로컬 세션 로그에 직접 남기는 진단 필드 <span class="mono">message.diagnostics.cache_miss_reason</span>이 확인됐다. 이때부터 유실을 체감이 아니라 서버 기록으로 판정할 수 있게 됐다.</p>
+    <p>정직한 반론도 적어 둔다: 원시 집계의 대부분(운영자 데이터 기준 78%)은 장시간 유휴 후의 정당한 만료였다. 이 사이트는 그것을 제외하고 TTL 안쪽 유실만 센다.</p>
+    <p>통제된 재현에서는 같은 기계의 4개 세션이 같은 1분 안에 동시에 캐시를 잃었고, 생성된 지 24초 된 캐시 엔트리가 사라지는 것도 관측됐다. 같은 시그니처가 독립 계정 3곳에서 확인됐다.</p>
+    <p>개인 환경 문제인지 광범위한 문제인지 가르려면 구조화된 다계정 데이터가 필요하다. 그것을 모으는 곳이 이 사이트다. 논의는 <a href="https://github.com/anthropics/claude-code/issues/87966">anthropics/claude-code#87966</a>에서 진행 중이다.</p>
+  </div>
+</section>
 
 <section id="secFleet">
   <h2>Fleet 일별 유실률 추이</h2>
@@ -119,7 +142,7 @@ a{color:inherit}
 
 <section id="secSubs">
   <h2>제출 목록</h2>
-  <p class="desc">제출별 집계 합계. 시각·세션 ID·파일 경로는 없다 — 스키마 차원에서 담을 수 없다.</p>
+  <p class="desc">제출별 집계 합계. 시각·세션 ID·파일 경로는 없다. 스키마 차원에서 담을 수 없다.</p>
   <div class="card tbl-scroll">
     <table class="subs" id="subsTable">
       <thead><tr>
@@ -136,14 +159,20 @@ a{color:inherit}
   <p class="desc">무엇을 유실로 판정하는지, 그리고 왜 모든 단계를 직접 검증할 수 있는지.</p>
   <div class="card">
     <ul class="rules">
-      <li><b>근거 데이터</b> — 로컬 세션 로그(<span class="mono">~/.claude/projects/**/*.jsonl</span>)에 서버가 직접 찍은 진단 필드 <span class="mono">message.diagnostics.cache_miss_reason = previous_message_not_found</span>. 추정이 아니라 서버가 표시한 레코드만 후보다.</li>
-      <li><b>TTL-strict 판정</b> — 같은 세션 파일에서 직전 요청과의 유휴 간격이 <b>30분 미만</b>(메인 세션) / <b>5분 미만</b>(서브에이전트)일 때만 유실로 집계. 그보다 길면 정당한 TTL 만료로 보고 <b>제외</b>한다.</li>
-      <li><b>iron 유실</b> — 유휴 간격 <b>5분 미만</b>인 부분집합: 공표된 어떤 TTL로도 만료됐을 수 없는 구간.</li>
-      <li><b>중복 제거 · 비용</b> — <span class="mono">requestId</span> 기준으로 중복을 제거하고, 유실 1건의 재과금 비용은 그 요청의 <span class="mono">cache_creation_input_tokens</span>다.</li>
+      <li><b>근거 데이터</b>: 로컬 세션 로그(<span class="mono">~/.claude/projects/**/*.jsonl</span>)에 서버가 직접 찍은 진단 필드 <span class="mono">message.diagnostics.cache_miss_reason = previous_message_not_found</span>. 추정이 아니라 서버가 표시한 레코드만 후보다.</li>
+      <li><b>TTL-strict 판정</b>: 같은 세션 파일에서 직전 요청과의 유휴 간격이 <b>30분 미만</b>(메인 세션) / <b>5분 미만</b>(서브에이전트)일 때만 유실로 집계. 그보다 길면 정당한 TTL 만료로 보고 <b>제외</b>한다.</li>
+      <li><b>iron 유실</b>: 유휴 간격 <b>5분 미만</b>인 부분집합. 공표된 어떤 TTL로도 만료됐을 수 없는 구간.</li>
+      <li><b>중복 제거 · 비용</b>: <span class="mono">requestId</span> 기준으로 중복을 제거하고, 유실 1건의 재과금 비용은 그 요청의 <span class="mono">cache_creation_input_tokens</span>다.</li>
     </ul>
     <div class="trust-note">
-      <b>신뢰 모델:</b> 파싱은 <b>당신의 브라우저에서 로컬로</b> 실행된다 — 로그 파일은 기기를 떠나지 않는다. 전송되는 것은 본인이 명시적으로 승인한 집계 숫자(일별 건수·합계)뿐이다. 이 사이트는 <b>빌드 스텝이 없어서</b> 실행되는 코드가 repo에 있는 코드 그대로다 — 실행 전에 한 줄씩 읽어볼 수 있다.
+      <b>신뢰 모델:</b> 파싱은 <b>당신의 브라우저에서 로컬로</b> 실행된다. 로그 파일은 기기를 떠나지 않는다. 전송되는 것은 본인이 명시적으로 승인한 집계 숫자(일별 건수·합계)뿐이다. 이 사이트는 <b>빌드 스텝이 없어서</b> 실행되는 코드가 repo에 있는 코드 그대로다. 실행 전에 한 줄씩 읽어볼 수 있다.
     </div>
+    <details class="faq"><summary>내 대화 내용이 업로드되나?</summary><div class="body">아니다. 파싱은 전부 브라우저 안에서 일어난다. 직접 검증할 수 있다: F12 Network 탭을 열고 진단을 돌려 보면 네트워크 요청이 없다. 공유 버튼을 누르기 전에는 아무것도 전송되지 않고, 누르면 화면에 미리 보여준 집계 숫자 JSON만 나간다.</div></details>
+    <details class="faq"><summary>이 코드가 뭐 하는지 어떻게 믿나?</summary><div class="body">실행되는 코드가 repo 파일 그대로다(빌드 없음). 브라우저 view-source와 repo를 한 줄씩 대조할 수 있다. 서버 코드는 <span class="mono">functions/api/submit.js</span> 하나뿐이고, 설정도 <span class="mono">wrangler.toml</span>로 공개돼 있다.</div></details>
+    <details class="faq"><summary>돌리면 내 Claude 계정에 영향이 있나?</summary><div class="body">없다. 로그 파일을 읽기만 한다. Anthropic 계정이나 API와는 어떤 통신도 하지 않는다.</div></details>
+    <details class="faq"><summary>in-TTL 유실이 나왔다. 이제 뭐를 하나?</summary><div class="body"><a href="https://github.com/anthropics/claude-code/issues/87966">GitHub #87966</a>에 결과를 남겨 달라. 0이 나왔어도 똑같이 가치 있는 데이터다. 정상 계정의 존재도 원인 특정에 필요하다.</div></details>
+    <details class="faq"><summary>제출하면 뭐가 공개되나?</summary><div class="body">미리보기로 승인한 집계·일별 숫자와 선택 입력한 닉네임뿐이다. 제출 이력 전체가 repo 커밋으로 남아 누구나 감사할 수 있다.</div></details>
+    <details class="faq"><summary>Anthropic 공식 사이트인가?</summary><div class="body">아니다. Anthropic과 무관한 커뮤니티 도구다.</div></details>
     <div class="links">
       증거 스레드: <a href="https://github.com/anthropics/claude-code/issues/87966">anthropics/claude-code#87966</a> ·
       소스 · 데이터: <a href="https://github.com/garaz1983-rgb/claude-cache-observatory">garaz1983-rgb/claude-cache-observatory</a>
@@ -152,7 +181,7 @@ a{color:inherit}
 </section>
 
 <footer>
-  커뮤니티 운영 관측소 — Anthropic과 무관합니다. 판정 규칙 v2.1 (브라우저 <code>assets/parse.js</code> · CLI <code>scripts/check_cache_loss.py</code> — 같은 규칙, 상호 대조 검증 가능). 운영: <a href="https://github.com/garaz1983-rgb">garaz1983-rgb</a>
+  커뮤니티 운영 관측소, Anthropic과 무관합니다. 판정 규칙 v2.1 (브라우저 <code>assets/parse.js</code> · CLI <code>scripts/check_cache_loss.py</code>, 같은 규칙, 상호 대조 검증 가능). 운영: <a href="https://github.com/garaz1983-rgb">garaz1983-rgb</a>
 </footer>
 
 </div>

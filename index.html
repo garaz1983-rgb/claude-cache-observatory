@@ -5,6 +5,12 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Cache Eviction Observatory</title>
 <meta name="description" content="Community observatory tracking Claude Code in-TTL prompt-cache losses from volunteer-submitted, locally-parsed aggregates.">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Cache Eviction Observatory">
+<meta property="og:description" content="Self-check your Claude Code prompt-cache losses in the browser — nothing leaves your machine">
+<meta property="og:url" content="https://claude-cache-observatory.pages.dev/">
+<meta property="og:image" content="https://claude-cache-observatory.pages.dev/assets/og.png">
+<meta name="twitter:card" content="summary_large_image">
 <style>
 :root{
   --bg:#F4F6F8; --surface:#FFFFFF; --ink:#1C2530; --muted:#5B6B7A;
@@ -70,6 +76,11 @@ table.subs th:first-child{text-align:left}
 table.subs td{padding:6px 8px; border-bottom:1px solid var(--grid); font-family:ui-monospace,'Cascadia Mono',Consolas,monospace; font-variant-numeric:tabular-nums; white-space:nowrap; text-align:right}
 table.subs td.nick{font-family:inherit; text-align:left}
 table.subs td.crit{color:var(--crit); font-weight:600}
+.story p{margin:0 0 10px; font-size:.9rem}
+.story p:last-child{margin-bottom:0}
+details.faq{border:1px solid var(--line); border-radius:8px; background:var(--bg); margin-top:10px}
+details.faq summary{cursor:pointer; padding:10px 14px; font-weight:600; font-size:.88rem}
+details.faq .body{padding:0 14px 12px; font-size:.85rem}
 .rules{margin:0 0 14px; padding-left:20px; font-size:.88rem}
 .rules li{margin:5px 0}
 .trust-note{font-size:.85rem; margin-top:14px; padding:12px 14px; border-left:3px solid var(--ok); background:var(--ok-soft); border-radius:0 6px 6px 0}
@@ -94,7 +105,7 @@ a{color:inherit}
 
 <header>
   <h1>Cache Eviction Observatory</h1>
-  <p class="sub">Tracking Claude Code in-TTL <span class="mono">previous_message_not_found</span> prompt-cache losses across accounts — every data point below was parsed locally in a volunteer's browser and submitted as approved aggregate numbers only.</p>
+  <p class="sub">Tracking Claude Code in-TTL <span class="mono">previous_message_not_found</span> prompt-cache losses across accounts: every data point below was parsed locally in a volunteer's browser and submitted as approved aggregate numbers only.</p>
 </header>
 
 <div class="kpis">
@@ -106,7 +117,19 @@ a{color:inherit}
 
 <a class="cta" href="check.html">Check your own data →</a>
 
-<div class="err" id="loadErr" hidden>Could not load <span class="mono">data/submissions.json</span> — the observatory data file is missing or unreadable.</div>
+<div class="err" id="loadErr" hidden>Could not load <span class="mono">data/submissions.json</span>. The observatory data file is missing or unreadable.</div>
+
+<section id="secWhy">
+  <h2>Why this observatory exists</h2>
+  <p class="desc">The short history, including the part that argues against the headline.</p>
+  <div class="card story">
+    <p>Since spring 2026, some Claude Code users have seen their usage allowance drain abnormally fast, to the point where a 5-hour limit window was exhausted in tens of minutes. A GitHub report from May (<a href="https://github.com/anthropics/claude-code/issues/63282">#63282</a>) was closed automatically without a response.</p>
+    <p>In August, attention turned to a diagnostic the server itself writes into local session logs: <span class="mono">message.diagnostics.cache_miss_reason</span>. That field made losses measurable from server-stamped records instead of gut feeling.</p>
+    <p>An honest counterpoint belongs here: most raw hits are not a bug. In the operator's own data, 78% of raw <span class="mono">previous_message_not_found</span> records were legitimate expiries after long idle periods. This site excludes those and counts only losses inside the cache TTL.</p>
+    <p>Controlled observations followed: four sessions on the same machine lost their cache within the same single minute, and one cache entry vanished 24 seconds after it was created. The same signature has been confirmed on three independent accounts.</p>
+    <p>Whether this is a handful of broken environments or a widespread problem can only be answered with structured multi-account data. Collecting that is what this site is for. Discussion continues in <a href="https://github.com/anthropics/claude-code/issues/87966">anthropics/claude-code#87966</a>.</p>
+  </div>
+</section>
 
 <section id="secFleet">
   <h2>Fleet daily loss rate</h2>
@@ -119,7 +142,7 @@ a{color:inherit}
 
 <section id="secSubs">
   <h2>Submissions</h2>
-  <p class="desc">Aggregate totals per submission. No timestamps, no session IDs, no file paths — the schema cannot carry them.</p>
+  <p class="desc">Aggregate totals per submission. No timestamps, no session IDs, no file paths; the schema cannot carry them.</p>
   <div class="card tbl-scroll">
     <table class="subs" id="subsTable">
       <thead><tr>
@@ -136,14 +159,20 @@ a{color:inherit}
   <p class="desc">What counts as a loss, and why you can verify every step yourself.</p>
   <div class="card">
     <ul class="rules">
-      <li><b>Source of truth</b> — the server-stamped diagnostic <span class="mono">message.diagnostics.cache_miss_reason = previous_message_not_found</span> in your local session logs (<span class="mono">~/.claude/projects/**/*.jsonl</span>). Nothing is inferred; only records the server itself marked are candidates.</li>
-      <li><b>TTL-strict judgment</b> — a candidate counts as a loss only if the idle gap to the previous request in the same session file is <b>under 30 minutes</b> (main session) or <b>under 5 minutes</b> (subagent). Anything longer is a legitimate TTL expiry and is <b>excluded</b>.</li>
-      <li><b>Iron losses</b> — the subset with an idle gap <b>under 5 minutes</b>: the cache could not have expired under any published TTL.</li>
-      <li><b>Dedup &amp; cost</b> — events are deduplicated by <span class="mono">requestId</span>; the re-billed cost of a loss is that request's <span class="mono">cache_creation_input_tokens</span>.</li>
+      <li><b>Source of truth</b>: the server-stamped diagnostic <span class="mono">message.diagnostics.cache_miss_reason = previous_message_not_found</span> in your local session logs (<span class="mono">~/.claude/projects/**/*.jsonl</span>). Nothing is inferred; only records the server itself marked are candidates.</li>
+      <li><b>TTL-strict judgment</b>: a candidate counts as a loss only if the idle gap to the previous request in the same session file is <b>under 30 minutes</b> (main session) or <b>under 5 minutes</b> (subagent). Anything longer is a legitimate TTL expiry and is <b>excluded</b>.</li>
+      <li><b>Iron losses</b>: the subset with an idle gap <b>under 5 minutes</b>, where the cache could not have expired under any published TTL.</li>
+      <li><b>Dedup &amp; cost</b>: events are deduplicated by <span class="mono">requestId</span>; the re-billed cost of a loss is that request's <span class="mono">cache_creation_input_tokens</span>.</li>
     </ul>
     <div class="trust-note">
-      <b>Trust model:</b> parsing runs in <b>your browser, locally</b> — log files never leave your machine. What gets transmitted is only the aggregate numbers you explicitly approve (daily counts and totals). And because this site has <b>no build step</b>, the code that runs is exactly the code in the repo — read it line by line before you run it.
+      <b>Trust model:</b> parsing runs in <b>your browser, locally</b>: log files never leave your machine. What gets transmitted is only the aggregate numbers you explicitly approve (daily counts and totals). And because this site has <b>no build step</b>, the code that runs is exactly the code in the repo. Read it line by line before you run it.
     </div>
+    <details class="faq"><summary>Is my conversation content uploaded?</summary><div class="body">No. Parsing happens entirely inside your browser. You can verify this yourself: open the F12 Network tab and run a diagnosis; no network request appears. Nothing is transmitted before you press the share button, and pressing it sends only the aggregate-number JSON previewed on screen.</div></details>
+    <details class="faq"><summary>How can I trust what this code does?</summary><div class="body">The code that runs is exactly the repo's files; there is no build step. You can compare the browser's view-source against the repo line by line. The only server code is <span class="mono">functions/api/submit.js</span>, and the deployment configuration is public in <span class="mono">wrangler.toml</span>.</div></details>
+    <details class="faq"><summary>Does running this affect my Claude account?</summary><div class="body">No. It only reads log files. It makes no contact with your Anthropic account or the API.</div></details>
+    <details class="faq"><summary>I got in-TTL losses. What now?</summary><div class="body">Please leave your result on <a href="https://github.com/anthropics/claude-code/issues/87966">anthropics/claude-code#87966</a>. A zero result is equally valuable data: knowing healthy accounts exist also helps narrow down the cause.</div></details>
+    <details class="faq"><summary>What becomes public if I submit?</summary><div class="body">Only the aggregate and daily numbers you approved in the preview, plus the optional nickname. Every submission lands as a public commit in the repo, so the full submission history is auditable.</div></details>
+    <details class="faq"><summary>Is this an official Anthropic site?</summary><div class="body">No. This is a community tool with no affiliation with Anthropic.</div></details>
     <div class="links">
       Evidence thread: <a href="https://github.com/anthropics/claude-code/issues/87966">anthropics/claude-code#87966</a> ·
       Source &amp; data: <a href="https://github.com/garaz1983-rgb/claude-cache-observatory">garaz1983-rgb/claude-cache-observatory</a>
@@ -152,7 +181,7 @@ a{color:inherit}
 </section>
 
 <footer>
-  Community-run observatory — not affiliated with Anthropic. Judgment rules v2.1 (<code>assets/parse.js</code> in the browser, <code>scripts/check_cache_loss.py</code> on the CLI — same rules, verifiable against each other). Maintainer: <a href="https://github.com/garaz1983-rgb">garaz1983-rgb</a>
+  Community-run observatory — not affiliated with Anthropic. Judgment rules v2.1 (<code>assets/parse.js</code> in the browser, <code>scripts/check_cache_loss.py</code> on the CLI: same rules, verifiable against each other). Maintainer: <a href="https://github.com/garaz1983-rgb">garaz1983-rgb</a>
 </footer>
 
 </div>

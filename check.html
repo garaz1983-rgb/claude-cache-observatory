@@ -5,6 +5,12 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Check Your Data — Cache Eviction Observatory</title>
 <meta name="description" content="Diagnose Claude Code prompt-cache losses from your own local logs — parsed entirely in your browser, nothing uploaded.">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Check Your Data — Cache Eviction Observatory">
+<meta property="og:description" content="Self-check your Claude Code prompt-cache losses in the browser — nothing leaves your machine">
+<meta property="og:url" content="https://claude-cache-observatory.pages.dev/check.html">
+<meta property="og:image" content="https://claude-cache-observatory.pages.dev/assets/og.png">
+<meta name="twitter:card" content="summary_large_image">
 <style>
 :root{
   --bg:#F4F6F8; --surface:#FFFFFF; --ink:#1C2530; --muted:#5B6B7A;
@@ -60,6 +66,15 @@ section .desc{color:var(--muted); font-size:.85rem; margin:0 0 14px}
 .dropzone .or{font-size:.72rem; text-transform:uppercase; letter-spacing:.08em}
 .dropzone button{font:inherit; font-weight:600; padding:8px 16px; border-radius:8px; border:1px solid var(--line); background:var(--surface); color:var(--ink); cursor:pointer}
 .dropzone button:hover{border-color:var(--muted)}
+details.paste{border:1px solid var(--line); border-radius:8px; background:var(--bg); margin-top:14px}
+details.paste summary{cursor:pointer; padding:10px 14px; font-size:.85rem; font-weight:600; color:var(--muted)}
+details.paste .body{padding:0 14px 14px; font-size:.85rem}
+details.paste .body p{margin:0 0 10px}
+details.paste textarea{width:100%; min-height:130px; font-family:ui-monospace,'Cascadia Mono',Consolas,monospace; font-size:.76rem; line-height:1.5; padding:8px 10px; border:1px solid var(--line); border-radius:6px; background:var(--surface); color:var(--ink); resize:vertical}
+details.paste .actions{display:flex; align-items:center; gap:12px; margin-top:10px; flex-wrap:wrap}
+details.paste button{font:inherit; font-weight:600; padding:7px 14px; border-radius:8px; border:1px solid var(--line); background:var(--surface); color:var(--ink); cursor:pointer}
+details.paste button:hover{border-color:var(--muted)}
+details.paste .hint{font-size:.76rem; color:var(--muted)}
 .progress{margin-top:12px; font-family:ui-monospace,'Cascadia Mono',Consolas,monospace; font-variant-numeric:tabular-nums; font-size:.82rem; color:var(--muted)}
 .err{font-size:.85rem; margin-top:12px; padding:12px 14px; border-left:3px solid var(--crit); background:var(--crit-soft); border-radius:0 6px 6px 0}
 .kpis{display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:12px; margin:0 0 8px}
@@ -127,7 +142,7 @@ a{color:inherit}
 
 <header>
   <h1>Check your own data</h1>
-  <p class="sub">Everything runs <b>locally in your browser</b> — your log files never leave this machine. Nothing is uploaded, and there is nothing to sign up for.</p>
+  <p class="sub">Everything runs <b>locally in your browser</b>: your log files never leave this machine. Nothing is uploaded, and there is nothing to sign up for.</p>
 </header>
 
 <div class="notice"><b>Desktop browser required.</b> The logs live on the machine where Claude Code runs (<span class="mono">~/.claude/projects</span>); mobile browsers cannot access them.</div>
@@ -138,7 +153,7 @@ a{color:inherit}
   <div class="card">
     <ol class="steps">
       <li>Find your Claude Code log folder: <span class="mono">~/.claude/projects</span> (Windows: <span class="mono">C:\Users\&lt;you&gt;\.claude\projects</span>).</li>
-      <li>Drop that folder below — or pick it with the button. Multiple <span class="mono">.jsonl</span> files work too.</li>
+      <li>Drop that folder below, or pick it with the button. Multiple <span class="mono">.jsonl</span> files work too.</li>
       <li>Read the results. Parsing happens in this tab only; close it and everything is gone.</li>
     </ol>
     <div class="dropzone" id="dropzone">
@@ -146,14 +161,28 @@ a{color:inherit}
       <p class="or">or</p>
       <p><button id="pickBtn" type="button">Choose folder…</button></p>
     </div>
+    <div class="notice" id="singleFileNote" hidden><b>Individual .jsonl files dropped.</b> Loose files cannot be told apart from subagent logs (the <span class="mono">subagents</span> folder name is what marks those), so every file is classified as a main session (30-minute TTL). For an accurate verdict, drop or pick the whole folder.</div>
     <div class="progress" id="progress" hidden></div>
     <div class="err" id="parseErr" hidden></div>
+    <details class="paste" id="pasteDetails">
+      <summary>No folder access? Paste the CLI script's JSON output instead</summary>
+      <div class="body">
+        <p>On the machine with the logs, run <span class="mono">python scripts/check_cache_loss.py --json</span> (the script ships in this repo) and paste everything it prints below. The pasted JSON contains aggregates only: totals plus daily counts.</p>
+        <textarea id="pasteBox" spellcheck="false" placeholder='{"script_version": "cli-2.1", "totals": {...}, "daily": [...]}'></textarea>
+        <div class="actions">
+          <button id="pasteBtn" type="button">Render pasted JSON</button>
+          <span class="hint">Note: the <span class="mono">--json</span> flag is an addition in this repo's copy of the script; the judgment rules are unchanged v2.1.</span>
+        </div>
+        <div class="err" id="pasteErr" hidden></div>
+      </div>
+    </details>
   </div>
 </section>
 
 <section id="results" hidden>
   <h2>2 · Your results</h2>
-  <p class="desc">TTL-strict judgment v2.1 — only losses inside the cache TTL are counted; legitimate expiries are excluded.</p>
+  <p class="desc">TTL-strict judgment v2.1: only losses inside the cache TTL are counted; legitimate expiries are excluded.</p>
+  <div class="notice" id="pasteSrcNote" hidden>Rendered from pasted CLI JSON (aggregates only), so the hour-level heatmap is not available. Everything else, including sharing, works the same.</div>
 
   <div class="kpis">
     <div class="kpi"><div class="label">Requests scanned</div><div class="val" id="kRequests">–</div></div>
@@ -172,16 +201,16 @@ a{color:inherit}
     </div>
   </div>
 
-  <section>
-    <h2>Day × hour heatmap — losses against actual usage</h2>
-    <p class="desc">Background blue-grey = request volume that hour (darker = heavier use). Red with a number = in-TTL losses. This separates "zero because idle" from "zero despite heavy use". <b>Click a red cell</b> for per-event detail (time, idle gap, tokens) — it stays in your browser.</p>
+  <section id="hmSection">
+    <h2>Day × hour heatmap: losses against actual usage</h2>
+    <p class="desc">Background blue-grey = request volume that hour (darker = heavier use). Red with a number = in-TTL losses. This separates "zero because idle" from "zero despite heavy use". <b>Click a red cell</b> for per-event detail (time, idle gap, tokens); it stays in your browser.</p>
     <div class="card hm-scroll">
       <table class="hm" id="heatmap"></table>
       <div class="evt-panel" id="evtPanel"></div>
       <div class="legend">
-        <span><i class="chip" style="background:var(--grid)"></i>idle</span>
-        <span><i class="chip" id="lg-use"></i>usage (darker = more)</span>
-        <span><i class="chip" style="background:var(--crit)"></i>loss (number = count)</span>
+        <span><i class="chip" style="background:var(--grid)"></i>idle (no requests)</span>
+        <span><i class="chip" id="lg-use"></i>grey shading = requests that hour (darker = more)</span>
+        <span><i class="chip" style="background:var(--crit)"></i>red = losses (number in the cell = count; click for per-event detail)</span>
       </div>
     </div>
   </section>
@@ -190,18 +219,18 @@ a{color:inherit}
     <summary>How losses are judged (TTL-strict, v2.1)</summary>
     <div class="body">
       <ul>
-        <li><b>Candidate</b> — a record the server itself stamped with <span class="mono">message.diagnostics.cache_miss_reason = previous_message_not_found</span>. Nothing is inferred.</li>
-        <li><b>In-TTL loss</b> — the idle gap to the previous request in the same session file is under <b>30 minutes</b> (main session) or <b>5 minutes</b> (subagent). Longer gaps are legitimate TTL expiries and are <b>not</b> counted.</li>
-        <li><b>Iron loss</b> — idle gap under <b>5 minutes</b>: no published TTL could have expired the cache.</li>
-        <li><b>Dedup</b> — one event per <span class="mono">requestId</span>; a later record of the same request may only back-fill a missing reason.</li>
-        <li><b>Cost</b> — the re-billed cost of a loss is that request's <span class="mono">cache_creation_input_tokens</span>.</li>
+        <li><b>Candidate</b>: a record the server itself stamped with <span class="mono">message.diagnostics.cache_miss_reason = previous_message_not_found</span>. Nothing is inferred.</li>
+        <li><b>In-TTL loss</b>: the idle gap to the previous request in the same session file is under <b>30 minutes</b> (main session) or <b>5 minutes</b> (subagent). Longer gaps are legitimate TTL expiries and are <b>not</b> counted.</li>
+        <li><b>Iron loss</b>: idle gap under <b>5 minutes</b>, meaning no published TTL could have expired the cache.</li>
+        <li><b>Dedup</b>: one event per <span class="mono">requestId</span>; a later record of the same request may only back-fill a missing reason.</li>
+        <li><b>Cost</b>: the re-billed cost of a loss is that request's <span class="mono">cache_creation_input_tokens</span>.</li>
       </ul>
     </div>
   </details>
 
   <section id="submitSection">
     <h2>3 · Share your aggregate (optional)</h2>
-    <p class="desc">Exactly the JSON shown below is sent — period, totals and daily counts only. Never your logs, file paths, session contents or per-event details.</p>
+    <p class="desc">Exactly the JSON shown below is sent: period, totals and daily counts only. Never your logs, file paths, session contents or per-event details.</p>
     <div class="card">
       <div class="submit-form">
         <div>
@@ -262,7 +291,7 @@ a{color:inherit}
 <script>
 "use strict";
 
-var LAST = null;     // {result, census}
+var LAST = null;     // {result, census, source_version} — census null = pasted CLI JSON (no hourly data)
 var EVT_MAP = null;  // "date#hour" -> [events]
 
 function fmtInt(n){ return n.toLocaleString("en-US"); }
@@ -339,6 +368,7 @@ if(!window.showDirectoryPicker){
     try{ dir = await window.showDirectoryPicker(); }
     catch(e){ return; } // user cancelled
     var out = [];
+    document.getElementById("singleFileNote").hidden = true;
     setProgress("Scanning folder…");
     try{ await walkDir(dir, dir.name + "/", out); }
     catch(e){ showError("Could not read the folder: " + e.message); return; }
@@ -367,16 +397,23 @@ dz.addEventListener("drop", async function(e){
     return it.webkitGetAsEntry ? it.webkitGetAsEntry() : null;
   }).filter(Boolean);
   var out = [];
+  var filesOnly = true; // no directory among the dropped items
   setProgress("Scanning drop…");
   try{
     if(entries.length){
-      for(var i = 0; i < entries.length; i++) await walkEntry(entries[i], out);
+      for(var i = 0; i < entries.length; i++){
+        if(entries[i].isDirectory) filesOnly = false;
+        await walkEntry(entries[i], out);
+      }
     } else {
       Array.prototype.slice.call(e.dataTransfer.files || []).forEach(function(f){
         if(f.name.endsWith(".jsonl")) out.push({ name: f.name, file: f });
       });
     }
   } catch(err){ showError("Could not read the dropped items: " + err.message); return; }
+  // Loose-file drop: the subagents folder marker is lost, warn (classification
+  // itself stays unchanged, CLI parity).
+  document.getElementById("singleFileNote").hidden = !(filesOnly && out.length > 0);
   processList(out);
 });
 function entryFile(entry){ return new Promise(function(res, rej){ entry.file(res, rej); }); }
@@ -411,7 +448,7 @@ function showError(msg){
 async function processList(list){
   document.getElementById("parseErr").hidden = true;
   if(!list.length){
-    showError("No .jsonl files found — drop the ~/.claude/projects folder (or .jsonl files from it).");
+    showError("No .jsonl files found. Drop the ~/.claude/projects folder (or .jsonl files from it).");
     return;
   }
   var files = [];
@@ -432,14 +469,122 @@ async function processList(list){
     showError("Parsing failed: " + e.message);
     return;
   }
-  setProgress("Done — " + files.length + " files · " + fmtInt(result.totals.requests) + " requests scanned.");
-  LAST = { result: result, census: census };
+  setProgress("Done: " + files.length + " files · " + fmtInt(result.totals.requests) + " requests scanned.");
+  LAST = { result: result, census: census, source_version: null };
   buildEvtMap(result.events);
+  document.getElementById("pasteSrcNote").hidden = true;
   // Unhide BEFORE drawing: canvases in a hidden section have zero width.
   document.getElementById("results").hidden = false;
   renderResults();
   document.getElementById("results").scrollIntoView({ behavior: "smooth" });
 }
+
+/* ---------- input: pasted CLI --json output (FR-07, last-resort fallback) ---------- */
+function isCountInt(v){
+  return typeof v === "number" && isFinite(v) && Math.floor(v) === v && v >= 0;
+}
+/* Field-by-field validation of the CLI's --json aggregate (06 spec, E3).
+   Accepts exactly {script_version?, totals, daily} — same whitelist spirit
+   as /api/submit. Returns {errors} or {errors:[], version, result}. */
+function validateCliJson(text){
+  var errs = [];
+  var o;
+  try{ o = JSON.parse(text); }
+  catch(e){ return { errors: ["Not valid JSON: " + e.message] }; }
+  if(!isObj(o)) return { errors: ["Top level must be a JSON object (run the script with --json and paste its whole output)"] };
+  Object.keys(o).forEach(function(k){
+    if(["script_version", "totals", "daily"].indexOf(k) === -1) errs.push("unexpected field: " + k);
+  });
+  var t = o.totals;
+  if(!isObj(t)){
+    errs.push("totals: missing or not an object");
+    t = null;
+  } else {
+    Object.keys(t).forEach(function(k){
+      if(["requests", "in_ttl_losses", "iron_losses", "wasted_tokens"].indexOf(k) === -1) errs.push("unexpected field: totals." + k);
+    });
+    ["requests", "in_ttl_losses", "iron_losses", "wasted_tokens"].forEach(function(k){
+      if(!isCountInt(t[k])) errs.push("totals." + k + ": must be a non-negative integer");
+    });
+    if(isCountInt(t.requests) && isCountInt(t.in_ttl_losses) && t.in_ttl_losses > t.requests) errs.push("totals.in_ttl_losses exceeds totals.requests");
+    if(isCountInt(t.in_ttl_losses) && isCountInt(t.iron_losses) && t.iron_losses > t.in_ttl_losses) errs.push("totals.iron_losses exceeds totals.in_ttl_losses");
+  }
+  var d = o.daily;
+  if(!Array.isArray(d) || d.length === 0){
+    errs.push("daily: must be a non-empty array");
+  } else {
+    var sums = { requests: 0, losses: 0, wasted_tokens: 0 };
+    var seenDates = {};
+    var prevDate = "";
+    d.forEach(function(e, i){
+      if(!isObj(e)){ errs.push("daily[" + i + "]: must be an object"); return; }
+      Object.keys(e).forEach(function(k){
+        if(["date", "requests", "losses", "wasted_tokens"].indexOf(k) === -1) errs.push("unexpected field: daily[" + i + "]." + k);
+      });
+      if(typeof e.date !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(e.date)){
+        errs.push("daily[" + i + "].date: must be YYYY-MM-DD");
+      } else {
+        if(seenDates[e.date]) errs.push("daily[" + i + "].date: duplicate " + e.date);
+        seenDates[e.date] = true;
+        if(e.date < prevDate) errs.push("daily[" + i + "].date: not in ascending order");
+        prevDate = e.date;
+      }
+      ["requests", "losses", "wasted_tokens"].forEach(function(k){
+        if(!isCountInt(e[k])) errs.push("daily[" + i + "]." + k + ": must be a non-negative integer");
+        else sums[k] += e[k];
+      });
+      if(isCountInt(e.requests) && isCountInt(e.losses) && e.losses > e.requests) errs.push("daily[" + i + "].losses exceeds daily[" + i + "].requests");
+    });
+    if(t){
+      if(isCountInt(t.requests) && sums.requests !== t.requests) errs.push("daily requests sum " + sums.requests + " != totals.requests " + t.requests);
+      if(isCountInt(t.in_ttl_losses) && sums.losses !== t.in_ttl_losses) errs.push("daily losses sum " + sums.losses + " != totals.in_ttl_losses " + t.in_ttl_losses);
+      if(isCountInt(t.wasted_tokens) && sums.wasted_tokens !== t.wasted_tokens) errs.push("daily wasted_tokens sum " + sums.wasted_tokens + " != totals.wasted_tokens " + t.wasted_tokens);
+    }
+  }
+  var sv = o.script_version;
+  if(sv !== undefined && (typeof sv !== "string" || sv.length === 0 || sv.length > 32 || !/^[A-Za-z0-9._-]+$/.test(sv))){
+    errs.push("script_version: must be a short tag like cli-2.1");
+  }
+  if(errs.length) return { errors: errs };
+  return {
+    errors: [],
+    version: typeof sv === "string" ? sv : "cli-2.1",
+    result: {
+      totals: { requests: t.requests, in_ttl_losses: t.in_ttl_losses, iron_losses: t.iron_losses, wasted_tokens: t.wasted_tokens },
+      daily: d.map(function(e){ return { date: e.date, requests: e.requests, losses: e.losses, wasted_tokens: e.wasted_tokens }; }),
+      events: []
+    }
+  };
+}
+
+document.getElementById("pasteBtn").addEventListener("click", function(){
+  var errBox = document.getElementById("pasteErr");
+  errBox.hidden = true;
+  errBox.textContent = "";
+  var text = document.getElementById("pasteBox").value.trim();
+  if(!text){
+    errBox.hidden = false;
+    errBox.textContent = "Nothing pasted yet. Run: python scripts/check_cache_loss.py --json";
+    return;
+  }
+  var v = validateCliJson(text);
+  if(v.errors.length){
+    errBox.hidden = false;
+    errBox.textContent = "The pasted JSON does not match the CLI --json schema:\n" +
+      v.errors.map(function(m){ return "· " + m; }).join("\n");
+    errBox.style.whiteSpace = "pre-wrap";
+    return;
+  }
+  document.getElementById("parseErr").hidden = true;
+  document.getElementById("singleFileNote").hidden = true;
+  setProgress("Rendered from pasted CLI JSON: " + fmtInt(v.result.totals.requests) + " requests, " + v.result.daily.length + " days.");
+  LAST = { result: v.result, census: null, source_version: v.version };
+  buildEvtMap(v.result.events);
+  document.getElementById("pasteSrcNote").hidden = false;
+  document.getElementById("results").hidden = false;
+  renderResults();
+  document.getElementById("results").scrollIntoView({ behavior: "smooth" });
+});
 
 function buildEvtMap(events){
   EVT_MAP = new Map();
@@ -492,7 +637,8 @@ function buildSubmitPayload(){
   payload.daily = r.daily.map(function(d){
     return { date: d.date, requests: d.requests, losses: d.losses, wasted_tokens: d.wasted_tokens };
   });
-  payload.script_version = CacheObservatory.SCRIPT_VERSION;
+  // Pasted CLI results carry the CLI's own version tag (e.g. cli-2.1).
+  payload.script_version = LAST.source_version || CacheObservatory.SCRIPT_VERSION;
   return payload;
 }
 
@@ -523,7 +669,7 @@ function updateSubmitCard(){
   pre.textContent = JSON.stringify(payload, null, 2);
   if(payload.daily.length > 92){
     btn.disabled = true;
-    submitMsg("bad", "This scan covers more than 92 days — the observatory accepts at most 92. Re-run on a shorter window to share.");
+    submitMsg("bad", "This scan covers more than 92 days; the observatory accepts at most 92. Re-run on a shorter window to share.");
     return;
   }
   btn.disabled = SUBMIT_BUSY || SUBMIT_DONE;
@@ -551,20 +697,20 @@ document.getElementById("subBtn").addEventListener("click", async function(){
   }catch(e){
     SUBMIT_BUSY = false;
     updateSubmitCard();
-    submitMsg("bad", "Network error — the submission did not go through. Please try again.");
+    submitMsg("bad", "Network error: the submission did not go through. Please try again.");
     return;
   }
   SUBMIT_BUSY = false;
   if(res.ok && data && data.ok){
     SUBMIT_DONE = true;
     updateSubmitCard();
-    submitMsg("ok", "Submitted — your row will appear on the observatory in about 1–2 minutes (the bot commit triggers a redeploy).", [
+    submitMsg("ok", "Submitted. Your row will appear on the observatory in about 1–2 minutes (the bot commit triggers a redeploy).", [
       { href: data.commit_url || "https://github.com", label: "bot commit" },
       { href: "index.html", label: "open the observatory" }
     ]);
   } else if(res.status === 400){
     updateSubmitCard();
-    var el = submitMsg("bad", "Data validation error — the observatory rejected this payload.");
+    var el = submitMsg("bad", "Data validation error: the observatory rejected this payload.");
     if(data && data.detail){
       var d = document.createElement("span");
       d.className = "detail";
@@ -574,10 +720,10 @@ document.getElementById("subBtn").addEventListener("click", async function(){
   } else if(res.status === 429){
     updateSubmitCard();
     var mins = Math.max(1, Math.ceil(((data && data.retry_after) || 3600) / 60));
-    submitMsg("bad", "Too many submissions from this connection — try again in about " + mins + " min.");
+    submitMsg("bad", "Too many submissions from this connection. Try again in about " + mins + " min.");
   } else {
     updateSubmitCard();
-    submitMsg("bad", "Storage is temporarily unavailable — please try again in a moment. (Browsing the observatory is unaffected.)");
+    submitMsg("bad", "Storage is temporarily unavailable. Please try again in a moment. (Browsing the observatory is unaffected.)");
   }
 });
 
@@ -589,6 +735,13 @@ function drawCharts(){
   if(days.length){
     ObservatoryCharts.renderDailyBars(document.getElementById("daily"), days);
   }
+  // Pasted CLI JSON carries daily aggregates only: no hourly census, no heatmap.
+  var hmSection = document.getElementById("hmSection");
+  if(!LAST.census){
+    hmSection.hidden = true;
+    return;
+  }
+  hmSection.hidden = false;
   var zeros = new Array(24).fill(0);
   var dates = Array.from(LAST.census.keys()).sort();
   var rows = dates.map(function(date){
@@ -614,7 +767,7 @@ function showEvents(date, hour){
   var rows = EVT_MAP.get(date + "#" + hour) || [];
   if(!rows.length){ hideEvents(); return; }
   var tot = rows.reduce(function(a, e){ return a + e.tokens; }, 0);
-  var html = "<h3>" + date + " " + hh(hour) + ":00 — " + rows.length +
+  var html = "<h3>" + date + " " + hh(hour) + ":00 · " + rows.length +
     " losses · " + (tot / 1e6).toFixed(2) + "M tokens re-billed " +
     "<span style='font-weight:400;color:var(--muted)'>(click the cell again to close)</span></h3>";
   html += "<table><tr><th>Time</th><th>Idle gap</th><th>Tokens re-billed</th><th>Session</th></tr>";
