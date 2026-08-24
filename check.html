@@ -305,7 +305,7 @@ a{color:inherit}
 
   <section id="hmSection">
     <h2>Day × hour heatmap: losses against actual usage</h2>
-    <p class="desc">Background blue-grey = request volume that hour (darker = heavier use). Red with a number = in-TTL losses. This separates "zero because idle" from "zero despite heavy use". <b>Click a red cell</b> for per-event detail (time, idle gap, tokens) in a popover next to the cell; it stays in your browser. <b>The day rows and the hour columns are your own local clock</b>, not UTC, so 08:00 here is 08:00 where you are sitting.</p>
+    <p class="desc">Background blue-grey = request volume that hour (darker = heavier use). Red with a number = in-TTL losses. This separates "zero because idle" from "zero despite heavy use". <b>Click a red cell</b> for per-event detail (time, idle gap, tokens) in a popover next to the cell; it stays in your browser. <span id="hmTzNote"></span></p>
     <div class="card hm-scroll">
       <table class="hm" id="heatmap"></table>
       <div class="legend">
@@ -636,7 +636,7 @@ async function processList(list){
     return;
   }
   setProgress("Done: " + files.length + " files · " + fmtInt(result.totals.requests) + " requests scanned.");
-  LAST = { result: result, census: census, source_version: null };
+  LAST = { result: result, census: census, source_version: null, detail_dropped: false };
   document.getElementById("pasteSrcNote").hidden = true;
   document.getElementById("storeRestored").hidden = true;
   // Unhide BEFORE drawing: canvases in a hidden section have zero width.
@@ -744,7 +744,7 @@ document.getElementById("pasteBtn").addEventListener("click", function(){
   document.getElementById("parseErr").hidden = true;
   document.getElementById("singleFileNote").hidden = true;
   setProgress("Rendered from pasted CLI JSON: " + fmtInt(v.result.totals.requests) + " requests, " + v.result.daily.length + " days.");
-  LAST = { result: v.result, census: null, source_version: v.version };
+  LAST = { result: v.result, census: null, source_version: v.version, detail_dropped: false };
   document.getElementById("storeRestored").hidden = true;
   document.getElementById("pasteSrcNote").hidden = false;
   document.getElementById("results").hidden = false;
@@ -775,9 +775,20 @@ function updateTzNote(){
   }
   var head = "Observed period " + periodText(VIEW.period) + ". ";
   if(!VIEW.localized){
-    el.textContent = head + "These are UTC calendar days, as the CLI cut them: " +
-      "this source carries daily aggregates only, so there is no per-request " +
-      "detail left to re-cut into your own timezone (" + ZONE.label + ").";
+    // Same outcome, two different reasons — and naming the wrong one is its own
+    // small dishonesty. A pasted aggregate never had per-request detail; a
+    // restored run had it and lost it to this browser's storage quota, and
+    // telling that reader "as the CLI cut them" points at a CLI they may never
+    // have run, in the same breath as the note above correctly calls this their
+    // own earlier diagnosis read back from local storage.
+    el.textContent = head + (LAST && LAST.detail_dropped
+      ? "These stay UTC calendar days. This saved result was written without its " +
+        "per-request detail, because the full result did not fit this browser's " +
+        "storage quota, so there is nothing left to re-cut into your own timezone (" +
+        ZONE.label + "). Load your logs again for a diagnosis on your own clock."
+      : "These are UTC calendar days, as the CLI cut them: " +
+        "this source carries daily aggregates only, so there is no per-request " +
+        "detail left to re-cut into your own timezone (" + ZONE.label + ").");
     return;
   }
   if(ZONE.isUtc){
@@ -788,6 +799,108 @@ function updateTzNote(){
   el.textContent = head + "The charts, the heatmap and the per-event times below are in your own timezone, " +
     ZONE.label + ", detected from this browser. The submission in step 3 is cut by UTC instead, " +
     "so a request near midnight can land on a different date there.";
+}
+
+/* ---------- M12.1: what a heatmap cell says it is ----------
+   Two things were wrong here, and both were labels rather than placement.
+
+   The offset. ZONE is detected once, against Date.now(), and printing
+   ZONE.offset on every row mislabels every row on the other side of a
+   daylight-saving change: a page opened in August in New York printed
+   "2026-02-15 13:00 UTC-4" over an instant that is 18:02Z — UTC-5 — so a reader
+   cross-checking the screen against the UTC payload was an hour out. The offset
+   is now read at the instant being labelled.
+
+   The hour. A cell is one whole UTC hour seen on the reader's clock, and in a
+   :30/:45 zone that hour does not begin on the hour: at UTC+5:30 the cell drawn
+   in column 23 covers 23:30 to 00:30 local. It now says the span it covers
+   instead of naming a round hour it does not. A whole-hour zone keeps exactly
+   the string it had.
+
+   tests/run_localtime.js extracts this block verbatim and drives it with a
+   stubbed VIEW, so the printed strings are asserted rather than eyeballed —
+   keep the markers, and keep the block free of DOM access. */
+/* LOCALTIME-LABELS:BEGIN */
+function cellOffsetOf(dateKey, hour){
+  var off = ObservatoryLocalTime.offsetAtLocal(dateKey, hour, VIEW ? VIEW.offsetAt : undefined);
+  return typeof off === "number" ? off : ZONE.offsetMinutes;
+}
+function cellClockLabel(dateKey, hour){
+  var off = cellOffsetOf(dateKey, hour);
+  var past = ((off % 60) + 60) % 60;   // minutes past the hour the cell starts at
+  var tag = ObservatoryLocalTime.offsetLabel(off);
+  if(!past) return dateKey + " " + hh(hour) + ":00 " + tag;
+  return dateKey + " " + hh(hour) + ":" + hh(past) + "–" +
+    hh((hour + 1) % 24) + ":" + hh(past) + " " + tag;
+}
+/* Every event in a cell shares one UTC hour, so they normally share one offset
+   and the column header can carry it. They differ only where a DST change lands
+   inside a UTC hour — possible in a :30 zone such as Lord Howe — and then the
+   offset moves onto each row rather than into a header that would be wrong for
+   one of them. */
+function evtOffsets(rows){
+  var offs = [];
+  (rows || []).forEach(function(e){
+    var o = (typeof e.offsetMinutes === "number") ? e.offsetMinutes : ZONE.offsetMinutes;
+    if(offs.indexOf(o) === -1) offs.push(o);
+  });
+  return offs;
+}
+function evtTimeHeader(rows){
+  var offs = evtOffsets(rows);
+  return offs.length === 1
+    ? "Time (" + ObservatoryLocalTime.offsetLabel(offs[0]) + ")"
+    : "Time";
+}
+function evtTimeText(e, uniform){
+  if(uniform) return e.time;
+  var o = (typeof e.offsetMinutes === "number") ? e.offsetMinutes : ZONE.offsetMinutes;
+  return e.time + " " + ObservatoryLocalTime.offsetLabel(o);
+}
+/* What the heatmap has to disclose about its own columns. A whole-hour zone
+   gets the sentence this page has always carried. A :30/:45 zone cannot: there
+   a column is not a round local hour but one whole UTC hour, which on that
+   reader's clock runs from :30 (or :45) past the hour it is drawn under. That
+   is the price of keeping every loss in the same cell as its own request, and
+   it is printed rather than left to be discovered. */
+function heatmapNoteText(offsets, utcOffsetMinutes){
+  var offs = (offsets && offsets.length) ? offsets : [utcOffsetMinutes];
+  var past = [];
+  offs.forEach(function(o){
+    var m = ((o % 60) + 60) % 60;
+    if(m && past.indexOf(m) === -1) past.push(m);
+  });
+  var lead = "The day rows and the hour columns are your own local clock";
+  var rest;
+  if(!past.length){
+    rest = ", not UTC, so 08:00 here is 08:00 where you are sitting.";
+  } else {
+    var m2 = hh(past[0]);
+    rest = ", not UTC. Your zone is offset by a part-hour, so a column is not a " +
+      "round local hour: each one holds a whole UTC hour, which on your clock runs " +
+      "from :" + m2 + " past the hour shown to :" + m2 + " past the next. Every loss " +
+      "is drawn in the same cell its own request was counted in, so the counts and " +
+      "the daily sums are exact — and the clock time in the popover can therefore " +
+      "fall just outside the round hour named on the cell.";
+  }
+  if(offs.length > 1){
+    rest += " This scan crosses a daylight-saving change, so every cell and every " +
+      "event is labelled with the offset that was in force at that moment, not the " +
+      "one in force now.";
+  }
+  return { lead: lead, rest: rest };
+}
+/* LOCALTIME-LABELS:END */
+
+function updateHeatmapNote(){
+  var el = document.getElementById("hmTzNote");
+  el.textContent = "";
+  if(!VIEW || !VIEW.census) return;
+  var t = heatmapNoteText(VIEW.offsets, ZONE.offsetMinutes);
+  var b = document.createElement("b");
+  b.textContent = t.lead;
+  el.appendChild(b);
+  el.appendChild(document.createTextNode(t.rest));
 }
 
 function renderResults(){
@@ -874,6 +987,17 @@ function setupRange(){
   updateIncHint();
 }
 
+/* ---------- the payload block ----------
+   Extracted verbatim by tests/run_localtime.js and driven with a stub LAST and
+   a stub VIEW that disagree on purpose, so "the payload is built from the
+   engine's UTC rows, never from the localised screen" is a test rather than a
+   comment. It has no coverage otherwise: mutation_run.py's anchors never
+   reached this file, and a mutant reading VIEW.daily here survived every suite
+   while producing a KST-cut submission that /api/submit would have ACCEPTED
+   (sum(daily) still equals totals, the period still matches the daily range).
+   Keep the markers, and keep everything between them free of anything but
+   LAST, the form fields and CacheObservatory. */
+/* SUBMIT-PAYLOAD:BEGIN */
 function selectedRange(){
   if(!RANGE_READY) return null;
   var a = document.getElementById("subFrom").value;
@@ -920,6 +1044,7 @@ function buildSubmitPayload(){
   payload.script_version = LAST.source_version || CacheObservatory.SCRIPT_VERSION;
   return payload;
 }
+/* SUBMIT-PAYLOAD:END */
 
 function submitMsg(kind, text, links){
   var el = document.getElementById("subMsg");
@@ -1352,7 +1477,11 @@ function restoreRun(run){
   LAST = {
     result: h.result,
     census: h.events_saved ? h.census : null,
-    source_version: run.script_version || null
+    source_version: run.script_version || null,
+    // Why the detail is missing, not just that it is: this run was degraded to
+    // fit the storage quota (store.js save()), which is what #tzNote has to say
+    // instead of blaming a CLI cut.
+    detail_dropped: !h.events_saved
   };
   // The stored run stays anchored to the engine's own UTC buckets; the reader's
   // clock is applied on the way to the screen (renderResults -> rebuildView),
@@ -1412,11 +1541,25 @@ function drawCharts(){
   var hmSection = document.getElementById("hmSection");
   if(!VIEW.census){
     hmSection.hidden = true;
+    updateHeatmapNote();
     return;
   }
   hmSection.hidden = false;
+  updateHeatmapNote();
   var zeros = new Array(24).fill(0);
-  var dates = Array.from(VIEW.census.keys()).sort();
+  // Census dates, plus any date an event landed on. localtime.js draws an event
+  // in the cell its own UTC hour was attributed to, so the second set is always
+  // a subset of the first — this union is the belt to that braces: iterating
+  // the census alone is what made a loss vanish from the heatmap entirely when
+  // the two placements could disagree, and no future change to either rule
+  // should be able to bring that back silently.
+  var seenDate = {};
+  var dates = Array.from(VIEW.census.keys());
+  dates.forEach(function(d){ seenDate[d] = true; });
+  VIEW.events.forEach(function(e){
+    if(!seenDate[e.date]){ seenDate[e.date] = true; dates.push(e.date); }
+  });
+  dates.sort();
   var rows = dates.map(function(date){
     var losses = zeros.slice();
     for(var h = 0; h < 24; h++){
@@ -1427,7 +1570,7 @@ function drawCharts(){
   });
   ObservatoryCharts.renderUsageHeatmap(document.getElementById("heatmap"), rows, {
     cellTitle: function(row, hour, rq, v){
-      return row.key + " " + hh(hour) + ":00 " + ZONE.offset + " · " + rq + " requests · " + v + " losses";
+      return cellClockLabel(row.key, hour) + " · " + rq + " requests · " + v + " losses";
     },
     onSelect: function(row, hour, td){ showEvents(row.key, hour, td); },
     onClear: function(){ hideEvents(); },
@@ -1472,13 +1615,14 @@ function showEvents(date, hour, td){
   var rows = (VIEW && VIEW.evtMap.get(date + "#" + hour)) || [];
   if(!rows.length){ hideEvents(); return; }
   var tot = rows.reduce(function(a, e){ return a + e.tokens; }, 0);
-  var html = "<div class='evt-head'><h3>" + date + " " + hh(hour) + ":00 " + ZONE.offset + " · " + rows.length +
+  var uniform = evtOffsets(rows).length === 1;
+  var html = "<div class='evt-head'><h3>" + cellClockLabel(date, hour) + " · " + rows.length +
     " " + plural(rows.length, "loss", "losses") + " · " + (tot / 1e6).toFixed(2) + "M tokens re-billed " +
     "<span style='font-weight:400;color:var(--muted)'>(close: ×, Esc, click outside, or the cell again)</span></h3>" +
     "<button type='button' class='evt-close' aria-label='Close detail'>×</button></div>";
-  html += "<table><tr><th>Time (" + ZONE.offset + ")</th><th>Idle gap</th><th>Tokens re-billed</th><th>Session</th></tr>";
+  html += "<table><tr><th>" + evtTimeHeader(rows) + "</th><th>Idle gap</th><th>Tokens re-billed</th><th>Session</th></tr>";
   rows.forEach(function(e){
-    html += "<tr><td>" + e.time + "</td><td>" + e.gapMin.toFixed(1) + " min</td><td>" +
+    html += "<tr><td>" + evtTimeText(e, uniform) + "</td><td>" + e.gapMin.toFixed(1) + " min</td><td>" +
       e.tokens.toLocaleString("en-US") + "</td><td>" + (e.sub ? "subagent" : "main") + "</td></tr>";
   });
   html += "</table>";

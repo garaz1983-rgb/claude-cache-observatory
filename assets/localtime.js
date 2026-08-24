@@ -27,15 +27,32 @@
  *   and at offset 0 the output is identical to the UTC input, byte for byte.
  *   tests/localtime_test.py holds all four.
  *
- * Two inputs, two resolutions
- *   - Events carry an exact instant, so their local date, hour and clock time
- *     are exact, and DST-correct: the host offset is read AT that instant, not
- *     at page load.
- *   - The hourly census carries whole UTC hour cells. A cell is placed by the
- *     local time of the instant it BEGINS. For every whole-hour offset that is
- *     exact; in the few :30/:45 zones a cell straddles two local hours and is
- *     attributed to the earlier one. Counts are never split, so the sums above
- *     hold either way.
+ * One grid, one attribution rule (M12.1)
+ *   The hourly census carries whole UTC hour cells and nothing finer: there are
+ *   no per-request timestamps for the requests that did NOT lose, so a UTC hour
+ *   that straddles a local half-hour boundary cannot be split and has to be
+ *   attributed whole to one local hour. A cell is therefore placed by the local
+ *   time of the instant it BEGINS.
+ *   Events carry an exact instant — but they are drawn in the cell their OWN
+ *   UTC hour was attributed to, not in the cell their instant falls in. M12
+ *   used the instant, and in a :30/:45 zone that tore a loss away from the very
+ *   request it was: at UTC+5:30 the hour beginning 18:00Z is drawn at local
+ *   23:00 on 8/23 while a loss at 18:45Z is 00:15 on 8/24 — a date the census
+ *   does not have, so the loss was drawn NOWHERE and the daily row read
+ *   losses:1 against requests:0. Following the cell means a loss is always
+ *   drawn on top of the usage it came from and the daily rows cannot disagree.
+ *   The price is paid in the label, not in the number: `time` stays the event's
+ *   exact local clock, so in a :30/:45 zone it can fall just outside the round
+ *   hour the cell is drawn under. check.html prints the span the cell really
+ *   covers rather than a round hour it does not. Every whole-hour zone (which
+ *   is nearly every reader, Seoul included) has the two rules agree exactly.
+ *
+ * Offsets are read per instant, never once at load
+ *   hostOffsetAt() is asked at the moment being placed OR labelled, so a scan
+ *   spanning a daylight-saving change gets each side's own offset. offsetAtLocal()
+ *   answers the same question from the other end — "what offset was in force at
+ *   this local cell" — which is what a row LABEL needs: a February row in New
+ *   York is UTC-5 even when the page was opened in August at UTC-4.
  *
  * What the engines' "instant" means here
  *   parse.js buckets by epoch + the record's own offset, so that shifted value
@@ -195,6 +212,26 @@
     };
   }
 
+  /* The offset in force at a LOCAL wall-clock cell. The instant is not known
+     until the offset is, so it is solved the usual way: read the offset at the
+     same numbers taken as UTC, then re-read it at the instant that produces.
+     This is what a label needs — partsAt() answers "which cell does this
+     instant belong to", offsetAtLocal() answers "what offset does that cell
+     carry", and printing today's offset over a February row instead was the
+     hour-out mislabel M12.1 fixes. A pinned numeric offset answers itself,
+     which is what keeps the tests deterministic. */
+  function offsetAtLocal(dateKey, hour, offsetAt) {
+    var res = resolver(offsetAt);
+    var guess = cellMs(dateKey, hour);
+    if (guess === null) return null;
+    var off = res(guess);
+    if (typeof off !== "number" || !isFinite(off)) off = 0;
+    off = Math.round(off);
+    var settled = res(guess - off * 60000);
+    if (typeof settled !== "number" || !isFinite(settled)) return off;
+    return Math.round(settled);
+  }
+
   // The engines' own bucket for an instant, for printing next to the local one.
   function utcPartsOf(ms) {
     if (typeof ms !== "number" || !isFinite(ms)) return null;
@@ -232,8 +269,11 @@
   /* Re-cut the hourly request census into the reader's calendar. A cell moves
      whole, so the total is carried across unchanged; a cell whose instant
      cannot be formed stays where it was rather than being dropped, because
-     losing it would break the sum this module exists to preserve. */
-  function localizeCensus(census, offsetAt) {
+     losing it would break the sum this module exists to preserve.
+     `seen` (optional) collects the distinct offsets the move used, so a caller
+     can tell a scan that crossed a daylight-saving change from one that did
+     not without walking the census a second time. */
+  function placeCensus(census, offsetAt, seen) {
     var rows = censusRows(census);
     if (rows === null) return null;
     var out = new Map();
@@ -241,6 +281,10 @@
       var a = out.get(date);
       if (!a) { a = zeros24(); out.set(date, a); }
       return a;
+    }
+    function note(p) {
+      if (!seen || !p) return;
+      if (seen.indexOf(p.offsetMinutes) === -1) seen.push(p.offsetMinutes);
     }
     for (var i = 0; i < rows.length; i++) {
       var row = rows[i];
@@ -250,16 +294,22 @@
         if (!n) continue;
         total += n;
         var p = partsAt(cellMs(row.date, h), offsetAt);
+        note(p);
         if (p) bucketOf(p.date)[p.hour] += n;
         else bucketOf(row.date)[h] += n;
       }
       // An all-zero row still names a day the scan covered; keep the row.
       if (total === 0) {
         var p0 = partsAt(cellMs(row.date, 0), offsetAt);
+        note(p0);
         bucketOf(p0 ? p0.date : row.date);
       }
     }
     return out;
+  }
+
+  function localizeCensus(census, offsetAt) {
+    return placeCensus(census, offsetAt, null);
   }
 
   /* ---------------- events ---------------- */
@@ -276,7 +326,16 @@
   }
 
   /* Per-event detail in the reader's calendar. Only in-TTL and iron events are
-     drawn, exactly as before; the classification is read, never re-decided. */
+     drawn, exactly as before; the classification is read, never re-decided.
+
+     `date`/`hour` are the CELL — the local cell this event's own UTC hour was
+     attributed to, so it is always a cell the census has and always the cell
+     holding the request this loss was. `time` is the event's exact local clock,
+     and `offsetMinutes` is the offset in force at that instant, so a row can be
+     labelled with its own offset instead of the page's load-time one. In a
+     whole-hour zone cell and instant agree and the two are the same thing; in a
+     :30/:45 zone `time` can sit just outside the round hour of `hour`, which is
+     what the page has to say on screen (see the module header). */
   function localizeEvents(events, offsetAt) {
     if (!Array.isArray(events)) return [];
     var out = [];
@@ -290,10 +349,15 @@
       var p = partsAt(ms, offsetAt);
       if (!p) continue;
       var u = utcPartsOf(ms);
+      var cell = u ? partsAt(cellMs(u.date, u.hour), offsetAt) : null;
+      if (!cell) cell = p;
       out.push({
-        date: p.date,
-        hour: p.hour,
+        ms: ms,
+        date: cell.date,
+        hour: cell.hour,
         time: p.time,
+        offsetMinutes: p.offsetMinutes,
+        cellOffsetMinutes: cell.offsetMinutes,
         gapMin: (typeof e.gap_min === "number") ? numOf(e.gap_min) : numOf(e.gap_seconds) / 60,
         tokens: intOf(e.cache_creation_tokens !== undefined ? e.cache_creation_tokens : e.tokens),
         sub: (e.is_subagent === true) || (e.main === false),
@@ -301,10 +365,10 @@
         utc_time: u ? u.time : null
       });
     }
-    out.sort(function (a, b) {
-      if (a.date !== b.date) return a.date < b.date ? -1 : 1;
-      return a.time < b.time ? -1 : (a.time > b.time ? 1 : 0);
-    });
+    // By instant, not by (date, time): a :30/:45 cell can span local midnight,
+    // where 00:15 is LATER than 23:45 and sorting on the clock would reverse
+    // the pair inside the popover.
+    out.sort(function (a, b) { return a.ms - b.ms; });
     return out;
   }
 
@@ -313,7 +377,10 @@
     (localEvents || []).forEach(function (e) {
       var key = e.date + "#" + e.hour;
       if (!map.has(key)) map.set(key, []);
-      map.get(key).push({ time: e.time, gapMin: e.gapMin, tokens: e.tokens, sub: e.sub });
+      map.get(key).push({
+        time: e.time, gapMin: e.gapMin, tokens: e.tokens, sub: e.sub,
+        offsetMinutes: e.offsetMinutes
+      });
     });
     return map;
   }
@@ -391,12 +458,19 @@
         events: [],
         period: utcPeriod,
         utcPeriod: utcPeriod,
-        utcDaily: utc
+        utcDaily: utc,
+        offsetAt: offsetAt,
+        offsets: []
       };
     }
-    var lc = localizeCensus(census, offsetAt);
+    var seen = [];
+    var lc = placeCensus(census, offsetAt, seen);
     var le = localizeEvents(isPlainObject(result) ? result.events : [], offsetAt);
     var daily = localDaily(lc, le);
+    le.forEach(function (e) {
+      if (seen.indexOf(e.offsetMinutes) === -1) seen.push(e.offsetMinutes);
+    });
+    seen.sort(function (a, b) { return a - b; });
     return {
       localized: true,
       daily: daily,
@@ -405,7 +479,13 @@
       events: le,
       period: periodOf(daily),
       utcPeriod: utcPeriod,
-      utcDaily: utc
+      utcDaily: utc,
+      // The resolver as given, so a caller labelling a cell asks the same
+      // clock the placement asked instead of re-detecting one of its own.
+      offsetAt: offsetAt,
+      // Every distinct offset this view is drawn on. More than one means the
+      // scan crossed a daylight-saving change and the page has to say so.
+      offsets: seen
     };
   }
 
@@ -417,6 +497,7 @@
     cellMs: cellMs,
     bucketMsOf: bucketMsOf,
     partsAt: partsAt,
+    offsetAtLocal: offsetAtLocal,
     utcPartsOf: utcPartsOf,
     localizeCensus: localizeCensus,
     localizeEvents: localizeEvents,

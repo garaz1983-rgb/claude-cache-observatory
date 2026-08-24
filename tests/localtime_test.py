@@ -39,6 +39,39 @@ what the test holds:
      scan pushed through store.js save -> load -> hydrate -> localize must draw
      the same screen as the live scan, at every offset.
 
+M12.1 adds four more, all of them defects M12 shipped:
+
+  5. A LOSS IS DRAWN WHERE ITS OWN REQUEST WAS COUNTED. M12 placed an hour cell
+     by the instant it begins and an event by its exact instant. In a :30/:45
+     zone those are different local hours and, for the hour beginning 23:30
+     local, different local DAYS: at Asia/Kolkata the loss landed on a date the
+     census did not have, so the heatmap drew it NOWHERE and the daily row read
+     losses:1 against requests:0. So for every fixture and every offset:
+     every event sits in a cell the local census has, that cell holds at least
+     as many requests as it holds losses, and no daily row shows more losses
+     than requests. tests/fixtures_tz_subhour pins the exact cells and clock
+     times at +5:30, +5:45, +9 and UTC, and carries the only timestamp in any
+     fixture written in its own UTC offset rather than "...Z".
+
+  6. A ROW IS LABELLED WITH THE OFFSET AT ITS OWN INSTANT. The offset was
+     detected once at page load, so a February row in New York on a page opened
+     in August printed UTC-4 over an instant that is UTC-5 — an hour out for
+     anyone cross-checking the screen against the UTC payload. The pages'
+     labelling code is lifted out of check.html / ko/check.html between its own
+     markers and driven with a pinned 2026 New York DST function, so the
+     printed strings are asserted, not the intent behind them.
+
+  7. THE PAYLOAD IS BUILT FROM THE ENGINE, NOT FROM THE SCREEN. The single
+     invariant M12 exists to protect had no test at all: a mutant reading
+     VIEW.daily inside buildSubmitPayload survived every suite while producing a
+     KST-cut submission that /api/submit would have accepted. The pages' payload
+     block is lifted the same way and run against a LAST and a VIEW that
+     deliberately disagree.
+
+  8. BRANCHES NO FIXTURE REACHES are probed directly: an all-zero census row
+     (a day the scan covered with no request in it) and offsetAtLocal() on
+     either side of a DST change.
+
 Judgment is deliberately out of scope here: whether a request is an in-TTL loss
 is decided by the idle gap between requests, which no timezone can change.
 tests/parity_check.py is what holds that, and this test only ever reads the
@@ -56,12 +89,13 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 RUNNER = os.path.join(HERE, "run_localtime.js")
 FIXTURE_TZ = os.path.join(HERE, "fixtures_tz")
+FIXTURE_SUBHOUR = os.path.join(HERE, "fixtures_tz_subhour")
 FIXTURE_MAIN = os.path.join(HERE, "fixtures")
 FIXTURE_HOSTILE = os.path.join(HERE, "fixtures_hostile")
 
 # Minutes east of UTC. Whole hours either side, the half- and quarter-hour
-# zones (India, Newfoundland, Chatham) and the two extremes.
-OFFSETS = [0, 60, -300, 330, 540, 825, -210, -720, 780]
+# zones (India, Nepal, Newfoundland, Chatham) and the two extremes.
+OFFSETS = [0, 60, -300, 330, 345, 540, 825, -210, -720, 780]
 
 NODE_FALLBACKS = [
     r"C:\Program Files\nodejs\node.exe",
@@ -121,9 +155,111 @@ TZ_CENSUS_CELLS = [
 ]
 
 EXPECTED_LABELS = {
-    "0": "UTC", "60": "UTC+1", "330": "UTC+5:30", "540": "UTC+9",
-    "825": "UTC+13:45", "-300": "UTC-5", "-210": "UTC-3:30",
+    "0": "UTC", "60": "UTC+1", "330": "UTC+5:30", "345": "UTC+5:45",
+    "540": "UTC+9", "825": "UTC+13:45", "-300": "UTC-5", "-210": "UTC-3:30",
 }
+
+# ---- M12.1 / D1: tests/fixtures_tz_subhour ---------------------------------
+# Two requests inside one UTC hour (the second an in-TTL loss of 50,000 tokens,
+# the pair the defect was measured on), then a second pair stamped in its own
+# +05:30 offset rather than as "...Z".
+SUBHOUR_TOTALS = {"requests": 4, "in_ttl_losses": 2, "iron_losses": 0,
+                  "wasted_tokens": 57000}
+SUBHOUR_UTC_DAILY = [
+    {"date": "2026-08-23", "requests": 2, "losses": 1, "wasted_tokens": 50000},
+    {"date": "2026-08-24", "requests": 2, "losses": 1, "wasted_tokens": 7000},
+]
+SUBHOUR_LOCAL_DAILY = {
+    0: SUBHOUR_UTC_DAILY,
+    330: SUBHOUR_UTC_DAILY,
+    345: SUBHOUR_UTC_DAILY,
+    540: [{"date": "2026-08-24", "requests": 4, "losses": 2, "wasted_tokens": 57000}],
+}
+# (offset, local date, local hour, requests in that cell, losses in that cell).
+# The requests column is what a mutated cellMs moves: at +5:30 the hour
+# beginning 18:00Z is 23:30 local and belongs to column 23, not column 0 of the
+# next day.
+SUBHOUR_CELLS = [
+    (330, "2026-08-23", 23, 2, 1), (330, "2026-08-24", 7, 2, 1),
+    (345, "2026-08-23", 23, 2, 1), (345, "2026-08-24", 7, 2, 1),
+    (540, "2026-08-24", 3, 2, 1), (540, "2026-08-24", 11, 2, 1),
+    (0, "2026-08-23", 18, 2, 1), (0, "2026-08-24", 2, 2, 1),
+]
+# (offset, the engine's own bucket instant, the cell drawn, the exact local
+#  clock printed). The 02:10 rows are the +05:30-stamped record: the engine
+#  buckets it by its own local date, so its bucket instant is 02:10 on 08-24
+#  and not the 20:40Z its epoch alone would give — which is what fails loudly
+#  if bucketMsOf ever drops a record's offset.
+SUBHOUR_EVENTS = [
+    (330, "2026-08-23T18:45:00", "2026-08-23#23", "00:15:00"),
+    (330, "2026-08-24T02:10:00", "2026-08-24#7", "07:40:00"),
+    (345, "2026-08-23T18:45:00", "2026-08-23#23", "00:30:00"),
+    (345, "2026-08-24T02:10:00", "2026-08-24#7", "07:55:00"),
+    (540, "2026-08-23T18:45:00", "2026-08-24#3", "03:45:00"),
+    (540, "2026-08-24T02:10:00", "2026-08-24#11", "11:10:00"),
+    (0, "2026-08-23T18:45:00", "2026-08-23#18", "18:45:00"),
+    (0, "2026-08-24T02:10:00", "2026-08-24#2", "02:10:00"),
+]
+
+# ---- M12.1 / D2: what the pages PRINT --------------------------------------
+# Driven with a pinned 2026 America/New_York DST function, so these hold on a
+# machine in any zone. The February row is the measured defect: it printed
+# UTC-4 (the offset at page load, in August) over an instant that is UTC-5.
+EXPECTED_PAGE_LABELS = {
+    "check.html": {
+        "ny_cell_feb": "2026-02-15 13:00 UTC-5",
+        "ny_cell_aug": "2026-08-15 14:00 UTC-4",
+        "ny_offset_feb": -300,
+        "ny_offset_aug": -240,
+        "ny_head_feb": "Time (UTC-5)",
+        "ny_head_aug": "Time (UTC-4)",
+        "ny_head_split": "Time",
+        "ny_time_uniform": "13:02:00",
+        "ny_time_split": "13:02:00 UTC-5",
+        "kolkata_cell": "2026-08-23 23:30–00:30 UTC+5:30",
+        "seoul_cell": "2026-08-24 08:00 UTC+9",
+        "utc_cell": "2026-08-23 23:00 UTC",
+    },
+    "ko/check.html": {
+        "ny_cell_feb": "2026-02-15 13:00 UTC-5",
+        "ny_cell_aug": "2026-08-15 14:00 UTC-4",
+        "ny_offset_feb": -300,
+        "ny_offset_aug": -240,
+        "ny_head_feb": "시각(UTC-5)",
+        "ny_head_aug": "시각(UTC-4)",
+        "ny_head_split": "시각",
+        "ny_time_uniform": "13:02:00",
+        "ny_time_split": "13:02:00 UTC-5",
+        "kolkata_cell": "2026-08-23 23:30~00:30 UTC+5:30",
+        "seoul_cell": "2026-08-24 08:00 UTC+9",
+        "seoul_cell_han": "2026-08-24 08시 UTC+9",
+        "kolkata_cell_han": "2026-08-23 23:30~00:30 UTC+5:30",
+        "utc_cell": "2026-08-23 23:00 UTC",
+    },
+}
+
+# The heatmap's own disclosure. A whole-hour zone must keep, word for word, the
+# sentence the page carried before M12.1 — that is the "renders exactly as it
+# does today" half of the requirement, asserted rather than assumed.
+LEGACY_HM_NOTE = {
+    "check.html": (
+        "The day rows and the hour columns are your own local clock",
+        ", not UTC, so 08:00 here is 08:00 where you are sitting.",
+    ),
+    "ko/check.html": (
+        "날짜 행과 시각 열은 UTC가 아니라 "
+        "이 브라우저가 있는 곳의 시계",
+        "다. 여기 08시는 지금 앉아 있는 "
+        "곳의 08시다.",
+    ),
+}
+# What a :30/:45 zone must be told instead, and what a DST-spanning scan adds.
+SUBHOUR_NOTE_MARK = {"check.html": ":30 past the hour shown",
+                     "ko/check.html": ":30 지난 지점"}
+DST_NOTE_MARK = {"check.html": "daylight-saving change",
+                 "ko/check.html": "서머타임 경계"}
+
+PAGES = ["check.html", "ko/check.html"]
 
 
 class CheckFail(Exception):
@@ -273,6 +409,175 @@ def check_boundary(data):
               % (off, date, hour, row["hours"][hour], want))
 
 
+def census_rows(view):
+    return {r["date"]: r["hours"] for r in json.loads(view["census_json"])}
+
+
+def check_placement(tag, data):
+    """M12.1 invariant 5, on every fixture at every offset.
+
+    Not "the loss looks about right" but three structural facts: the cell it is
+    drawn in exists, that cell was counted as usage, and the day it lands on
+    cannot claim more losses than requests. Any of the three failing is the
+    Kolkata defect back in some form.
+    """
+    for off, view in sorted(data["views"].items(), key=lambda kv: int(kv[0])):
+        rows = census_rows(view)
+        per_cell = {}
+        for ev in view["events"]:
+            key = (ev["date"], ev["hour"])
+            per_cell[key] = per_cell.get(key, 0) + 1
+        for (date, hour), losses in sorted(per_cell.items()):
+            check(date in rows,
+                  "%s off=%s: %d loss(es) drawn on %s, a day the census has no "
+                  "row for - nothing would render them" % (tag, off, losses, date))
+            check(rows[date][hour] >= losses,
+                  "%s off=%s: cell %s#%d holds %d losses over %d requests"
+                  % (tag, off, date, hour, losses, rows[date][hour]))
+            check(("%s#%d" % (date, hour)) in view["evt_keys"],
+                  "%s off=%s: %s#%d missing from the heatmap event map"
+                  % (tag, off, date, hour))
+        for row in view["daily"]:
+            check(row["losses"] <= row["requests"],
+                  "%s off=%s: daily row %s reads losses %d against requests %d"
+                  % (tag, off, row["date"], row["losses"], row["requests"]))
+
+
+def check_subhour(data):
+    """M12.1 invariant 5 pinned to exact cells and clock times."""
+    check(data["totals"] == SUBHOUR_TOTALS,
+          "fixtures_tz_subhour totals drifted: %r" % (data["totals"],))
+    check(data["utc_daily"] == SUBHOUR_UTC_DAILY,
+          "fixtures_tz_subhour UTC daily drifted (this is the submission "
+          "payload): %r" % (data["utc_daily"],))
+
+    for off, expected in sorted(SUBHOUR_LOCAL_DAILY.items()):
+        got = data["views"][str(off)]["daily"]
+        check(got == expected,
+              "fixtures_tz_subhour off=%d: local daily\n  want %r\n  got  %r"
+              % (off, expected, got))
+
+    for off, date, hour, want_req, want_loss in SUBHOUR_CELLS:
+        view = data["views"][str(off)]
+        rows = census_rows(view)
+        check(date in rows,
+              "fixtures_tz_subhour off=%d: no census row for %s (have %r)"
+              % (off, date, sorted(rows)))
+        check(rows[date][hour] == want_req,
+              "fixtures_tz_subhour off=%d: cell %s#%d holds %d requests, "
+              "expected %d" % (off, date, hour, rows[date][hour], want_req))
+        got_loss = sum(1 for e in view["events"]
+                       if e["date"] == date and e["hour"] == hour)
+        check(got_loss == want_loss,
+              "fixtures_tz_subhour off=%d: cell %s#%d holds %d losses, "
+              "expected %d" % (off, date, hour, got_loss, want_loss))
+
+    for off, bucket, want_key, want_time in SUBHOUR_EVENTS:
+        view = data["views"][str(off)]
+        ev = next((e for e in view["events"]
+                   if e["utc_date"] + "T" + e["utc_time"] == bucket), None)
+        check(ev is not None,
+              "fixtures_tz_subhour off=%d: no event bucketed at %s (have %r)"
+              % (off, bucket, [e["utc_date"] + "T" + e["utc_time"]
+                               for e in view["events"]]))
+        key = ev["date"] + "#" + str(ev["hour"])
+        check(key == want_key,
+              "fixtures_tz_subhour off=%d: %s drawn in %s, expected %s"
+              % (off, bucket, key, want_key))
+        check(ev["time"] == want_time,
+              "fixtures_tz_subhour off=%d: %s printed at %s, expected %s"
+              % (off, bucket, ev["time"], want_time))
+        check(ev["offsetMinutes"] == off,
+              "fixtures_tz_subhour off=%d: %s labelled %r"
+              % (off, bucket, ev["offsetMinutes"]))
+
+
+def check_payload(tag, data, discriminating):
+    """M12.1 invariant 7 (D3): the payload comes from the engine's UTC rows.
+
+    `discriminating` collects the fixtures where the localised view really does
+    disagree with the engine. Not every fixture can (a scan inside one local day
+    localises to the same rows), but at least one must, or the guard would pass
+    while guarding nothing — main() asserts that separately.
+    """
+    utc_daily = [{k: d[k] for k in ("date", "requests", "losses", "wasted_tokens")}
+                 for d in data["utc_daily"]]
+    first, last = utc_daily[0]["date"], utc_daily[-1]["date"]
+    for page in PAGES:
+        got = data["page_payload"].get(page)
+        check(got is not None, "%s: no payload probe for %s" % (tag, page))
+        if got["view_daily"] != utc_daily and (tag, page) not in discriminating:
+            discriminating.append((tag, page))
+        for path in ("whole", "ranged"):
+            pay = got[path]
+            check(pay["daily"] == utc_daily,
+                  "%s %s (%s): payload.daily is not the engine's UTC rows\n"
+                  "  engine: %r\n  screen: %r\n  sent  : %r"
+                  % (tag, page, path, utc_daily, got["view_daily"], pay["daily"]))
+            check(pay["period_start"] == first and pay["period_end"] == last,
+                  "%s %s (%s): payload period %s..%s, engine %s..%s, screen %r"
+                  % (tag, page, path, pay["period_start"], pay["period_end"],
+                     first, last, got["view_period"]))
+            check(pay["totals"]["requests"] == data["totals"]["requests"] and
+                  pay["totals"]["in_ttl_losses"] == data["totals"]["in_ttl_losses"] and
+                  pay["totals"]["wasted_tokens"] == data["totals"]["wasted_tokens"],
+                  "%s %s (%s): payload totals %r != engine totals %r"
+                  % (tag, page, path, pay["totals"], data["totals"]))
+
+
+def check_page_labels(data):
+    """M12.1 invariant 6 (D2): the strings the pages print."""
+    for page in PAGES:
+        got = data["page_labels"].get(page)
+        check(got is not None, "no label probe for %s" % page)
+        for key, want in sorted(EXPECTED_PAGE_LABELS[page].items()):
+            check(got.get(key) == want,
+                  "%s: %s = %r, expected %r" % (page, key, got.get(key), want))
+        lead, rest = LEGACY_HM_NOTE[page]
+        for zone in ("seoul", "utc"):
+            note = got[zone + "_note"]
+            check(note["lead"] == lead and note["rest"] == rest,
+                  "%s: the %s heatmap note is not the sentence this page "
+                  "carried before M12.1\n  want %r\n  got  %r"
+                  % (page, zone, lead + rest, note["lead"] + note["rest"]))
+        sub = got["kolkata_note"]
+        check(sub["lead"] == lead,
+              "%s: the sub-hour note changed its opening clause" % page)
+        check(SUBHOUR_NOTE_MARK[page] in sub["rest"],
+              "%s: a :30 zone is not told what its columns cover: %r"
+              % (page, sub["rest"]))
+        check(DST_NOTE_MARK[page] not in sub["rest"],
+              "%s: a single-offset zone was told it crosses a DST change" % page)
+        dst = got["ny_note"]
+        check(DST_NOTE_MARK[page] in dst["rest"],
+              "%s: a DST-spanning scan is not told its rows carry per-instant "
+              "offsets: %r" % (page, dst["rest"]))
+
+
+def check_unit(data):
+    """M12.1 invariant 8: branches no fixture reaches."""
+    u = data["unit"]
+    check(u["all_zero_row_utc"] == ["2026-08-20", "2026-08-21"],
+          "an all-zero census row stopped naming the day it covered (UTC): %r"
+          % (u["all_zero_row_utc"],))
+    check(u["all_zero_row_seoul"] == ["2026-08-20", "2026-08-22"],
+          "an all-zero census row moved wrongly at +9: %r"
+          % (u["all_zero_row_seoul"],))
+    check(u["offset_at_local_feb"] == -300,
+          "offsetAtLocal on a February New York cell = %r, expected -300"
+          % (u["offset_at_local_feb"],))
+    check(u["offset_at_local_aug"] == -240,
+          "offsetAtLocal on an August New York cell = %r, expected -240"
+          % (u["offset_at_local_aug"],))
+    check(u["offset_at_local_pinned"] == 330,
+          "a pinned offset did not answer itself: %r"
+          % (u["offset_at_local_pinned"],))
+    check(u["offset_at_local_feb"] == u["offset_at_instant_feb"] and
+          u["offset_at_local_aug"] == u["offset_at_instant_aug"],
+          "the offset a cell is LABELLED with disagrees with the offset its "
+          "own instant was PLACED with")
+
+
 def check_aggregate_only(data):
     """Pasted CLI aggregates carry nothing per-request, so they must stay UTC
     and say so, rather than being re-labelled on a guess."""
@@ -326,22 +631,42 @@ def main():
     evidence = []
 
     tz = run_runner(node, FIXTURE_TZ, OFFSETS)
+    subhour = run_runner(node, FIXTURE_SUBHOUR, OFFSETS)
     main_fx = run_runner(node, FIXTURE_MAIN, OFFSETS)
     hostile = run_runner(node, FIXTURE_HOSTILE, OFFSETS)
 
-    suites = [("fixtures_tz", tz), ("fixtures", main_fx), ("fixtures_hostile", hostile)]
+    suites = [("fixtures_tz", tz), ("fixtures_tz_subhour", subhour),
+              ("fixtures", main_fx), ("fixtures_hostile", hostile)]
+    discriminating = []
     for tag, data in suites:
-        for fn in (check_sums, check_offset0_identity, check_restored):
+        for fn in (check_sums, check_offset0_identity, check_restored,
+                   check_placement):
             try:
                 fn(tag, data)
             except CheckFail as exc:
                 errors.append(str(exc))
+        try:
+            check_payload(tag, data, discriminating)
+        except CheckFail as exc:
+            errors.append(str(exc))
+    if not discriminating:
+        errors.append("the payload guard never saw a localised view that "
+                      "differs from the engine's rows, so it proved nothing")
+    else:
+        evidence.append("payload guard discriminating on: %s"
+                        % ", ".join("%s/%s" % p for p in discriminating))
 
-    for fn in (check_boundary, check_aggregate_only, check_labels):
+    for fn in (check_boundary, check_aggregate_only, check_labels,
+               check_page_labels, check_unit):
         try:
             fn(tz)
         except CheckFail as exc:
             errors.append(str(exc))
+
+    try:
+        check_subhour(subhour)
+    except CheckFail as exc:
+        errors.append(str(exc))
 
     try:
         evidence.append(check_host(tz))
@@ -387,6 +712,26 @@ def main():
           % ", ".join(sorted(tz["views"], key=lambda k: int(k))))
     print("  offset 0 byte-identical to the pre-M12 baseline on: %s"
           % ", ".join(tag for tag, _ in suites))
+    print("  D1 sub-hour zones (fixtures_tz_subhour), loss cell vs its own usage:")
+    for off in (330, 345, 540):
+        view = subhour["views"][str(off)]
+        rows = census_rows(view)
+        cells = ", ".join(
+            "%s#%d req=%d loss=1 clock=%s"
+            % (e["date"], e["hour"], rows[e["date"]][e["hour"]], e["time"])
+            for e in view["events"])
+        print("    %-9s %s" % (tz["labels"].get(str(off), str(off)), cells))
+    print("  D2 printed labels (pinned 2026 America/New_York):")
+    for page in PAGES:
+        lab = tz["page_labels"][page]
+        print("    %-14s %s | %s | %s"
+              % (page, lab["ny_cell_feb"], lab["ny_head_feb"], lab["ny_time_uniform"]))
+    print("  D3 payload guard: %s built %s..%s from the engine while the "
+          "screen read %s..%s"
+          % (PAGES[0], tz["page_payload"][PAGES[0]]["whole"]["period_start"],
+             tz["page_payload"][PAGES[0]]["whole"]["period_end"],
+             tz["page_payload"][PAGES[0]]["view_period"]["start"],
+             tz["page_payload"][PAGES[0]]["view_period"]["end"]))
     print("  host: %s %s" % (tz["host"]["zone"], tz["host"]["detect"]["label"]))
     for line in evidence:
         print("  " + line)

@@ -5,6 +5,13 @@ Targets:
   - assets/parse.js          — judged by tests/parity_check.py (M01..M15, M22)
   - functions/api/submit.js  — judged by tests/submit_contract_test.py
                                (S16..S21, S23..S24)
+  - assets/localtime.js      — judged by tests/localtime_test.py (L25..L28)
+  - check.html, ko/check.html — judged by tests/localtime_test.py (C29..C30)
+
+M12.1 added the last two targets. Before it, no anchor reached check.html at
+all, and a mutant that built the submission payload out of the localised view —
+the one thing M12 exists to forbid — survived every suite while producing a
+KST-cut submission the API would have accepted.
 
 For each mutation: apply a single-anchor source edit to the target file, run
 that mutation's test runner, judge by exit code, then restore the target from
@@ -30,9 +37,13 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 SITE_DIR = os.path.dirname(HERE)
 PARITY = os.path.join(HERE, "parity_check.py")
 CONTRACT = os.path.join(HERE, "submit_contract_test.py")
+LOCALTIME = os.path.join(HERE, "localtime_test.py")
 
 PARSE_JS_REL = "assets/parse.js"
 SUBMIT_JS_REL = "functions/api/submit.js"
+LOCALTIME_JS_REL = "assets/localtime.js"
+CHECK_HTML_REL = "check.html"
+CHECK_HTML_KO_REL = "ko/check.html"
 
 NODE_FALLBACKS = [
     r"C:\Program Files\nodejs\node.exe",
@@ -44,6 +55,7 @@ RUNNERS = {
     # name: (script, per-run timeout seconds)
     "parity": (PARITY, 300),
     "contract": (CONTRACT, 900),
+    "localtime": (LOCALTIME, 600),
 }
 
 # (id, target file relative to site/, anchor — must occur exactly once in the
@@ -130,6 +142,55 @@ MUTATIONS = [
     ("S24_daily_empty_allowed", SUBMIT_JS_REL,
      "if (body.daily.length === 0) {",
      "if (false) {", "contract"),
+
+    # -- M12.1: the local-time view (assets/localtime.js) -------------------
+    # L28 is the M12 defect itself: place an event by its exact instant instead
+    # of by the cell its own UTC hour was attributed to. Whole-hour zones cannot
+    # tell the difference, which is exactly why it shipped.
+    ("L25_cellms_end_of_hour", LOCALTIME_JS_REL,
+     'return stampMs(dateKey, pad2(h) + ":00:00");',
+     'return stampMs(dateKey, pad2(h) + ":59:59");', "localtime"),
+    ("L26_bucketms_offset_dropped", LOCALTIME_JS_REL,
+     "return epochMs + offsetMinutes * 60000;",
+     "return epochMs;", "localtime"),
+    ("L27_allzero_row_dropped", LOCALTIME_JS_REL,
+     "bucketOf(p0 ? p0.date : row.date);",
+     "void p0;", "localtime"),
+    ("L28_event_placed_by_instant", LOCALTIME_JS_REL,
+     "var cell = u ? partsAt(cellMs(u.date, u.hour), offsetAt) : null;",
+     "var cell = p;", "localtime"),
+    ("L29_offset_frozen_at_load", LOCALTIME_JS_REL,
+     "var settled = res(guess - off * 60000);",
+     "var settled = res(Date.now());", "localtime"),
+
+    # -- M12.1: the pages' payload builder (D3) ----------------------------
+    # The exact regression M12 forbids: build the submission out of the
+    # localised screen. sum(daily) still equals totals and the period still
+    # matches the daily range, so /api/submit ACCEPTS it — nothing downstream
+    # can catch this, which is why the guard has to sit here.
+    ("C30_payload_reads_localised_view", CHECK_HTML_REL,
+     "  var r = LAST.result;",
+     "  var r = VIEW && VIEW.localized ? { totals: LAST.result.totals,"
+     " daily: VIEW.daily, events: LAST.result.events } : LAST.result;",
+     "localtime"),
+    ("C31_payload_reads_localised_view_ko", CHECK_HTML_KO_REL,
+     "  var r = LAST.result;",
+     "  var r = VIEW && VIEW.localized ? { totals: LAST.result.totals,"
+     " daily: VIEW.daily, events: LAST.result.events } : LAST.result;",
+     "localtime"),
+
+    # -- M12.1: the pages' labels (D2) -------------------------------------
+    # Print the offset detected once at page load instead of the offset at the
+    # instant being labelled — the measured "13:02:00 UTC-4" over an 18:02Z
+    # instant.
+    ("C32_label_offset_frozen_at_load", CHECK_HTML_REL,
+     "  var off = ObservatoryLocalTime.offsetAtLocal(dateKey, hour, VIEW ? VIEW.offsetAt : undefined);\n"
+     "  return typeof off === \"number\" ? off : ZONE.offsetMinutes;",
+     "  return ZONE.offsetMinutes;", "localtime"),
+    ("C33_label_offset_frozen_at_load_ko", CHECK_HTML_KO_REL,
+     "  var off = ObservatoryLocalTime.offsetAtLocal(dateKey, hour, VIEW ? VIEW.offsetAt : undefined);\n"
+     "  return typeof off === \"number\" ? off : ZONE.offsetMinutes;",
+     "  return ZONE.offsetMinutes;", "localtime"),
 ]
 
 

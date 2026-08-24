@@ -58,7 +58,11 @@ Two clocks, deliberately:
 - **The engines, the submission payload and the public observatory are UTC.** `parse.js` and `check_cache_loss.py` bucket by the record's own offset, which is UTC for the `...Z` stamps Claude Code writes. Submissions from many countries are summed day by day, so every one of them has to be cut the same way; cutting each by its own local date would scramble the fleet's daily totals. `daily[].date`, `period_start` and `period_end` are UTC and must stay that way — the contract, the existing dataset and `tests/submit_contract_test.py` all depend on it.
 - **The personal screens (`check.html`, `ko/check.html`) are the reader's own timezone.** The heatmap's day rows and hour columns, the per-event popover, the daily trend and the observed period are re-cut by `assets/localtime.js`, which is display-only: it moves whole records between buckets and never re-decides anything. Judgment is the idle gap between requests and cannot depend on a timezone.
 
-**Convert in the display layer only.** If a conversion ever needs to reach into `parse.js` or `check_cache_loss.py`, the design is wrong. `tests/localtime_test.py` holds the two invariants that make the split safe: every column sums to the same total after re-bucketing, and at offset 0 the output is byte-identical to the pre-M12 code. Both pages state on screen which clock they are on, and the payload preview says plainly that it is UTC while the screen above it is not.
+**One grid, one attribution rule.** The hourly census carries counts per whole UTC hour and nothing finer — there are no per-request timestamps for the requests that did not lose — so a UTC hour that straddles a local half-hour boundary cannot be split and is attributed whole to the local hour it begins in. **An event is drawn in the cell its own UTC hour was attributed to**, never in the cell its exact instant falls in. Placing the two by different rules is what let a loss at UTC+5:30 land on a date the census did not have: it was drawn nowhere at all and its day row read `losses:1` against `requests:0`. The exact local clock is still printed on the event, so in a `:30`/`:45` zone it can fall just outside the round hour the cell is drawn under, and the page says so on screen rather than leaving it to be discovered.
+
+**Every offset is read at the instant it describes.** Both placement and labelling ask `hostOffsetAt` at that moment (`offsetAtLocal` for a cell, whose local wall time fixes the instant), never once at page load. A February row in New York prints UTC-5 on a page opened in August.
+
+**Convert in the display layer only.** If a conversion ever needs to reach into `parse.js` or `check_cache_loss.py`, the design is wrong. `tests/localtime_test.py` holds the invariants that make the split safe: every column sums to the same total after re-bucketing; at offset 0 the output is byte-identical to the pre-M12 code; every event sits in a cell the census has, with at least as many requests as losses; no day row shows more losses than requests; and — lifted verbatim out of both pages between their own `SUBMIT-PAYLOAD` / `LOCALTIME-LABELS` markers — the payload is built from the engine's UTC rows and the printed labels carry per-instant offsets. Keep those markers when editing the blocks between them. Both pages state on screen which clock they are on, and the payload preview says plainly that it is UTC while the screen above it is not.
 
 ## Running the tests
 
@@ -69,8 +73,8 @@ python tests/parity_check.py          # parse.js vs CLI on the same fixtures
 python tests/submit_contract_test.py  # /api/submit contract (mock GitHub, local KV)
 python tests/range_filter_test.py     # submission period picker (filterRange/clampRange/daySpan)
 python tests/storage_test.py          # local save: round trip, forbidden fields, increment, overlap
-python tests/localtime_test.py        # local-time view: sum preservation, boundary days, offset-0 no-op
-python tests/mutation_run.py          # mutation harness over both engines
+python tests/localtime_test.py        # local-time view: sums, boundary days, offset-0 no-op, cell attribution, printed labels, payload provenance
+python tests/mutation_run.py          # mutation harness over the engines, localtime.js and both check pages
 ```
 
 Notes:

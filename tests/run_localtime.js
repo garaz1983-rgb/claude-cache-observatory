@@ -25,6 +25,23 @@
  *
  * JSON strings (…_json) are emitted so the checker can assert byte identity
  * rather than structural equality.
+ *
+ * M12.1 additions — three things the module alone cannot answer:
+ *   page_payload  the submission payload check.html / ko/check.html actually
+ *                 build, by lifting their SUBMIT-PAYLOAD block verbatim and
+ *                 running it against a LAST and a VIEW that deliberately
+ *                 disagree. A payload built from the localised view is then a
+ *                 failed assertion instead of a silently accepted KST-cut
+ *                 submission.
+ *   page_labels   the strings those pages PRINT on a heatmap cell, in a
+ *                 popover header and in its time column, by lifting their
+ *                 LOCALTIME-LABELS block the same way. `ny` drives it with a
+ *                 pinned 2026 America/New_York DST function rather than the
+ *                 host zone, so a February row is asserted to say UTC-5 on a
+ *                 machine that is anywhere at all.
+ *   unit          direct probes of localizeCensus / offsetAtLocal for the
+ *                 branches no fixture reaches (an all-zero census row, a local
+ *                 cell on either side of a DST change).
  */
 "use strict";
 
@@ -125,6 +142,11 @@ function evtRowsOf(map) {
   return keys.map(function (k) { return [k, map.get(k)]; });
 }
 
+/* `offsetMinutes: 0` is not a field the pre-M12 page carried per row — it
+   printed one detected offset for every row on the page. Under this baseline
+   (offset 0 / TZ=UTC) that one offset IS UTC, so stating it per row here is the
+   same claim written per row: at offset 0 nothing on this screen is labelled
+   anything but UTC. */
 function legacyEvtMap(events) {
   var m = new Map();
   events.forEach(function (e) {
@@ -135,12 +157,60 @@ function legacyEvtMap(events) {
     if (!m.has(key)) m.set(key, []);
     m.get(key).push({
       time: dh.timeStr, gapMin: e.gap_seconds / 60,
-      tokens: e.cache_creation_tokens, sub: e.is_subagent
+      tokens: e.cache_creation_tokens, sub: e.is_subagent,
+      offsetMinutes: 0
     });
   });
   m.forEach(function (list) { list.sort(function (a, b) { return a.time < b.time ? -1 : 1; }); });
   return m;
 }
+
+/* ---- page code under test, lifted between its own markers ----
+   The block is evaluated as-is: no re-implementation here can drift from the
+   page, and a mutation applied to the page is a mutation applied to this test.
+   Everything the block reads is passed in, so it can neither touch the DOM nor
+   reach a global the page happens to have. */
+function pageBlock(rel, name) {
+  var abs = path.join(__dirname, "..", rel.split("/").join(path.sep));
+  var src = fs.readFileSync(abs, "utf8");
+  var begin = "/* " + name + ":BEGIN */";
+  var end = "/* " + name + ":END */";
+  var a = src.indexOf(begin), b = src.indexOf(end);
+  if (a === -1 || b === -1 || b < a) {
+    throw new Error("marker " + name + " missing or out of order in " + rel);
+  }
+  if (src.indexOf(begin, a + 1) !== -1 || src.indexOf(end, b + 1) !== -1) {
+    throw new Error("marker " + name + " occurs more than once in " + rel);
+  }
+  return src.slice(a + begin.length, b);
+}
+
+function hh2(h) { return String(h).padStart(2, "0"); }
+
+function labelsOf(rel, view, zone) {
+  var body = pageBlock(rel, "LOCALTIME-LABELS");
+  var make = new Function("ObservatoryLocalTime", "VIEW", "ZONE", "hh", body +
+    "\nreturn { cellOffsetOf: cellOffsetOf, cellClockLabel: cellClockLabel," +
+    " evtOffsets: evtOffsets, evtTimeHeader: evtTimeHeader," +
+    " evtTimeText: evtTimeText, heatmapNoteText: heatmapNoteText };");
+  return make(lt, view, zone, hh2);
+}
+
+function payloadOf(rel, last, view, fields, rangeReady) {
+  var body = pageBlock(rel, "SUBMIT-PAYLOAD");
+  var doc = {
+    getElementById: function (id) { return fields[id] || { value: "" }; }
+  };
+  var make = new Function("LAST", "VIEW", "RANGE_READY", "document",
+    "CacheObservatory", body + "\nreturn buildSubmitPayload();");
+  return make(last, view, rangeReady, doc, engine);
+}
+
+/* 2026 America/New_York, pinned. A function resolver rather than the host zone,
+   so the DST assertions hold on a machine sitting anywhere. */
+var NY_DST_ON = Date.parse("2026-03-08T07:00:00Z");
+var NY_DST_OFF = Date.parse("2026-11-01T06:00:00Z");
+function nyOffset(ms) { return (ms >= NY_DST_ON && ms < NY_DST_OFF) ? -240 : -300; }
 
 function viewOut(v) {
   var census = v.census ? censusRowsOf(v.census) : null;
@@ -223,6 +293,100 @@ var legacy = {
 /* the browser path: no offset argument, so the host machine answers */
 var hostView = viewOut(lt.localize(result, census));
 
+/* ---- D3: the payload the PAGES build ----
+   LAST is the engine's own UTC output; VIEW is the same scan on a Seoul clock,
+   which cuts fixtures_tz into different days. The payload must be the first and
+   never the second, on both the whole-scan path (no period picker) and the
+   ranged path (picker open on the full UTC range). */
+var pagePayloadView = lt.localize(result, census, 540);
+var utcFirst = result.daily[0].date;
+var utcLast = result.daily[result.daily.length - 1].date;
+var pagePayload = {};
+["check.html", "ko/check.html"].forEach(function (rel) {
+  var last = { result: result, census: census, source_version: null, detail_dropped: false };
+  var blank = {
+    subNickname: { value: "" }, subPlan: { value: "unknown" },
+    subClient: { value: "unknown" }, subSessions: { value: "unknown" },
+    subFrom: { value: "" }, subTo: { value: "" }
+  };
+  var ranged = {
+    subNickname: { value: "" }, subPlan: { value: "unknown" },
+    subClient: { value: "unknown" }, subSessions: { value: "unknown" },
+    subFrom: { value: utcFirst }, subTo: { value: utcLast }
+  };
+  pagePayload[rel] = {
+    whole: payloadOf(rel, last, pagePayloadView, blank, false),
+    ranged: payloadOf(rel, last, pagePayloadView, ranged, true),
+    view_daily: pagePayloadView.daily,
+    view_period: pagePayloadView.period
+  };
+});
+
+/* ---- D2: the strings the PAGES print ---- */
+var ZONE_STUB = {
+  ny: { offsetMinutes: -240, offset: "UTC-4", isUtc: false },
+  kolkata: { offsetMinutes: 330, offset: "UTC+5:30", isUtc: false },
+  seoul: { offsetMinutes: 540, offset: "UTC+9", isUtc: false },
+  utc: { offsetMinutes: 0, offset: "UTC", isUtc: true }
+};
+// A page opened in August (EDT) reading a scan that also covers February.
+var VIEW_NY = { offsetAt: nyOffset, offsets: [-300, -240], census: true };
+var VIEW_KOLKATA = { offsetAt: 330, offsets: [330], census: true };
+var VIEW_SEOUL = { offsetAt: 540, offsets: [540], census: true };
+var VIEW_UTC = { offsetAt: 0, offsets: [0], census: true };
+var pageLabels = {};
+["check.html", "ko/check.html"].forEach(function (rel) {
+  var ny = labelsOf(rel, VIEW_NY, ZONE_STUB.ny);
+  var kol = labelsOf(rel, VIEW_KOLKATA, ZONE_STUB.kolkata);
+  var seo = labelsOf(rel, VIEW_SEOUL, ZONE_STUB.seoul);
+  var utc = labelsOf(rel, VIEW_UTC, ZONE_STUB.utc);
+  var febRows = [{ time: "13:02:00", gapMin: 2, tokens: 44000, sub: false, offsetMinutes: -300 }];
+  var augRows = [{ time: "14:02:00", gapMin: 2, tokens: 33000, sub: false, offsetMinutes: -240 }];
+  var splitRows = febRows.concat(augRows);   // the mid-UTC-hour DST case
+  pageLabels[rel] = {
+    ny_cell_feb: ny.cellClockLabel("2026-02-15", 13),
+    ny_cell_aug: ny.cellClockLabel("2026-08-15", 14),
+    ny_offset_feb: ny.cellOffsetOf("2026-02-15", 13),
+    ny_offset_aug: ny.cellOffsetOf("2026-08-15", 14),
+    ny_head_feb: ny.evtTimeHeader(febRows),
+    ny_head_aug: ny.evtTimeHeader(augRows),
+    ny_head_split: ny.evtTimeHeader(splitRows),
+    ny_time_uniform: ny.evtTimeText(febRows[0], true),
+    ny_time_split: ny.evtTimeText(febRows[0], false),
+    ny_note: ny.heatmapNoteText(VIEW_NY.offsets, -240),
+    kolkata_cell: kol.cellClockLabel("2026-08-23", 23),
+    kolkata_note: kol.heatmapNoteText(VIEW_KOLKATA.offsets, 330),
+    seoul_cell: seo.cellClockLabel("2026-08-24", 8),
+    seoul_note: seo.heatmapNoteText(VIEW_SEOUL.offsets, 540),
+    utc_cell: utc.cellClockLabel("2026-08-23", 23),
+    utc_note: utc.heatmapNoteText(VIEW_UTC.offsets, 0)
+  };
+  if (rel.indexOf("ko/") === 0) {
+    // The KO popover header writes the hour with 시, the cell title with :00.
+    pageLabels[rel].seoul_cell_han = seo.cellClockLabel("2026-08-24", 8, true);
+    pageLabels[rel].kolkata_cell_han = kol.cellClockLabel("2026-08-23", 23, true);
+  }
+});
+
+/* ---- unit probes for branches no fixture reaches ---- */
+function zeros24() { return new Array(24).fill(0); }
+var allZeroIn = [
+  { date: "2026-08-20", hours: zeros24() },          // a day the scan covered,
+  { date: "2026-08-21", hours: (function () {         // with no request in it
+      var a = zeros24(); a[23] = 1; return a;
+    })() }
+];
+var unit = {
+  all_zero_row_utc: Array.from(lt.localizeCensus(allZeroIn, 0).keys()).sort(),
+  all_zero_row_seoul: Array.from(lt.localizeCensus(allZeroIn, 540).keys()).sort(),
+  offset_at_local_feb: lt.offsetAtLocal("2026-02-15", 13, nyOffset),
+  offset_at_local_aug: lt.offsetAtLocal("2026-08-15", 14, nyOffset),
+  offset_at_local_pinned: lt.offsetAtLocal("2026-02-15", 13, 330),
+  // The instant side, for contrast: placement was already per-instant.
+  offset_at_instant_feb: nyOffset(Date.parse("2026-02-15T18:02:00Z")),
+  offset_at_instant_aug: nyOffset(Date.parse("2026-08-15T18:02:00Z"))
+};
+
 process.stdout.write(JSON.stringify({
   fixture: root,
   totals: result.totals,
@@ -245,7 +409,10 @@ process.stdout.write(JSON.stringify({
     detect: lt.detect("en-US"),
     view: hostView
   },
-  labels: [0, 540, 330, -300, 825, -210, 60].reduce(function (a, o) {
+  page_payload: pagePayload,
+  page_labels: pageLabels,
+  unit: unit,
+  labels: [0, 540, 330, 345, -300, 825, -210, 60].reduce(function (a, o) {
     a[String(o)] = lt.offsetLabel(o);
     return a;
   }, {})

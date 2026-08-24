@@ -301,7 +301,7 @@ a{color:inherit}
 
   <section id="hmSection">
     <h2>일 × 1시간 히트맵: 사용량 대비 유실</h2>
-    <p class="desc">바탕 회청색 = 그 시간의 요청량(진할수록 많이 사용). 빨강 숫자 = in-TTL 유실 건수. 이렇게 보면 "안 써서 0"과 "많이 썼는데도 0"이 구분된다. <b>빨간 셀을 클릭</b>하면 건별 상세(시각·유휴 간격·토큰)가 셀 옆 팝오버로 열린다. 이 상세도 브라우저 밖으로 나가지 않는다. <b>날짜 행과 시각 열은 UTC가 아니라 이 브라우저가 있는 곳의 시계</b>다. 여기 08시는 지금 앉아 있는 곳의 08시다.</p>
+    <p class="desc">바탕 회청색 = 그 시간의 요청량(진할수록 많이 사용). 빨강 숫자 = in-TTL 유실 건수. 이렇게 보면 "안 써서 0"과 "많이 썼는데도 0"이 구분된다. <b>빨간 셀을 클릭</b>하면 건별 상세(시각·유휴 간격·토큰)가 셀 옆 팝오버로 열린다. 이 상세도 브라우저 밖으로 나가지 않는다. <span id="hmTzNote"></span></p>
     <div class="card hm-scroll">
       <table class="hm" id="heatmap"></table>
       <div class="legend">
@@ -631,7 +631,7 @@ async function processList(list){
     return;
   }
   setProgress("완료: 파일 " + files.length + "개 · 요청 " + fmtInt(result.totals.requests) + "건 스캔.");
-  LAST = { result: result, census: census, source_version: null };
+  LAST = { result: result, census: census, source_version: null, detail_dropped: false };
   document.getElementById("pasteSrcNote").hidden = true;
   document.getElementById("storeRestored").hidden = true;
   // Unhide BEFORE drawing: canvases in a hidden section have zero width.
@@ -738,7 +738,7 @@ document.getElementById("pasteBtn").addEventListener("click", function(){
   document.getElementById("parseErr").hidden = true;
   document.getElementById("singleFileNote").hidden = true;
   setProgress("붙여넣은 CLI JSON 렌더 완료: 요청 " + fmtInt(v.result.totals.requests) + "건, " + v.result.daily.length + "일.");
-  LAST = { result: v.result, census: null, source_version: v.version };
+  LAST = { result: v.result, census: null, source_version: v.version, detail_dropped: false };
   document.getElementById("storeRestored").hidden = true;
   document.getElementById("pasteSrcNote").hidden = false;
   document.getElementById("results").hidden = false;
@@ -768,8 +768,16 @@ function updateTzNote(){
   }
   var head = "관측 기간 " + periodText(VIEW.period) + ". ";
   if(!VIEW.localized){
-    el.textContent = head + "CLI가 자른 그대로의 UTC 달력 날짜다. 이 소스에는 일별 집계만 있어 " +
-      "현지 시각(" + ZONE.label + ")으로 다시 자를 요청 단위 정보가 남아 있지 않다.";
+    // 결과는 같아도 이유가 다르다. 붙여넣은 집계는 애초에 요청 단위 정보가 없었고,
+    // 복원한 저장분은 있었는데 브라우저 저장 용량 때문에 빠진 것이다. 후자에게
+    // "CLI가 자른 그대로"라고 하면 쓴 적도 없을 CLI를 지목하는 셈이고, 바로 위
+    // 안내가 같은 화면에서 "직접 저장해 둔 이전 진단"이라고 정확히 말하고 있다.
+    el.textContent = head + (LAST && LAST.detail_dropped
+      ? "UTC 달력 날짜 그대로 둔다. 이 저장분은 전체 결과가 이 브라우저의 저장 용량에 " +
+        "들어가지 않아 요청 단위 상세를 뺀 채로 기록됐고, 그래서 현지 시각(" +
+        ZONE.label + ")으로 다시 자를 근거가 남아 있지 않다. 자기 시계로 보려면 로그를 다시 불러온다."
+      : "CLI가 자른 그대로의 UTC 달력 날짜다. 이 소스에는 일별 집계만 있어 " +
+        "현지 시각(" + ZONE.label + ")으로 다시 자를 요청 단위 정보가 남아 있지 않다.");
     return;
   }
   if(ZONE.isUtc){
@@ -780,6 +788,102 @@ function updateTzNote(){
   el.textContent = head + "아래 그래프·히트맵·건별 시각은 이 브라우저에서 읽어 온 현지 시각 " +
     ZONE.label + " 기준이다. 3번 카드의 제출은 UTC로 자르므로, 자정 근처의 요청은 그쪽에서 " +
     "다른 날짜에 들어갈 수 있다.";
+}
+
+/* ---------- M12.1: 셀이 스스로 무엇이라고 말하는가 ----------
+   여기서 틀렸던 건 배치가 아니라 표기 두 가지다.
+
+   오프셋. ZONE은 Date.now() 기준으로 로드 때 한 번만 검출된다. 그 값을 모든 행에
+   찍으면 서머타임 경계 반대편 행이 전부 잘못 표기된다. 8월에 연 뉴욕 페이지가
+   18:02Z(=UTC-5)인 순간 위에 "2026-02-15 13:00 UTC-4"를 찍었고, 화면을 UTC
+   payload와 대조하는 사람은 한 시간 어긋난 값을 읽었다. 이제 표기할 그 순간의
+   오프셋을 읽는다.
+
+   시각. 셀 하나는 UTC 한 시간을 읽는 사람 시계로 본 것이고, :30/:45 지역에서는
+   그 한 시간이 정각에 시작하지 않는다. UTC+5:30에서 23열 셀은 현지 23:30~00:30을
+   덮는다. 이제 덮지도 않는 정각 대신 실제로 덮는 구간을 적는다. 정시 오프셋
+   지역의 문자열은 그대로다.
+
+   tests/run_localtime.js가 이 블록을 그대로 떼어 내 VIEW를 흉내 낸 값으로
+   돌리므로, 찍히는 문자열이 눈대중이 아니라 테스트로 검증된다. 마커를 지우지
+   말고, 이 블록 안에서 DOM을 건드리지 말 것. */
+/* LOCALTIME-LABELS:BEGIN */
+function cellOffsetOf(dateKey, hour){
+  var off = ObservatoryLocalTime.offsetAtLocal(dateKey, hour, VIEW ? VIEW.offsetAt : undefined);
+  return typeof off === "number" ? off : ZONE.offsetMinutes;
+}
+function cellClockLabel(dateKey, hour, han){
+  var off = cellOffsetOf(dateKey, hour);
+  var past = ((off % 60) + 60) % 60;   // 셀이 시작하는 "정각 + 몇 분"
+  var tag = ObservatoryLocalTime.offsetLabel(off);
+  if(!past) return dateKey + " " + hh(hour) + (han ? "시 " : ":00 ") + tag;
+  return dateKey + " " + hh(hour) + ":" + hh(past) + "~" +
+    hh((hour + 1) % 24) + ":" + hh(past) + " " + tag;
+}
+/* 한 셀의 건들은 같은 UTC 한 시간에 속하므로 보통 오프셋이 하나이고, 그때는
+   열 머리글이 그것을 지고 간다. 서머타임 전환이 UTC 한 시간 안쪽에 떨어지는
+   경우(로드하우 같은 :30 지역)에만 갈리는데, 그때는 둘 중 하나에게 틀린 머리글을
+   씌우는 대신 오프셋을 각 행으로 내린다. */
+function evtOffsets(rows){
+  var offs = [];
+  (rows || []).forEach(function(e){
+    var o = (typeof e.offsetMinutes === "number") ? e.offsetMinutes : ZONE.offsetMinutes;
+    if(offs.indexOf(o) === -1) offs.push(o);
+  });
+  return offs;
+}
+function evtTimeHeader(rows){
+  var offs = evtOffsets(rows);
+  return offs.length === 1
+    ? "시각(" + ObservatoryLocalTime.offsetLabel(offs[0]) + ")"
+    : "시각";
+}
+function evtTimeText(e, uniform){
+  if(uniform) return e.time;
+  var o = (typeof e.offsetMinutes === "number") ? e.offsetMinutes : ZONE.offsetMinutes;
+  return e.time + " " + ObservatoryLocalTime.offsetLabel(o);
+}
+/* 히트맵이 자기 열에 대해 밝혀야 하는 것. 정시 오프셋 지역은 이 페이지가 계속
+   써 온 문장을 그대로 받는다. :30/:45 지역은 그럴 수 없다. 거기서 한 열은 현지
+   정각 한 시간이 아니라 UTC 한 시간이고, 그건 읽는 사람 시계로 열 번호 정각에서
+   :30(또는 :45) 지난 지점부터 시작한다. 유실을 자기 요청과 같은 셀에 두기 위해
+   치르는 값이고, 알아서 눈치채게 두지 않고 적는다. */
+function heatmapNoteText(offsets, utcOffsetMinutes){
+  var offs = (offsets && offsets.length) ? offsets : [utcOffsetMinutes];
+  var past = [];
+  offs.forEach(function(o){
+    var m = ((o % 60) + 60) % 60;
+    if(m && past.indexOf(m) === -1) past.push(m);
+  });
+  var lead = "날짜 행과 시각 열은 UTC가 아니라 이 브라우저가 있는 곳의 시계";
+  var rest;
+  if(!past.length){
+    rest = "다. 여기 08시는 지금 앉아 있는 곳의 08시다.";
+  } else {
+    var m2 = hh(past[0]);
+    rest = "다. 다만 이 지역의 오프셋은 정시가 아니라서 한 열이 현지 정각 한 시간이 " +
+      "아니다. 한 열은 UTC 한 시간을 담고, 그 한 시간은 이 시계로 열 번호 정각에서 " +
+      ":" + m2 + " 지난 지점부터 다음 시각 :" + m2 + "까지다. 유실은 언제나 그 요청이 " +
+      "세어진 바로 그 셀에 그려지므로 건수와 일별 합계는 정확하고, 대신 팝오버의 " +
+      "시각이 셀에 적힌 정각 밖으로 조금 나갈 수 있다.";
+  }
+  if(offs.length > 1){
+    rest += " 이 스캔은 서머타임 경계를 지난다. 그래서 셀과 건별 시각은 지금의 " +
+      "오프셋이 아니라 그 순간에 적용되던 오프셋으로 표기된다.";
+  }
+  return { lead: lead, rest: rest };
+}
+/* LOCALTIME-LABELS:END */
+
+function updateHeatmapNote(){
+  var el = document.getElementById("hmTzNote");
+  el.textContent = "";
+  if(!VIEW || !VIEW.census) return;
+  var t = heatmapNoteText(VIEW.offsets, ZONE.offsetMinutes);
+  var b = document.createElement("b");
+  b.textContent = t.lead;
+  el.appendChild(b);
+  el.appendChild(document.createTextNode(t.rest));
 }
 
 function renderResults(){
@@ -863,6 +967,16 @@ function setupRange(){
   updateIncHint();
 }
 
+/* ---------- payload 블록 ----------
+   tests/run_localtime.js가 이 블록을 그대로 떼어 내, 일부러 서로 어긋나게 만든
+   LAST와 VIEW로 돌린다. 그래서 "payload는 엔진의 UTC 행에서 만들고 현지 시각
+   화면에서는 절대 만들지 않는다"가 주석이 아니라 테스트다. 그 전에는 커버가
+   전혀 없었다. mutation_run.py의 앵커가 이 파일에 닿지 않았고, 여기서
+   VIEW.daily를 읽게 바꾼 변종이 모든 스위트를 통과하면서 /api/submit이
+   받아들였을 KST 기준 제출을 만들어 냈다(sum(daily)==totals도 맞고 period도
+   daily 범위와 맞는다). 마커를 지우지 말고, 마커 사이에는 LAST·폼 필드·
+   CacheObservatory 말고 아무것도 두지 말 것. */
+/* SUBMIT-PAYLOAD:BEGIN */
 function selectedRange(){
   if(!RANGE_READY) return null;
   var a = document.getElementById("subFrom").value;
@@ -909,6 +1023,7 @@ function buildSubmitPayload(){
   payload.script_version = LAST.source_version || CacheObservatory.SCRIPT_VERSION;
   return payload;
 }
+/* SUBMIT-PAYLOAD:END */
 
 function submitMsg(kind, text, links){
   var el = document.getElementById("subMsg");
@@ -1328,7 +1443,10 @@ function restoreRun(run){
   LAST = {
     result: h.result,
     census: h.events_saved ? h.census : null,
-    source_version: run.script_version || null
+    source_version: run.script_version || null,
+    // 상세가 없다는 사실만이 아니라 왜 없는지. 저장 용량에 맞추려고 깎인
+    // 저장분이고(store.js save()), #tzNote는 CLI를 탓하는 대신 그걸 말해야 한다.
+    detail_dropped: !h.events_saved
   };
   // 저장분은 엔진의 UTC 버킷에 그대로 묶여 있고, 읽는 사람의 시계는 화면으로
   // 나가는 길목에서 적용된다(renderResults -> rebuildView). 기기를 옮기거나
@@ -1387,11 +1505,24 @@ function drawCharts(){
   var hmSection = document.getElementById("hmSection");
   if(!VIEW.census){
     hmSection.hidden = true;
+    updateHeatmapNote();
     return;
   }
   hmSection.hidden = false;
+  updateHeatmapNote();
   var zeros = new Array(24).fill(0);
-  var dates = Array.from(VIEW.census.keys()).sort();
+  // census 날짜에 건이 떨어진 날짜를 합친다. localtime.js는 건을 그 건의 UTC
+  // 시각 셀이 배치된 자리에 그리므로 뒤쪽은 언제나 앞쪽의 부분집합이다. 이건
+  // 이중 안전장치다. census만 훑는 코드가 바로, 두 배치가 어긋날 수 있게 됐을 때
+  // 유실을 히트맵에서 통째로 사라지게 만든 지점이고, 앞으로 어느 쪽 규칙이
+  // 바뀌더라도 그게 조용히 돌아오면 안 된다.
+  var seenDate = {};
+  var dates = Array.from(VIEW.census.keys());
+  dates.forEach(function(d){ seenDate[d] = true; });
+  VIEW.events.forEach(function(e){
+    if(!seenDate[e.date]){ seenDate[e.date] = true; dates.push(e.date); }
+  });
+  dates.sort();
   var rows = dates.map(function(date){
     var losses = zeros.slice();
     for(var h = 0; h < 24; h++){
@@ -1402,7 +1533,7 @@ function drawCharts(){
   });
   ObservatoryCharts.renderUsageHeatmap(document.getElementById("heatmap"), rows, {
     cellTitle: function(row, hour, rq, v){
-      return row.key + " " + hh(hour) + ":00 " + ZONE.offset + " · 요청 " + rq + "건 · 유실 " + v + "건";
+      return cellClockLabel(row.key, hour) + " · 요청 " + rq + "건 · 유실 " + v + "건";
     },
     onSelect: function(row, hour, td){ showEvents(row.key, hour, td); },
     onClear: function(){ hideEvents(); },
@@ -1446,13 +1577,14 @@ function showEvents(date, hour, td){
   var rows = (VIEW && VIEW.evtMap.get(date + "#" + hour)) || [];
   if(!rows.length){ hideEvents(); return; }
   var tot = rows.reduce(function(a, e){ return a + e.tokens; }, 0);
-  var html = "<div class='evt-head'><h3>" + date + " " + hh(hour) + "시 " + ZONE.offset + " · 유실 " + rows.length +
+  var uniform = evtOffsets(rows).length === 1;
+  var html = "<div class='evt-head'><h3>" + cellClockLabel(date, hour, true) + " · 유실 " + rows.length +
     "건 · 재과금 " + (tot / 1e6).toFixed(2) + "M 토큰 " +
     "<span style='font-weight:400;color:var(--muted)'>(닫기: ×, ESC, 바깥 클릭, 셀 다시 클릭)</span></h3>" +
     "<button type='button' class='evt-close' aria-label='상세 닫기'>×</button></div>";
-  html += "<table><tr><th>시각(" + ZONE.offset + ")</th><th>직전 요청과의 간격</th><th>재과금 토큰</th><th>세션</th></tr>";
+  html += "<table><tr><th>" + evtTimeHeader(rows) + "</th><th>직전 요청과의 간격</th><th>재과금 토큰</th><th>세션</th></tr>";
   rows.forEach(function(e){
-    html += "<tr><td>" + e.time + "</td><td>" + e.gapMin.toFixed(1) + "분</td><td>" +
+    html += "<tr><td>" + evtTimeText(e, uniform) + "</td><td>" + e.gapMin.toFixed(1) + "분</td><td>" +
       e.tokens.toLocaleString("ko-KR") + "</td><td>" + (e.sub ? "서브에이전트" : "메인") + "</td></tr>";
   });
   html += "</table>";
