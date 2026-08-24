@@ -18,17 +18,19 @@ Claude Code's local session logs (`~/.claude/projects/**/*.jsonl`) contain a ser
 | `check.html`, `ko/check.html` | Self-check page: folder pick / drag-and-drop / CLI-JSON paste, personal dashboard, opt-in submission card |
 | `assets/parse.js` | The browser judgment engine (v2.1 rules). No network, no DOM, UMD; also runnable under Node for tests |
 | `assets/charts.js` | Canvas charts (fleet trend, daily bars, usage heatmap). Render only, no logic |
+| `assets/store.js` | Opt-in `localStorage` layer for the check page: whitelist-only serialisation, incremental period, overlap detection. No network, no DOM, UMD |
 | `assets/og.png` | Static share card referenced by the OG meta tags (self-hosted, no external requests) |
 | `data/submissions.json` | The entire public dataset. Written only by bot commits from the submit function |
 | `functions/api/submit.js` | The single Pages Function: schema whitelist, sanity checks, rate limit, GitHub bot commit |
 | `scripts/check_cache_loss.py` | CLI self-check (v2.1, the judgment SSOT). `--json` prints the aggregate for the site's paste fallback |
-| `tests/` | `parity_check.py` (browser vs CLI judgment parity), `submit_contract_test.py` (API contract), `mutation_run.py` (mutation harness over both) |
+| `tests/` | `parity_check.py` (browser vs CLI judgment parity), `submit_contract_test.py` (API contract), `range_filter_test.py` (period picker), `storage_test.py` (local save: round trip, forbidden fields, increment, overlap), `mutation_run.py` (mutation harness over both engines) |
 | `wrangler.toml` | Cloudflare Pages configuration (KV binding for the rate-limit counter), public in-repo |
 
 ## Trust model
 
 - **Parsing is local.** Your log files are parsed inside your browser tab and never leave your machine. Verify it yourself: open the F12 Network tab while running a diagnosis; no request appears.
 - **Transmission is opt-in and previewed.** Nothing is sent until you press the share button, and what is sent is exactly the aggregate JSON shown in the preview: period, totals, daily counts, optional nickname. The schema cannot carry conversation content, session IDs, file paths or timestamps; undefined fields are rejected with a 400, not dropped.
+- **Local storage is opt-in and stays local.** By default a diagnosis lives only in the open tab. Pressing "Save to this browser" and confirming the modal writes totals, daily rows, the hourly census and the last submission's period into that browser's `localStorage` (`assets/store.js`) — never to a server, and "Clear saved results" removes it immediately. The stored object is built field by field from a whitelist, so file paths, session IDs, requestIds and conversation text cannot enter it, matching the submission schema's exclusions. `tests/storage_test.py` asserts that.
 - **The running code is this repo.** There is no build step, no bundler, no external CDN, no analytics. What is served is byte-for-byte what you can read here. The only server code is `functions/api/submit.js`.
 - **Submission history is commit history.** Every accepted submission is appended to `data/submissions.json` by a bot commit whose message names the submission. Removal of bad data happens by public revert commits, never by history rewrite.
 - **Configuration is public.** The Cloudflare setup lives in `wrangler.toml` in this repo. Secrets (the bot's fine-grained token) exist only as Cloudflare environment secrets, never in code.

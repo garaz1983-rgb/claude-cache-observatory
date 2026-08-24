@@ -18,6 +18,7 @@
   --crit:#D64545; --crit-soft:rgba(214,69,69,.12);
   --ok:#2E9E7B; --ok-soft:rgba(46,158,123,.12);
   --amber:#B07A2A; --amber-soft:rgba(176,122,42,.12);
+  --scrim:rgba(12,18,24,.55);
 }
 @media (prefers-color-scheme: dark){
   :root:not([data-theme="light"]){
@@ -26,6 +27,7 @@
     --crit:#FF6B5E; --crit-soft:rgba(255,107,94,.16);
     --ok:#3FBF95; --ok-soft:rgba(63,191,149,.16);
     --amber:#D9A254; --amber-soft:rgba(217,162,84,.16);
+    --scrim:rgba(0,0,0,.7);
   }
 }
 :root[data-theme="dark"]{
@@ -34,6 +36,7 @@
   --crit:#FF6B5E; --crit-soft:rgba(255,107,94,.16);
   --ok:#3FBF95; --ok-soft:rgba(63,191,149,.16);
   --amber:#D9A254; --amber-soft:rgba(217,162,84,.16);
+  --scrim:rgba(0,0,0,.7);
 }
 *{box-sizing:border-box}
 body{
@@ -160,6 +163,34 @@ details.preview pre{margin:0; padding:2px 12px 12px; font-family:ui-monospace,'C
 .submit-msg.ok{border-left:3px solid var(--ok); background:var(--ok-soft)}
 .submit-msg.bad{border-left:3px solid var(--crit); background:var(--crit-soft)}
 .submit-msg .detail{display:block; margin-top:6px; font-family:ui-monospace,'Cascadia Mono',Consolas,monospace; font-size:.74rem; color:var(--muted); white-space:pre-wrap}
+/* M10 — opt-in local save. Every colour here is a token: the buttons keep
+   var(--ink) text on a surface/bg fill and use --ok / --crit for the border
+   only, because white-on-accent measured 3.34:1 (--ok) and 4.37:1 (--crit)
+   in the light theme, both under the 4.5:1 the new controls have to hold. */
+.store-box{border:1px solid var(--line); border-radius:8px; background:var(--surface); padding:16px 18px; margin-top:18px}
+.store-box h3{margin:0 0 6px; font-size:.95rem; font-weight:700}
+.store-box .lead{margin:0 0 11px; font-size:.85rem; color:var(--muted)}
+.store-state{font-size:.85rem; margin:0 0 12px; padding:9px 12px; border-left:3px solid var(--line); background:var(--bg); border-radius:0 6px 6px 0}
+.store-state.on{border-left-color:var(--ok)}
+.store-state.off{border-left-color:var(--amber)}
+.store-actions{display:flex; gap:10px; flex-wrap:wrap; align-items:center}
+.store-actions button{font:inherit; font-size:.85rem; font-weight:600; padding:8px 15px; border-radius:8px; border:1px solid var(--line); background:var(--surface); color:var(--ink); cursor:pointer}
+.store-actions button:hover:not(:disabled){border-color:var(--muted)}
+.store-actions button:disabled{opacity:.55; cursor:not-allowed}
+.store-actions button.go{border-color:var(--ok); font-weight:700}
+.store-actions button.danger{border-color:var(--crit)}
+.store-cmp{margin:13px 0 0; font-size:.85rem; padding:10px 13px; border-left:3px solid var(--amber); background:var(--amber-soft); border-radius:0 6px 6px 0; font-variant-numeric:tabular-nums}
+.sub-warn{font-size:.85rem; margin:0 0 14px; padding:10px 13px; border-left:3px solid var(--amber); background:var(--amber-soft); border-radius:0 6px 6px 0}
+.inc-hint{margin:9px 0 0; font-size:.78rem; color:var(--muted); font-variant-numeric:tabular-nums}
+.modal-back{position:fixed; inset:0; z-index:100; background:var(--scrim); display:flex; align-items:center; justify-content:center; padding:20px}
+.modal-box{width:100%; max-width:460px; padding:20px 22px; background:var(--surface); color:var(--ink); border:1px solid var(--line); border-radius:10px; box-shadow:0 18px 50px var(--scrim)}
+.modal-box h3{margin:0 0 10px; font-size:1rem; font-weight:700}
+.modal-box ul{margin:0 0 16px; padding-left:20px; font-size:.87rem}
+.modal-box li{margin:7px 0}
+.modal-actions{display:flex; gap:10px; justify-content:flex-end; flex-wrap:wrap}
+.modal-actions button{font:inherit; font-size:.87rem; font-weight:600; padding:8px 16px; border-radius:8px; border:1px solid var(--line); background:var(--bg); color:var(--ink); cursor:pointer}
+.modal-actions button:hover{border-color:var(--muted)}
+.modal-actions button.go{border-color:var(--ok); background:var(--surface); font-weight:700}
 footer{margin-top:44px; padding-top:16px; border-top:1px solid var(--line); color:var(--muted); font-size:.78rem}
 footer code{font-family:ui-monospace,'Cascadia Mono',Consolas,monospace; font-size:.75rem}
 a{color:inherit}
@@ -184,10 +215,12 @@ a{color:inherit}
 
 <div class="notice"><b>Desktop browser required.</b> The logs live on the machine where Claude Code runs (<span class="mono">~/.claude/projects</span>); mobile browsers cannot access them.</div>
 
+<div class="notice"><b>Saving is optional, and off unless you ask for it.</b> After the diagnosis you can press <b>“Save to this browser”</b> to keep the result in this browser's own storage, so the next run can pick up where this one ended. It never goes to a server, and one button deletes it. <b>On a shared or public computer, do not save</b>: the result would stay behind for whoever uses this browser profile next. Just scanning leaves nothing behind.</div>
+
 <div class="trust-block">
   <h3>Before you run it: what this page does, and what it does not</h3>
   <ul>
-    <li><b>Your log files never leave this machine.</b> Reading, scoring and charting all happen inside this tab, and everything is gone when you close it. Running a check makes <b>zero</b> network requests: open F12 → Network and watch it yourself.</li>
+    <li><b>Your log files never leave this machine.</b> Reading, scoring and charting all happen inside this tab. Nothing is kept when you close it <b>unless you press “Save to this browser”</b> in step 2 — and that save is written to this browser's local storage on this computer, is never sent to a server, and can be deleted at any time with one button. Running a check makes <b>zero</b> network requests: open F12 → Network and watch it yourself.</li>
     <li><b>Nothing is sent unless you press the button in step 3.</b> Even then, all that leaves is the aggregate numbers shown to you first (daily counts and totals) plus an optional nickname. Conversation text, file paths, session IDs and timestamps are not part of the submission schema at all.</li>
     <li><b>There is no build step.</b> The code your browser runs is the same file that sits in the repo, so you can diff view-source against GitHub line by line.</li>
     <li><b>No login, no account.</b> The page only reads log files; it never talks to your Anthropic account or the API.</li>
@@ -197,6 +230,7 @@ a{color:inherit}
     <ul class="map">
       <li><span class="mono">assets/parse.js</span> — the scoring engine. Every number on this page comes from it. It follows the same rules as the CLI <span class="mono">scripts/check_cache_loss.py</span>, and an automated test compares the two outputs.</li>
       <li><span class="mono">assets/charts.js</span> — drawing only (charts and heatmap). It does no scoring.</li>
+      <li><span class="mono">assets/store.js</span> — the optional local save. It touches only this browser's own storage on this computer, never the network, and only after you press the save button and confirm.</li>
       <li><span class="mono">functions/api/submit.js</span> — the only code that runs on a server. It is called only when you press submit, validates the schema, and commits to the public repo.</li>
       <li><span class="mono">data/submissions.json</span> — the public dataset. One submission is one commit, so the whole history is auditable by anyone.</li>
       <li><span class="mono">wrangler.toml</span> — even the server configuration lives in the repo: there is no hidden backend.</li>
@@ -212,7 +246,7 @@ a{color:inherit}
     <ol class="steps">
       <li>Find your Claude Code log folder: <span class="mono">~/.claude/projects</span> (Windows: <span class="mono">C:\Users\&lt;you&gt;\.claude\projects</span>).</li>
       <li>Drop that folder below, or pick it with the button. Multiple <span class="mono">.jsonl</span> files work too.</li>
-      <li>Read the results. Parsing happens in this tab only; close it and everything is gone.</li>
+      <li>Read the results. Parsing happens in this tab only. Closing it discards everything, unless you choose “Save to this browser” in step 2.</li>
     </ol>
     <div class="dropzone" id="dropzone">
       <p><b>Drag &amp; drop</b> the folder (or <span class="mono">.jsonl</span> files) here</p>
@@ -241,6 +275,7 @@ a{color:inherit}
   <h2>2 · Your results</h2>
   <p class="desc">TTL-strict judgment v2.1: only losses inside the cache TTL are counted; legitimate expiries are excluded.</p>
   <div class="notice" id="pasteSrcNote" hidden>Rendered from pasted CLI JSON (aggregates only), so the hour-level heatmap is not available. Everything else, including sharing, works the same.</div>
+  <div class="notice" id="storeRestored" hidden></div>
 
   <div class="kpis">
     <div class="kpi"><div class="label">Requests scanned</div><div class="val" id="kRequests">–</div></div>
@@ -287,6 +322,17 @@ a{color:inherit}
     </div>
   </details>
 
+  <div class="store-box" id="storeBox">
+    <h3>Keep this result in this browser (optional)</h3>
+    <p class="lead">Nothing is saved automatically. Pressing the button writes the totals, the daily rows and the hour-by-hour counts into <b>this browser's own storage on this computer</b>. It is never sent to a server, and “Clear saved results” deletes it immediately. It also lets the next run start the day after your last submission instead of repeating a period you already sent. <b>Do not save on a shared or public computer.</b></p>
+    <p class="store-state off" id="storeState">Nothing is saved in this browser yet.</p>
+    <div class="store-actions">
+      <button id="storeSaveBtn" type="button" class="go">Save to this browser</button>
+      <button id="storeClearBtn" type="button" class="danger" hidden>Clear saved results</button>
+    </div>
+    <div class="store-cmp" id="storeCmp" hidden></div>
+  </div>
+
   <section id="submitSection">
     <h2>3 · Share your aggregate (optional)</h2>
     <p class="desc">Exactly the JSON shown below is sent: period, totals and daily counts only. Never your logs, file paths, session contents or per-event details. Narrowing the shared period recomputes the totals for that window.</p>
@@ -305,9 +351,14 @@ a{color:inherit}
           <div>
             <button id="subLast92" type="button">Last 92 days</button>
           </div>
+          <div>
+            <button id="subFullRange" type="button" hidden>Use the full range</button>
+          </div>
         </div>
         <p class="range-hint" id="subRangeHint"></p>
+        <p class="inc-hint" id="subIncHint" hidden></p>
       </div>
+      <div class="sub-warn" id="subOverlap" hidden></div>
       <div class="submit-form">
         <div>
           <label for="subNickname">Nickname (optional, max 20 chars)</label>
@@ -362,7 +413,27 @@ a{color:inherit}
 </footer>
 
 </div>
+
+<!-- Save confirmation. A custom modal, not confirm(): it has to follow the
+     page theme, be translatable, keep focus inside itself, and stay
+     non-blocking so the headless regression suite can drive it. -->
+<div class="modal-back" id="saveModal" hidden>
+  <div class="modal-box" role="dialog" aria-modal="true" aria-labelledby="saveModalTitle" aria-describedby="saveModalBody">
+    <h3 id="saveModalTitle">Save this result in this browser?</h3>
+    <ul id="saveModalBody">
+      <li><b>It stays in this browser, on this computer.</b> The result is written to this browser's local storage and remains there until you delete it. Nothing is sent to a server.</li>
+      <li><b>On a shared or public computer, do not save.</b> Anyone who uses this browser profile afterwards can open this page and read the result.</li>
+      <li><b>You can delete it at any time</b> with “Clear saved results”, which removes it immediately and completely.</li>
+    </ul>
+    <div class="modal-actions">
+      <button id="saveModalCancel" type="button">Cancel</button>
+      <button id="saveModalOk" type="button" class="go">Save to this browser</button>
+    </div>
+  </div>
+</div>
+
 <script src="assets/parse.js"></script>
+<script src="assets/store.js"></script>
 <script src="assets/charts.js"></script>
 <script>
 "use strict";
@@ -549,6 +620,7 @@ async function processList(list){
   LAST = { result: result, census: census, source_version: null };
   buildEvtMap(result.events);
   document.getElementById("pasteSrcNote").hidden = true;
+  document.getElementById("storeRestored").hidden = true;
   // Unhide BEFORE drawing: canvases in a hidden section have zero width.
   document.getElementById("results").hidden = false;
   renderResults();
@@ -656,6 +728,7 @@ document.getElementById("pasteBtn").addEventListener("click", function(){
   setProgress("Rendered from pasted CLI JSON: " + fmtInt(v.result.totals.requests) + " requests, " + v.result.daily.length + " days.");
   LAST = { result: v.result, census: null, source_version: v.version };
   buildEvtMap(v.result.events);
+  document.getElementById("storeRestored").hidden = true;
   document.getElementById("pasteSrcNote").hidden = false;
   document.getElementById("results").hidden = false;
   renderResults();
@@ -686,6 +759,7 @@ function renderResults(){
   drawCharts();
   setupRange();
   updateSubmitCard();
+  updateStoreCard();
 }
 
 /* ---------- CHK-3: share the aggregate (opt-in) ---------- */
@@ -730,6 +804,8 @@ function setupRange(){
     box.hidden = true;
     fillDateOptions(from, []);
     fillDateOptions(to, []);
+    document.getElementById("subFullRange").hidden = true;
+    updateIncHint();
     return;
   }
   var dates = dailyDates();
@@ -740,8 +816,18 @@ function setupRange(){
   var w = CacheObservatory.clampRange(dates, MAX_PERIOD_DAYS);
   from.value = w.start;
   to.value = w.end;
+  // M10: when this browser remembers a submission, open on the increment
+  // instead — the day after that period_end through the newest scanned day.
+  // "Use the full range" puts the widest allowed window back.
+  INC = STORE_OK ? Store.incrementalRange(dates, storedSubmissions(), todayIso(), MAX_PERIOD_DAYS) : null;
+  if(INC && INC.has_new_data && dates.indexOf(INC.start) !== -1 && dates.indexOf(INC.end) !== -1){
+    from.value = INC.start;
+    to.value = INC.end;
+  }
+  document.getElementById("subFullRange").hidden = !(INC && INC.has_new_data);
   box.hidden = false;
   RANGE_READY = true;
+  updateIncHint();
 }
 
 function selectedRange(){
@@ -815,9 +901,13 @@ function updateSubmitCard(){
     pre.textContent = "(no parsed results yet)";
     hint.textContent = "";
     btn.disabled = true;
+    updateOverlapWarning(null);
     return;
   }
   pre.textContent = JSON.stringify(payload, null, 2);
+  // Warning only: a re-submission of the same days is sometimes exactly what
+  // the user means (a reverted row, corrected data). Never a block.
+  updateOverlapWarning(payload);
   // The API caps both the calendar span (period_start..period_end) and the
   // number of daily entries at 92. Idle days carry no daily row, so check both.
   var span = CacheObservatory.daySpan(payload.period_start, payload.period_end);
@@ -875,6 +965,16 @@ document.getElementById("subLast92").addEventListener("click", function(){
   document.getElementById("subTo").value = w.end;
   updateSubmitCard();
 });
+/* Escape hatch from the incremental default: the widest window the API
+   accepts, ending on the newest scanned day. */
+document.getElementById("subFullRange").addEventListener("click", function(){
+  if(!RANGE_READY) return;
+  var w = CacheObservatory.clampRange(dailyDates(), MAX_PERIOD_DAYS);
+  if(!w) return;
+  document.getElementById("subFrom").value = w.start;
+  document.getElementById("subTo").value = w.end;
+  updateSubmitCard();
+});
 
 document.getElementById("subBtn").addEventListener("click", async function(){
   var payload = buildSubmitPayload();
@@ -899,6 +999,7 @@ document.getElementById("subBtn").addEventListener("click", async function(){
   SUBMIT_BUSY = false;
   if(res.ok && data && data.ok){
     SUBMIT_DONE = true;
+    recordSubmission(payload, data);
     updateSubmitCard();
     submitMsg("ok", "Submitted. Your row will appear on the observatory in about 1–2 minutes (the bot commit triggers a redeploy).", [
       { href: data.commit_url || "https://github.com", label: "bot commit" },
@@ -922,6 +1023,284 @@ document.getElementById("subBtn").addEventListener("click", async function(){
     submitMsg("bad", "Storage is temporarily unavailable. Please try again in a moment. (Browsing the observatory is unaffected.)");
   }
 });
+
+/* ---------- M10: opt-in local save, incremental period, overlap warning ----
+   Default is OFF. Nothing is written until the user presses the save button
+   AND confirms in the modal. Every storage call already guards itself inside
+   assets/store.js; STORE_OK simply mirrors whether that probe succeeded, so a
+   private window or blocked site data disables the feature and leaves the
+   diagnosis untouched. */
+var Store = window.CacheObservatoryStore || null;
+var STORE_OK = false;
+var STATE = null;   // {v, runs, submissions} — the browser's own memory
+var INC = null;     // incremental window proposal for the current scan
+
+function storedSubmissions(){ return (STATE && STATE.submissions) || []; }
+function storedRuns(){ return (STATE && STATE.runs) || []; }
+
+// Local calendar day, matching how the daily rows are bucketed for the user.
+function todayIso(){
+  var d = new Date();
+  return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+}
+function fmtWhen(iso){
+  if(typeof iso !== "string" || !iso) return "an earlier run";
+  var t = Date.parse(iso);
+  if(isNaN(t)) return iso;
+  return new Date(t).toLocaleString();
+}
+function signed(n){ return (n > 0 ? "+" : "") + fmtInt(n); }
+function signedFixed(n){ return (n > 0 ? "+" : "") + n.toFixed(2); }
+function plural(n, one, many){ return n === 1 ? one : many; }
+
+function updateIncHint(){
+  var el = document.getElementById("subIncHint");
+  if(!INC || !RANGE_READY){
+    el.hidden = true;
+    el.textContent = "";
+    return;
+  }
+  el.hidden = false;
+  if(!INC.has_new_data){
+    el.textContent = "This browser's last submission already covers through " +
+      INC.last_end + ", and this scan holds no later day.";
+    return;
+  }
+  el.textContent = "Opened on the increment: " + INC.start + " (the day after your last submission, " +
+    INC.last_end + ") to " + INC.end +
+    (INC.since_days === null ? "" :
+      " · " + INC.since_days + " " + plural(INC.since_days, "day", "days") + " since that submission") +
+    (INC.clamped ? " · trimmed to the newest " + MAX_PERIOD_DAYS + " days" : "") +
+    ". Press “Use the full range” to send everything instead.";
+}
+
+/* Overlap is judged against THIS browser's own record of what it submitted.
+   The public dataset is deliberately not consulted: a nickname is not proof of
+   identity, and check.html promises zero network requests while diagnosing. */
+function updateOverlapWarning(payload){
+  var box = document.getElementById("subOverlap");
+  var subs = storedSubmissions();
+  if(!payload || !subs.length){
+    box.hidden = true;
+    box.textContent = "";
+    return;
+  }
+  var ov = Store.overlapWith(payload.period_start, payload.period_end, subs);
+  if(!ov.days){
+    box.hidden = true;
+    box.textContent = "";
+    return;
+  }
+  var spans = ov.spans.map(function(s){
+    return s.start === s.end ? s.start : s.start + " to " + s.end;
+  }).join(", ");
+  box.hidden = false;
+  box.textContent = "Overlap warning: " + ov.days + " " + plural(ov.days, "day", "days") +
+    " of the selected period (" + spans + ") were already submitted from this browser. " +
+    "Each submission is a separate row, so overlapping days are counted twice in the observatory's totals. " +
+    "This does not block the submission — send it anyway if you are re-sending corrected data or the earlier row was reverted.";
+}
+
+function updateStoreCard(){
+  var state = document.getElementById("storeState");
+  var saveBtn = document.getElementById("storeSaveBtn");
+  var clearBtn = document.getElementById("storeClearBtn");
+  var cmp = document.getElementById("storeCmp");
+  if(!STORE_OK){
+    state.className = "store-state off";
+    state.textContent = "This browser is not allowing local storage (private window, or site data blocked), so saving is turned off here. " +
+      "Everything above still works; the result simply disappears when you close the tab.";
+    saveBtn.disabled = true;
+    clearBtn.hidden = true;
+    cmp.hidden = true;
+    return;
+  }
+  saveBtn.disabled = !LAST;
+  var runs = storedRuns();
+  var subs = storedSubmissions();
+  if(!runs.length && !subs.length){
+    state.className = "store-state off";
+    state.textContent = "Nothing is saved in this browser yet.";
+    clearBtn.hidden = true;
+    cmp.hidden = true;
+    return;
+  }
+  clearBtn.hidden = false;
+  var parts = [];
+  if(runs.length){
+    var lastRun = runs[runs.length - 1];
+    parts.push(runs.length + " saved " + plural(runs.length, "result", "results") +
+      " in this browser · last saved " + fmtWhen(lastRun.saved_at) +
+      " (period " + lastRun.period_start + " to " + lastRun.period_end + ", " +
+      fmtInt(lastRun.totals.requests) + " requests, " +
+      fmtInt(lastRun.totals.in_ttl_losses) + " in-TTL losses)");
+  }
+  if(subs.length){
+    var lastSub = subs[subs.length - 1];
+    parts.push(subs.length + " recorded " + plural(subs.length, "submission", "submissions") +
+      " · latest covers " + lastSub.period_start + " to " + lastSub.period_end);
+  }
+  state.className = "store-state on";
+  state.textContent = parts.join(" · ");
+  // A single saved run has nothing to compare against — leave no empty box.
+  if(runs.length >= 2){
+    var c = Store.compareRuns(runs[runs.length - 2], runs[runs.length - 1]);
+    cmp.hidden = false;
+    cmp.textContent = "Compared with the previous saved diagnosis (" + fmtWhen(c.prev_saved_at) +
+      ", period " + c.prev_period.replace("..", " to ") + "): in-TTL losses " +
+      fmtInt(c.losses_prev) + " → " + fmtInt(c.losses_cur) + " (" + signed(c.losses_delta) + ")" +
+      (c.rate_prev === null || c.rate_cur === null ? "" :
+        " · loss rate " + c.rate_prev.toFixed(2) + "% → " + c.rate_cur.toFixed(2) +
+        "% (" + signedFixed(c.rate_delta) + "pp)") +
+      ". The two runs may cover different periods, so read this as a trend, not a like-for-like delta.";
+  } else {
+    cmp.hidden = true;
+    cmp.textContent = "";
+  }
+}
+
+/* ---------- the confirmation modal (never confirm()/alert()) ---------- */
+var MODAL_PREV = null;
+function modalEl(){ return document.getElementById("saveModal"); }
+function modalOpen(){ return !modalEl().hidden; }
+function modalFocusables(){
+  return Array.prototype.slice.call(modalEl().querySelectorAll("button")).filter(function(b){
+    return !b.disabled;
+  });
+}
+function openSaveModal(){
+  if(modalOpen()) return;
+  MODAL_PREV = document.activeElement;
+  modalEl().hidden = false;
+  var f = modalFocusables();
+  // Focus lands on Cancel: the safe option is the default one.
+  if(f.length) f[0].focus();
+}
+function closeSaveModal(){
+  if(!modalOpen()) return;
+  modalEl().hidden = true;
+  if(MODAL_PREV && MODAL_PREV.focus) MODAL_PREV.focus();
+  MODAL_PREV = null;
+}
+modalEl().addEventListener("mousedown", function(ev){
+  // Backdrop click only: a click inside the dialog box must not close it.
+  if(ev.target === modalEl()) closeSaveModal();
+});
+document.addEventListener("keydown", function(ev){
+  if(!modalOpen()) return;
+  if(ev.key === "Escape"){
+    ev.stopPropagation();
+    closeSaveModal();
+    return;
+  }
+  if(ev.key !== "Tab") return;
+  var f = modalFocusables();
+  if(!f.length) return;
+  var first = f[0], last = f[f.length - 1];
+  var here = document.activeElement;
+  if(ev.shiftKey && (here === first || !modalEl().contains(here))){
+    ev.preventDefault();
+    last.focus();
+  } else if(!ev.shiftKey && (here === last || !modalEl().contains(here))){
+    ev.preventDefault();
+    first.focus();
+  }
+}, true);
+document.getElementById("saveModalCancel").addEventListener("click", closeSaveModal);
+document.getElementById("saveModalOk").addEventListener("click", function(){
+  closeSaveModal();
+  doSave();
+});
+
+/* ---------- save / clear / restore ---------- */
+function doSave(){
+  if(!STORE_OK || !LAST) return;
+  var run = Store.buildRun(LAST.result, LAST.census, {
+    saved_at: new Date().toISOString(),
+    source: LAST.census ? "folder" : "cli-paste",
+    script_version: LAST.source_version || CacheObservatory.SCRIPT_VERSION
+  });
+  if(!run) return;
+  var next = Store.addRun(STATE || Store.emptyState(), run);
+  if(Store.save(next)){
+    STATE = Store.load() || next;
+  } else {
+    // The write failed (quota, or storage revoked mid-session). Say so rather
+    // than letting the user believe a result is kept.
+    STORE_OK = false;
+  }
+  updateStoreCard();
+  // Deliberately no setupRange() here: saving a run does not change the
+  // submission history, so re-deriving the default window would only throw
+  // away a period the user had just picked by hand.
+  updateSubmitCard();
+}
+
+document.getElementById("storeSaveBtn").addEventListener("click", function(){
+  if(!STORE_OK || !LAST) return;
+  openSaveModal();
+});
+
+document.getElementById("storeClearBtn").addEventListener("click", function(){
+  if(!STORE_OK) return;
+  Store.clear();
+  STATE = Store.load() || Store.emptyState();
+  INC = null;
+  document.getElementById("storeRestored").hidden = true;
+  updateStoreCard();
+  setupRange();
+  updateSubmitCard();
+});
+
+function restoreRun(run){
+  var h = Store.hydrate(run);
+  if(!h || !h.result.daily.length) return;
+  // A run whose per-event detail was dropped (quota fallback) cannot recount
+  // iron losses for a narrowed window, and its heatmap would show usage with
+  // no losses. Drop the census with it so both stay honest.
+  LAST = {
+    result: h.result,
+    census: h.events_saved ? h.census : null,
+    source_version: run.script_version || null
+  };
+  EVT_MAP = h.evtMap;
+  var note = document.getElementById("storeRestored");
+  note.hidden = false;
+  note.textContent = "Restored from this browser's saved results (saved " + fmtWhen(run.saved_at) +
+    "). This is your own earlier diagnosis, read back from local storage, not new data. " +
+    "Load your logs again to refresh it, or press “Clear saved results” below to delete it.";
+  document.getElementById("pasteSrcNote").hidden = true;
+  // Unhide BEFORE drawing: canvases in a hidden section have zero width.
+  document.getElementById("results").hidden = false;
+  renderResults();
+}
+
+function recordSubmission(payload, data){
+  // Submissions are remembered only when this browser is already keeping
+  // results. Submitting never switches storage on by itself.
+  if(!STORE_OK || !STATE) return;
+  if(!STATE.runs.length && !STATE.submissions.length) return;
+  var next = Store.addSubmission(STATE, {
+    period_start: payload.period_start,
+    period_end: payload.period_end,
+    submitted_at: new Date().toISOString(),
+    id: (data && typeof data.id === "string") ? data.id : ""
+  });
+  if(Store.save(next)) STATE = Store.load() || next;
+  updateStoreCard();
+}
+
+(function bootStore(){
+  if(!Store){
+    STORE_OK = false;
+    updateStoreCard();
+    return;
+  }
+  STORE_OK = Store.available();
+  STATE = STORE_OK ? (Store.load() || Store.emptyState()) : null;
+  if(STORE_OK && STATE.runs.length) restoreRun(STATE.runs[STATE.runs.length - 1]);
+  updateStoreCard();
+})();
 
 function drawCharts(){
   if(!LAST) return;

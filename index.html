@@ -365,14 +365,19 @@ a{color:inherit}
       <li><b>Dedup &amp; cost</b>: events are deduplicated by <span class="mono">requestId</span>; the re-billed cost of a loss is that request's <span class="mono">cache_creation_input_tokens</span>.</li>
     </ul>
     <div class="trust-note">
-      <b>Trust model:</b> parsing runs in <b>your browser, locally</b>: log files never leave your machine. What gets transmitted is only the aggregate numbers you explicitly approve (daily counts and totals). And because this site has <b>no build step</b>, the code that runs is exactly the code in the repo. Read it line by line before you run it.
+      <b>Trust model:</b> parsing runs in <b>your browser, locally</b>: log files never leave your machine. What gets transmitted is only the aggregate numbers you explicitly approve (daily counts and totals). The diagnosis page can optionally keep your result in that browser's own storage, but only if you press the save button and confirm: that copy stays on your computer, never reaches a server, and one button deletes it. And because this site has <b>no build step</b>, the code that runs is exactly the code in the repo. Read it line by line before you run it.
     </div>
     <details class="faq" open><summary>Is my conversation content uploaded?</summary><div class="body">No. Parsing happens entirely inside your browser. You can verify this yourself: open the F12 Network tab and run a diagnosis; no network request appears. Nothing is transmitted before you press the share button, and pressing it sends only the aggregate-number JSON previewed on screen.</div></details>
+    <details class="faq" open><summary>Does this site keep anything on my computer?</summary><div class="body">
+      <p>Only if you ask it to. By default a diagnosis exists just in the open tab and is gone when you close it. On the check page you can press <b>“Save to this browser”</b> and confirm the prompt; that writes the totals, the daily rows and the hour-by-hour counts into that browser's local storage.</p>
+      <p><b>What a save is, and is not:</b> it stays inside that browser on that computer, it is <b>never sent to a server</b>, and “Clear saved results” deletes it immediately and completely. It exists so a later run can start the day after your last submission instead of re-sending a period you already shared. Log file paths, session IDs, requestIds and conversation text are not written to it, the same fields the submission schema excludes. <b>On a shared or public computer, do not save.</b></p>
+    </div></details>
     <details class="faq" open><summary>How can I trust what this code does?</summary><div class="body">
       <p>The code that runs is exactly the repo's files; there is no build step, so you can compare the browser's view-source against the repo line by line. This is the whole thing:</p>
       <ul class="filemap">
         <li><span class="mono">assets/parse.js</span> — the scoring engine, running in your browser. Same rules as the CLI <span class="mono">scripts/check_cache_loss.py</span>, with an automated test comparing both outputs.</li>
         <li><span class="mono">assets/charts.js</span> — drawing only. It does no scoring.</li>
+        <li><span class="mono">assets/store.js</span> — the check page's optional local save. Browser storage only, never the network, and only after you confirm.</li>
         <li><span class="mono">functions/api/submit.js</span> — the only code that runs on a server. Called only when you press submit; it validates the schema and commits to this repo.</li>
         <li><span class="mono">data/submissions.json</span> — the public dataset this page reads. One submission is one commit, so the full history is auditable.</li>
         <li><span class="mono">wrangler.toml</span> — even the deployment configuration is public: there is no hidden backend.</li>

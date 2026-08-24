@@ -18,6 +18,7 @@
   --crit:#D64545; --crit-soft:rgba(214,69,69,.12);
   --ok:#2E9E7B; --ok-soft:rgba(46,158,123,.12);
   --amber:#B07A2A; --amber-soft:rgba(176,122,42,.12);
+  --scrim:rgba(12,18,24,.55);
 }
 @media (prefers-color-scheme: dark){
   :root:not([data-theme="light"]){
@@ -26,6 +27,7 @@
     --crit:#FF6B5E; --crit-soft:rgba(255,107,94,.16);
     --ok:#3FBF95; --ok-soft:rgba(63,191,149,.16);
     --amber:#D9A254; --amber-soft:rgba(217,162,84,.16);
+    --scrim:rgba(0,0,0,.7);
   }
 }
 :root[data-theme="dark"]{
@@ -34,6 +36,7 @@
   --crit:#FF6B5E; --crit-soft:rgba(255,107,94,.16);
   --ok:#3FBF95; --ok-soft:rgba(63,191,149,.16);
   --amber:#D9A254; --amber-soft:rgba(217,162,84,.16);
+  --scrim:rgba(0,0,0,.7);
 }
 *{box-sizing:border-box}
 body{
@@ -158,6 +161,33 @@ details.preview pre{margin:0; padding:2px 12px 12px; font-family:ui-monospace,'C
 .submit-msg.ok{border-left:3px solid var(--ok); background:var(--ok-soft)}
 .submit-msg.bad{border-left:3px solid var(--crit); background:var(--crit-soft)}
 .submit-msg .detail{display:block; margin-top:6px; font-family:ui-monospace,'Cascadia Mono',Consolas,monospace; font-size:.74rem; color:var(--muted); white-space:pre-wrap}
+/* M10 로컬 저장 UI. 색은 전부 토큰이다. 버튼 글자는 var(--ink)로 두고
+   --ok / --crit은 테두리에만 쓴다. 라이트 테마에서 흰 글자 대비가
+   --ok 3.34:1, --crit 4.37:1로 측정돼 4.5:1 기준에 못 미치기 때문이다. */
+.store-box{border:1px solid var(--line); border-radius:8px; background:var(--surface); padding:16px 18px; margin-top:18px}
+.store-box h3{margin:0 0 6px; font-size:.95rem; font-weight:700}
+.store-box .lead{margin:0 0 11px; font-size:.85rem; color:var(--muted)}
+.store-state{font-size:.85rem; margin:0 0 12px; padding:9px 12px; border-left:3px solid var(--line); background:var(--bg); border-radius:0 6px 6px 0}
+.store-state.on{border-left-color:var(--ok)}
+.store-state.off{border-left-color:var(--amber)}
+.store-actions{display:flex; gap:10px; flex-wrap:wrap; align-items:center}
+.store-actions button{font:inherit; font-size:.85rem; font-weight:600; padding:8px 15px; border-radius:8px; border:1px solid var(--line); background:var(--surface); color:var(--ink); cursor:pointer}
+.store-actions button:hover:not(:disabled){border-color:var(--muted)}
+.store-actions button:disabled{opacity:.55; cursor:not-allowed}
+.store-actions button.go{border-color:var(--ok); font-weight:700}
+.store-actions button.danger{border-color:var(--crit)}
+.store-cmp{margin:13px 0 0; font-size:.85rem; padding:10px 13px; border-left:3px solid var(--amber); background:var(--amber-soft); border-radius:0 6px 6px 0; font-variant-numeric:tabular-nums}
+.sub-warn{font-size:.85rem; margin:0 0 14px; padding:10px 13px; border-left:3px solid var(--amber); background:var(--amber-soft); border-radius:0 6px 6px 0}
+.inc-hint{margin:9px 0 0; font-size:.78rem; color:var(--muted); font-variant-numeric:tabular-nums}
+.modal-back{position:fixed; inset:0; z-index:100; background:var(--scrim); display:flex; align-items:center; justify-content:center; padding:20px}
+.modal-box{width:100%; max-width:460px; padding:20px 22px; background:var(--surface); color:var(--ink); border:1px solid var(--line); border-radius:10px; box-shadow:0 18px 50px var(--scrim)}
+.modal-box h3{margin:0 0 10px; font-size:1rem; font-weight:700}
+.modal-box ul{margin:0 0 16px; padding-left:20px; font-size:.87rem}
+.modal-box li{margin:7px 0}
+.modal-actions{display:flex; gap:10px; justify-content:flex-end; flex-wrap:wrap}
+.modal-actions button{font:inherit; font-size:.87rem; font-weight:600; padding:8px 16px; border-radius:8px; border:1px solid var(--line); background:var(--bg); color:var(--ink); cursor:pointer}
+.modal-actions button:hover{border-color:var(--muted)}
+.modal-actions button.go{border-color:var(--ok); background:var(--surface); font-weight:700}
 footer{margin-top:44px; padding-top:16px; border-top:1px solid var(--line); color:var(--muted); font-size:.78rem}
 footer code{font-family:ui-monospace,'Cascadia Mono',Consolas,monospace; font-size:.75rem}
 a{color:inherit}
@@ -182,10 +212,12 @@ a{color:inherit}
 
 <div class="notice"><b>데스크톱 브라우저 필요.</b> 로그는 Claude Code가 실행되는 기기(<span class="mono">~/.claude/projects</span>)에 있다. 모바일 브라우저에서는 접근할 수 없다.</div>
 
+<div class="notice"><b>저장은 선택이고, 누르지 않으면 켜지지 않는다.</b> 진단 후 <b>"이 브라우저에 저장"</b>을 누르면 결과가 이 브라우저의 저장 공간에 남아, 다음 진단이 이번에 끝난 지점부터 이어질 수 있다. 서버로는 가지 않고 버튼 하나로 지운다. <b>공용·공유 컴퓨터에서는 저장하지 말 것.</b> 이 브라우저 프로필을 다음에 쓰는 사람에게 결과가 그대로 남는다. 진단만 돌리면 아무것도 남지 않는다.</div>
+
 <div class="trust-block">
   <h3>돌리기 전에: 이 페이지가 무엇을 하고, 무엇을 하지 않나</h3>
   <ul>
-    <li><b>로그 파일은 이 기기를 떠나지 않는다.</b> 읽기·판정·그래프가 전부 이 탭 안에서 끝나고 탭을 닫으면 사라진다. 진단만 돌리면 네트워크 요청이 <b>0건</b>이다. F12 → Network 탭을 열어둔 채 실행해 직접 확인할 수 있다.</li>
+    <li><b>로그 파일은 이 기기를 떠나지 않는다.</b> 읽기·판정·그래프가 전부 이 탭 안에서 끝난다. 2번 카드에서 <b>"이 브라우저에 저장"</b>을 누르지 않으면 탭을 닫는 순간 전부 사라진다. 저장을 누르면 이 컴퓨터의 브라우저 저장 공간에만 기록되고, 서버로는 전송되지 않으며, 버튼 하나로 언제든 지울 수 있다. 진단만 돌리면 네트워크 요청이 <b>0건</b>이다. F12 → Network 탭을 열어둔 채 실행해 직접 확인할 수 있다.</li>
     <li><b>전송은 3번 카드의 버튼을 눌러야만 일어난다.</b> 그때 나가는 것도 화면에 미리 보여준 집계 숫자(일별 건수·합계)와 직접 입력한 닉네임뿐이다. 대화 내용·파일 경로·세션 ID·시각은 제출 스키마에 아예 없다.</li>
     <li><b>빌드 스텝이 없다.</b> 브라우저가 실행하는 코드가 repo에 올라간 파일 그대로다. view-source와 GitHub를 한 줄씩 대조할 수 있다.</li>
     <li><b>로그인도 계정도 없다.</b> Anthropic 계정이나 API와는 어떤 통신도 하지 않고, 로그 파일을 읽기만 한다.</li>
@@ -195,6 +227,7 @@ a{color:inherit}
     <ul class="map">
       <li><span class="mono">assets/parse.js</span>: 유실 판정 엔진. 이 페이지의 모든 숫자가 여기서 나온다. CLI <span class="mono">scripts/check_cache_loss.py</span>와 같은 규칙이며, 두 결과가 같은지 자동 테스트로 대조한다.</li>
       <li><span class="mono">assets/charts.js</span>: 그래프·히트맵 그리기 전용. 판정 계산은 하지 않는다.</li>
+      <li><span class="mono">assets/store.js</span>: 선택적 로컬 저장. 이 컴퓨터의 브라우저 저장 공간만 건드리고 네트워크는 쓰지 않으며, 저장 버튼을 누르고 확인했을 때만 동작한다.</li>
       <li><span class="mono">functions/api/submit.js</span>: 서버에서 도는 유일한 코드. 제출 버튼을 눌렀을 때만 호출되고, 스키마 검증 후 공개 repo에 커밋한다.</li>
       <li><span class="mono">data/submissions.json</span>: 공개 집계 데이터. 제출 1건이 커밋 1건으로 남아 이력 전체를 누구나 감사할 수 있다.</li>
       <li><span class="mono">wrangler.toml</span>: 서버 설정도 repo에 공개. 숨겨진 백엔드가 없다는 뜻이다.</li>
@@ -210,7 +243,7 @@ a{color:inherit}
     <ol class="steps">
       <li>Claude Code 로그 폴더를 찾는다: <span class="mono">~/.claude/projects</span> (Windows: <span class="mono">C:\Users\&lt;사용자명&gt;\.claude\projects</span>).</li>
       <li>그 폴더를 아래에 끌어다 놓거나, 버튼으로 선택한다. 여러 개의 <span class="mono">.jsonl</span> 파일도 된다.</li>
-      <li>결과를 읽는다. 파싱은 이 탭 안에서만 일어나고, 탭을 닫으면 전부 사라진다.</li>
+      <li>결과를 읽는다. 파싱은 이 탭 안에서만 일어난다. 2번 카드에서 "이 브라우저에 저장"을 고르지 않으면 탭을 닫을 때 전부 사라진다.</li>
     </ol>
     <div class="dropzone" id="dropzone">
       <p>폴더(또는 <span class="mono">.jsonl</span> 파일)를 여기에 <b>드래그 앤 드롭</b></p>
@@ -239,6 +272,7 @@ a{color:inherit}
   <h2>2 · 내 결과</h2>
   <p class="desc">TTL-strict 판정 v2.1: 캐시 TTL 안쪽에서 일어난 유실만 집계하고, 정당한 만료는 제외한다.</p>
   <div class="notice" id="pasteSrcNote" hidden>붙여넣은 CLI JSON(집계 전용)으로 렌더되어 시간대별 히트맵은 표시되지 않는다. 공유를 포함한 나머지 기능은 동일하게 동작한다.</div>
+  <div class="notice" id="storeRestored" hidden></div>
 
   <div class="kpis">
     <div class="kpi"><div class="label">스캔한 요청</div><div class="val" id="kRequests">–</div></div>
@@ -285,6 +319,17 @@ a{color:inherit}
     </div>
   </details>
 
+  <div class="store-box" id="storeBox">
+    <h3>이 결과를 이 브라우저에 남기기 (선택)</h3>
+    <p class="lead">자동 저장은 없다. 버튼을 누르면 총계·일별 집계·시간대별 요청 수가 <b>이 컴퓨터의 브라우저 저장 공간</b>에 기록된다. 서버로는 가지 않고, "저장된 기록 지우기"를 누르면 즉시 지워진다. 저장해 두면 다음 진단이 마지막 제출 다음 날부터 시작되므로 이미 보낸 기간을 다시 보내지 않아도 된다. <b>공용·공유 컴퓨터에서는 저장하지 말 것.</b></p>
+    <p class="store-state off" id="storeState">이 브라우저에 저장된 기록이 없다.</p>
+    <div class="store-actions">
+      <button id="storeSaveBtn" type="button" class="go">이 브라우저에 저장</button>
+      <button id="storeClearBtn" type="button" class="danger" hidden>저장된 기록 지우기</button>
+    </div>
+    <div class="store-cmp" id="storeCmp" hidden></div>
+  </div>
+
   <section id="submitSection">
     <h2>3 · 관측소에 집계 공유하기 (선택)</h2>
     <p class="desc">전송되는 것은 아래 JSON <b>전문 그대로</b>다. 기간·총계·일별 카운트뿐. 로그·파일 경로·세션 내용·건별 상세는 절대 전송되지 않는다. 공유 기간을 좁히면 총계도 그 기간으로 다시 계산된다.</p>
@@ -303,9 +348,14 @@ a{color:inherit}
           <div>
             <button id="subLast92" type="button">최근 92일</button>
           </div>
+          <div>
+            <button id="subFullRange" type="button" hidden>전체 기간으로</button>
+          </div>
         </div>
         <p class="range-hint" id="subRangeHint"></p>
+        <p class="inc-hint" id="subIncHint" hidden></p>
       </div>
+      <div class="sub-warn" id="subOverlap" hidden></div>
       <div class="submit-form">
         <div>
           <label for="subNickname">닉네임 (선택, 최대 20자)</label>
@@ -360,7 +410,26 @@ a{color:inherit}
 </footer>
 
 </div>
+<!-- 저장 확인 창. confirm()이 아니라 커스텀 모달이다. 페이지 테마를 따라야 하고,
+     두 언어로 문구를 통제해야 하며, 포커스를 안에 가두고, 헤드리스 회귀 검사를
+     막지 않아야 하기 때문이다. -->
+<div class="modal-back" id="saveModal" hidden>
+  <div class="modal-box" role="dialog" aria-modal="true" aria-labelledby="saveModalTitle" aria-describedby="saveModalBody">
+    <h3 id="saveModalTitle">이 결과를 이 브라우저에 저장할까?</h3>
+    <ul id="saveModalBody">
+      <li><b>이 컴퓨터의 이 브라우저에 남는다.</b> 결과가 브라우저 저장 공간에 기록되고, 지울 때까지 그대로 있다. 서버로는 아무것도 보내지 않는다.</li>
+      <li><b>공용·공유 컴퓨터라면 저장하지 말 것.</b> 이 브라우저 프로필을 뒤에 쓰는 사람이 이 페이지를 열어 결과를 볼 수 있다.</li>
+      <li><b>언제든 지울 수 있다.</b> "저장된 기록 지우기"를 누르면 즉시, 완전히 삭제된다.</li>
+    </ul>
+    <div class="modal-actions">
+      <button id="saveModalCancel" type="button">취소</button>
+      <button id="saveModalOk" type="button" class="go">이 브라우저에 저장</button>
+    </div>
+  </div>
+</div>
+
 <script src="../assets/parse.js"></script>
+<script src="../assets/store.js"></script>
 <script src="../assets/charts.js"></script>
 <script>
 "use strict";
@@ -547,6 +616,7 @@ async function processList(list){
   LAST = { result: result, census: census, source_version: null };
   buildEvtMap(result.events);
   document.getElementById("pasteSrcNote").hidden = true;
+  document.getElementById("storeRestored").hidden = true;
   // Unhide BEFORE drawing: canvases in a hidden section have zero width.
   document.getElementById("results").hidden = false;
   renderResults();
@@ -653,6 +723,7 @@ document.getElementById("pasteBtn").addEventListener("click", function(){
   setProgress("붙여넣은 CLI JSON 렌더 완료: 요청 " + fmtInt(v.result.totals.requests) + "건, " + v.result.daily.length + "일.");
   LAST = { result: v.result, census: null, source_version: v.version };
   buildEvtMap(v.result.events);
+  document.getElementById("storeRestored").hidden = true;
   document.getElementById("pasteSrcNote").hidden = false;
   document.getElementById("results").hidden = false;
   renderResults();
@@ -683,6 +754,7 @@ function renderResults(){
   drawCharts();
   setupRange();
   updateSubmitCard();
+  updateStoreCard();
 }
 
 /* ---------- CHK-3: 집계 공유 (opt-in) ---------- */
@@ -726,6 +798,8 @@ function setupRange(){
     box.hidden = true;
     fillDateOptions(from, []);
     fillDateOptions(to, []);
+    document.getElementById("subFullRange").hidden = true;
+    updateIncHint();
     return;
   }
   var dates = dailyDates();
@@ -735,8 +809,17 @@ function setupRange(){
   var w = CacheObservatory.clampRange(dates, MAX_PERIOD_DAYS);
   from.value = w.start;
   to.value = w.end;
+  // M10: 이 브라우저가 지난 제출을 기억하고 있으면 증분 구간으로 연다.
+  // 그 period_end 다음 날부터 스캔의 마지막 날까지. "전체 기간으로" 버튼이 되돌린다.
+  INC = STORE_OK ? Store.incrementalRange(dates, storedSubmissions(), todayIso(), MAX_PERIOD_DAYS) : null;
+  if(INC && INC.has_new_data && dates.indexOf(INC.start) !== -1 && dates.indexOf(INC.end) !== -1){
+    from.value = INC.start;
+    to.value = INC.end;
+  }
+  document.getElementById("subFullRange").hidden = !(INC && INC.has_new_data);
   box.hidden = false;
   RANGE_READY = true;
+  updateIncHint();
 }
 
 function selectedRange(){
@@ -810,9 +893,13 @@ function updateSubmitCard(){
     pre.textContent = "(아직 파싱된 결과 없음)";
     hint.textContent = "";
     btn.disabled = true;
+    updateOverlapWarning(null);
     return;
   }
   pre.textContent = JSON.stringify(payload, null, 2);
+  // 경고일 뿐 차단이 아니다. 되돌려진 제출을 다시 내거나 고친 데이터를 다시
+  // 내는 정당한 경우가 있다.
+  updateOverlapWarning(payload);
   // 서버는 달력 기준 기간(period_start~period_end)과 daily 항목 수를 둘 다
   // 92로 제한한다. 활동이 없던 날은 daily에 없으므로 둘을 함께 본다.
   var span = CacheObservatory.daySpan(payload.period_start, payload.period_end);
@@ -868,6 +955,16 @@ document.getElementById("subLast92").addEventListener("click", function(){
   document.getElementById("subTo").value = w.end;
   updateSubmitCard();
 });
+/* 증분 기본값에서 빠져나오는 경로: API가 받아 주는 가장 넓은 창을
+   스캔의 마지막 날 기준으로 다시 잡는다. */
+document.getElementById("subFullRange").addEventListener("click", function(){
+  if(!RANGE_READY) return;
+  var w = CacheObservatory.clampRange(dailyDates(), MAX_PERIOD_DAYS);
+  if(!w) return;
+  document.getElementById("subFrom").value = w.start;
+  document.getElementById("subTo").value = w.end;
+  updateSubmitCard();
+});
 
 document.getElementById("subBtn").addEventListener("click", async function(){
   var payload = buildSubmitPayload();
@@ -892,6 +989,7 @@ document.getElementById("subBtn").addEventListener("click", async function(){
   SUBMIT_BUSY = false;
   if(res.ok && data && data.ok){
     SUBMIT_DONE = true;
+    recordSubmission(payload, data);
     updateSubmitCard();
     submitMsg("ok", "제출 완료. 관측소 반영까지 1~2분(봇 커밋이 재배포를 트리거한다).", [
       { href: data.commit_url || "https://github.com", label: "봇 커밋 보기" },
@@ -915,6 +1013,277 @@ document.getElementById("subBtn").addEventListener("click", async function(){
     submitMsg("bad", "저장소가 일시적으로 응답하지 않는다. 잠시 후 재시도. (관측소 조회에는 영향 없음)");
   }
 });
+
+/* ---------- M10: 로컬 저장(opt-in) · 증분 기간 · 중복 경고 ----------
+   기본값은 OFF다. 사용자가 저장 버튼을 누르고 모달에서 확인할 때까지 아무것도
+   기록하지 않는다. localStorage 접근은 assets/store.js 안에서 전부 try/catch로
+   감싸져 있고, STORE_OK는 그 프로브 결과를 그대로 반영한다. 프라이빗 창이나
+   사이트 데이터 차단 환경이면 저장 기능만 꺼지고 진단은 그대로 동작한다. */
+var Store = window.CacheObservatoryStore || null;
+var STORE_OK = false;
+var STATE = null;   // {v, runs, submissions} 이 브라우저의 기억
+var INC = null;     // 현재 스캔에 대한 증분 구간 제안
+
+function storedSubmissions(){ return (STATE && STATE.submissions) || []; }
+function storedRuns(){ return (STATE && STATE.runs) || []; }
+
+// 로컬 달력 기준 오늘. 일별 집계를 사용자가 읽는 방식과 맞춘다.
+function todayIso(){
+  var d = new Date();
+  return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+}
+function fmtWhen(iso){
+  if(typeof iso !== "string" || !iso) return "이전 진단";
+  var t = Date.parse(iso);
+  if(isNaN(t)) return iso;
+  return new Date(t).toLocaleString("ko-KR");
+}
+function signed(n){ return (n > 0 ? "+" : "") + fmtInt(n); }
+function signedFixed(n){ return (n > 0 ? "+" : "") + n.toFixed(2); }
+
+function updateIncHint(){
+  var el = document.getElementById("subIncHint");
+  if(!INC || !RANGE_READY){
+    el.hidden = true;
+    el.textContent = "";
+    return;
+  }
+  el.hidden = false;
+  if(!INC.has_new_data){
+    el.textContent = "이 브라우저의 마지막 제출이 이미 " + INC.last_end +
+      "까지 덮고 있고, 이번 스캔에는 그 뒤 날짜가 없다.";
+    return;
+  }
+  el.textContent = "증분 구간으로 열었다: " + INC.start + "(마지막 제출 " + INC.last_end +
+    "의 다음 날)부터 " + INC.end + "까지" +
+    (INC.since_days === null ? "" : " · 지난 제출 이후 " + INC.since_days + "일") +
+    (INC.clamped ? " · 최근 " + MAX_PERIOD_DAYS + "일로 잘림" : "") +
+    '. 전체를 보내려면 "전체 기간으로"를 누른다.';
+}
+
+/* 겹침은 이 브라우저 자신의 제출 기록으로만 판정한다. 공개 데이터셋은 보지
+   않는다. 닉네임은 동일인 근거가 못 되고, check.html은 진단 중 네트워크 요청
+   0건을 약속하고 있기 때문이다. */
+function updateOverlapWarning(payload){
+  var box = document.getElementById("subOverlap");
+  var subs = storedSubmissions();
+  if(!payload || !subs.length){
+    box.hidden = true;
+    box.textContent = "";
+    return;
+  }
+  var ov = Store.overlapWith(payload.period_start, payload.period_end, subs);
+  if(!ov.days){
+    box.hidden = true;
+    box.textContent = "";
+    return;
+  }
+  var spans = ov.spans.map(function(s){
+    return s.start === s.end ? s.start : s.start + " ~ " + s.end;
+  }).join(", ");
+  box.hidden = false;
+  box.textContent = "중복 경고: 선택한 기간 중 " + ov.days + "일(" + spans +
+    ")은 이 브라우저에서 이미 제출한 구간이다. 제출 1건이 행 1개로 쌓이므로 겹치는 날은 " +
+    "관측소 총계에서 두 번 세어진다. 제출을 막지는 않는다. 고친 데이터를 다시 내거나 " +
+    "이전 제출이 되돌려진 경우라면 그대로 보내면 된다.";
+}
+
+function updateStoreCard(){
+  var state = document.getElementById("storeState");
+  var saveBtn = document.getElementById("storeSaveBtn");
+  var clearBtn = document.getElementById("storeClearBtn");
+  var cmp = document.getElementById("storeCmp");
+  if(!STORE_OK){
+    state.className = "store-state off";
+    state.textContent = "이 브라우저가 로컬 저장을 허용하지 않는다(프라이빗 창이거나 사이트 데이터 차단). " +
+      "저장 기능만 꺼진 상태이고 위 진단은 그대로 동작한다. 탭을 닫으면 결과가 사라진다.";
+    saveBtn.disabled = true;
+    clearBtn.hidden = true;
+    cmp.hidden = true;
+    return;
+  }
+  saveBtn.disabled = !LAST;
+  var runs = storedRuns();
+  var subs = storedSubmissions();
+  if(!runs.length && !subs.length){
+    state.className = "store-state off";
+    state.textContent = "이 브라우저에 저장된 기록이 없다.";
+    clearBtn.hidden = true;
+    cmp.hidden = true;
+    return;
+  }
+  clearBtn.hidden = false;
+  var parts = [];
+  if(runs.length){
+    var lastRun = runs[runs.length - 1];
+    parts.push("저장된 진단 " + runs.length + "건 · 마지막 저장 " + fmtWhen(lastRun.saved_at) +
+      " (기간 " + lastRun.period_start + " ~ " + lastRun.period_end + ", 요청 " +
+      fmtInt(lastRun.totals.requests) + "건, in-TTL 유실 " +
+      fmtInt(lastRun.totals.in_ttl_losses) + "건)");
+  }
+  if(subs.length){
+    var lastSub = subs[subs.length - 1];
+    parts.push("기록된 제출 " + subs.length + "건 · 최근 제출 구간 " +
+      lastSub.period_start + " ~ " + lastSub.period_end);
+  }
+  state.className = "store-state on";
+  state.textContent = parts.join(" · ");
+  // 저장분이 1건뿐이면 비교할 대상이 없다. 빈 영역을 남기지 않는다.
+  if(runs.length >= 2){
+    var c = Store.compareRuns(runs[runs.length - 2], runs[runs.length - 1]);
+    cmp.hidden = false;
+    cmp.textContent = "직전 저장분(" + fmtWhen(c.prev_saved_at) + ", 기간 " +
+      c.prev_period.replace("..", " ~ ") + ") 대비: in-TTL 유실 " +
+      fmtInt(c.losses_prev) + " \u2192 " + fmtInt(c.losses_cur) + " (" + signed(c.losses_delta) + ")" +
+      (c.rate_prev === null || c.rate_cur === null ? "" :
+        " · 유실률 " + c.rate_prev.toFixed(2) + "% \u2192 " + c.rate_cur.toFixed(2) +
+        "% (" + signedFixed(c.rate_delta) + "%p)") +
+      ". 두 진단의 대상 기간이 다를 수 있으므로 동일 조건 비교가 아니라 추이로 읽을 것.";
+  } else {
+    cmp.hidden = true;
+    cmp.textContent = "";
+  }
+}
+
+/* ---------- 확인 모달 (confirm()/alert() 미사용) ---------- */
+var MODAL_PREV = null;
+function modalEl(){ return document.getElementById("saveModal"); }
+function modalOpen(){ return !modalEl().hidden; }
+function modalFocusables(){
+  return Array.prototype.slice.call(modalEl().querySelectorAll("button")).filter(function(b){
+    return !b.disabled;
+  });
+}
+function openSaveModal(){
+  if(modalOpen()) return;
+  MODAL_PREV = document.activeElement;
+  modalEl().hidden = false;
+  var f = modalFocusables();
+  // 안전한 쪽(취소)에 포커스를 둔다.
+  if(f.length) f[0].focus();
+}
+function closeSaveModal(){
+  if(!modalOpen()) return;
+  modalEl().hidden = true;
+  if(MODAL_PREV && MODAL_PREV.focus) MODAL_PREV.focus();
+  MODAL_PREV = null;
+}
+modalEl().addEventListener("mousedown", function(ev){
+  // 바깥(백드롭) 클릭만 닫는다. 다이얼로그 안 클릭은 닫으면 안 된다.
+  if(ev.target === modalEl()) closeSaveModal();
+});
+document.addEventListener("keydown", function(ev){
+  if(!modalOpen()) return;
+  if(ev.key === "Escape"){
+    ev.stopPropagation();
+    closeSaveModal();
+    return;
+  }
+  if(ev.key !== "Tab") return;
+  var f = modalFocusables();
+  if(!f.length) return;
+  var first = f[0], last = f[f.length - 1];
+  var here = document.activeElement;
+  if(ev.shiftKey && (here === first || !modalEl().contains(here))){
+    ev.preventDefault();
+    last.focus();
+  } else if(!ev.shiftKey && (here === last || !modalEl().contains(here))){
+    ev.preventDefault();
+    first.focus();
+  }
+}, true);
+document.getElementById("saveModalCancel").addEventListener("click", closeSaveModal);
+document.getElementById("saveModalOk").addEventListener("click", function(){
+  closeSaveModal();
+  doSave();
+});
+
+/* ---------- 저장 · 삭제 · 복원 ---------- */
+function doSave(){
+  if(!STORE_OK || !LAST) return;
+  var run = Store.buildRun(LAST.result, LAST.census, {
+    saved_at: new Date().toISOString(),
+    source: LAST.census ? "folder" : "cli-paste",
+    script_version: LAST.source_version || CacheObservatory.SCRIPT_VERSION
+  });
+  if(!run) return;
+  var next = Store.addRun(STATE || Store.emptyState(), run);
+  if(Store.save(next)){
+    STATE = Store.load() || next;
+  } else {
+    // 쓰기 실패(용량 초과, 세션 도중 저장 권한 회수). 저장된 것처럼 믿게 두지 않는다.
+    STORE_OK = false;
+  }
+  updateStoreCard();
+  // 여기서 setupRange()를 부르지 않는 것은 의도다. 저장은 제출 이력을 바꾸지
+  // 않으므로 기본 구간을 다시 계산하면 사용자가 직접 고른 기간만 날아간다.
+  updateSubmitCard();
+}
+
+document.getElementById("storeSaveBtn").addEventListener("click", function(){
+  if(!STORE_OK || !LAST) return;
+  openSaveModal();
+});
+
+document.getElementById("storeClearBtn").addEventListener("click", function(){
+  if(!STORE_OK) return;
+  Store.clear();
+  STATE = Store.load() || Store.emptyState();
+  INC = null;
+  document.getElementById("storeRestored").hidden = true;
+  updateStoreCard();
+  setupRange();
+  updateSubmitCard();
+});
+
+function restoreRun(run){
+  var h = Store.hydrate(run);
+  if(!h || !h.result.daily.length) return;
+  // 건별 상세가 용량 때문에 빠진 저장분은 좁힌 구간의 iron 유실을 다시 셀 수
+  // 없고, 히트맵도 요청량만 있고 유실이 0으로 보여 오해를 만든다. census도 함께 버린다.
+  LAST = {
+    result: h.result,
+    census: h.events_saved ? h.census : null,
+    source_version: run.script_version || null
+  };
+  EVT_MAP = h.evtMap;
+  var note = document.getElementById("storeRestored");
+  note.hidden = false;
+  note.textContent = "이 브라우저에 저장된 결과를 복원했다(저장 시각 " + fmtWhen(run.saved_at) +
+    "). 새 데이터가 아니라 직접 저장해 둔 이전 진단이다. 갱신하려면 로그를 다시 불러오고, " +
+    '지우려면 아래 "저장된 기록 지우기"를 누른다.';
+  document.getElementById("pasteSrcNote").hidden = true;
+  // 그리기 전에 unhide. 숨겨진 섹션의 canvas는 폭이 0이다.
+  document.getElementById("results").hidden = false;
+  renderResults();
+}
+
+function recordSubmission(payload, data){
+  // 이미 이 브라우저에 기록을 남기고 있을 때만 제출 이력을 기억한다.
+  // 제출 자체가 저장 기능을 켜지는 않는다.
+  if(!STORE_OK || !STATE) return;
+  if(!STATE.runs.length && !STATE.submissions.length) return;
+  var next = Store.addSubmission(STATE, {
+    period_start: payload.period_start,
+    period_end: payload.period_end,
+    submitted_at: new Date().toISOString(),
+    id: (data && typeof data.id === "string") ? data.id : ""
+  });
+  if(Store.save(next)) STATE = Store.load() || next;
+  updateStoreCard();
+}
+
+(function bootStore(){
+  if(!Store){
+    STORE_OK = false;
+    updateStoreCard();
+    return;
+  }
+  STORE_OK = Store.available();
+  STATE = STORE_OK ? (Store.load() || Store.emptyState()) : null;
+  if(STORE_OK && STATE.runs.length) restoreRun(STATE.runs[STATE.runs.length - 1]);
+  updateStoreCard();
+})();
 
 function drawCharts(){
   if(!LAST) return;

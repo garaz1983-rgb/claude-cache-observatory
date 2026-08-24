@@ -24,7 +24,7 @@ Checklist for a page change:
 1. Identify whether the change touches the observatory pair, the check pair, or all four.
 2. Apply the same structural change (IDs, classes, element order) to both languages; only the human-readable text differs.
 3. Keep element IDs identical across languages (the inline scripts rely on them).
-4. `assets/parse.js` and `assets/charts.js` are shared and language-neutral; labels are injected from each page, so page-level label changes never go into the assets.
+4. `assets/parse.js`, `assets/store.js` and `assets/charts.js` are shared and language-neutral; labels are injected from each page, so page-level label changes never go into the assets.
 5. Korean copy: do not use the em-dash (—); use Korean punctuation (comma, period, colon, `·`) instead.
 
 ## parse.js and CLI judgment parity
@@ -40,13 +40,24 @@ Checklist for a page change:
 
 The check page's paste fallback consumes the CLI's `--json` output (`script_version`, `totals`, `daily`). If that shape changes, update the paste validator in both `check.html` and `ko/check.html` and this note.
 
+## assets/store.js and the local save
+
+`assets/store.js` is the check page's optional `localStorage` layer. Two rules are load-bearing:
+
+- **Every storage access is wrapped in try/catch**, including resolving the `localStorage` property itself, which throws in a private window or with site data blocked. A storage failure disables saving and must never break the diagnosis.
+- **Serialisation is whitelist-only.** `buildRun()` constructs the stored object field by field; nothing is spread or copied from the engine result. File paths, session IDs, `requestId`s, raw timestamps and conversation text must not be storable, the same exclusions the submission schema enforces. `tests/storage_test.py` greps the serialised blob for strings lifted out of the fixtures, so widening the whitelist fails the test rather than passing quietly.
+
+Saving is opt-in: it happens only after the user presses the save button **and** confirms the modal. The confirmation is a custom modal, never `confirm()`/`alert()` (theme, translation, and headless testability).
+
 ## Running the tests
 
-All three must exit 0 before a push. Requirements: Python 3.8+, Node (for `parse.js` runs), and `npx` (the contract test boots `wrangler pages dev` locally; first run downloads wrangler).
+All five must exit 0 before a push. Requirements: Python 3.8+, Node (for `parse.js` / `store.js` runs), and `npx` (the contract test boots `wrangler pages dev` locally; first run downloads wrangler).
 
 ```
 python tests/parity_check.py          # parse.js vs CLI on the same fixtures
 python tests/submit_contract_test.py  # /api/submit contract (mock GitHub, local KV)
+python tests/range_filter_test.py     # submission period picker (filterRange/clampRange/daySpan)
+python tests/storage_test.py          # local save: round trip, forbidden fields, increment, overlap
 python tests/mutation_run.py          # mutation harness over both engines
 ```
 

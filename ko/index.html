@@ -356,14 +356,19 @@ a{color:inherit}
       <li><b>중복 제거 · 비용</b>: <span class="mono">requestId</span> 기준으로 중복을 제거하고, 유실 1건의 재과금 비용은 그 요청의 <span class="mono">cache_creation_input_tokens</span>다.</li>
     </ul>
     <div class="trust-note">
-      <b>신뢰 모델:</b> 파싱은 <b>당신의 브라우저에서 로컬로</b> 실행된다. 로그 파일은 기기를 떠나지 않는다. 전송되는 것은 본인이 명시적으로 승인한 집계 숫자(일별 건수·합계)뿐이다. 이 사이트는 <b>빌드 스텝이 없어서</b> 실행되는 코드가 repo에 있는 코드 그대로다. 실행 전에 한 줄씩 읽어볼 수 있다.
+      <b>신뢰 모델:</b> 파싱은 <b>당신의 브라우저에서 로컬로</b> 실행된다. 로그 파일은 기기를 떠나지 않는다. 전송되는 것은 본인이 명시적으로 승인한 집계 숫자(일별 건수·합계)뿐이다. 진단 페이지는 결과를 그 브라우저의 저장 공간에 남길 수 있는데, 저장 버튼을 누르고 확인 창에서 확인했을 때만 그렇다. 저장분은 본인 컴퓨터 안에만 있고 서버로 가지 않으며 버튼 하나로 지운다. 이 사이트는 <b>빌드 스텝이 없어서</b> 실행되는 코드가 repo에 있는 코드 그대로다. 실행 전에 한 줄씩 읽어볼 수 있다.
     </div>
     <details class="faq" open><summary>내 대화 내용이 업로드되나?</summary><div class="body">아니다. 파싱은 전부 브라우저 안에서 일어난다. 직접 검증할 수 있다: F12 Network 탭을 열고 진단을 돌려 보면 네트워크 요청이 없다. 공유 버튼을 누르기 전에는 아무것도 전송되지 않고, 누르면 화면에 미리 보여준 집계 숫자 JSON만 나간다.</div></details>
+    <details class="faq" open><summary>이 사이트가 내 컴퓨터에 뭔가를 남기나?</summary><div class="body">
+      <p>본인이 시켰을 때만 남는다. 기본값에서 진단 결과는 열려 있는 탭 안에만 있고 탭을 닫으면 사라진다. 진단 페이지에서 <b>"이 브라우저에 저장"</b>을 누르고 확인 창에서 확인하면, 총계·일별 집계·시간대별 요청 수가 그 브라우저의 저장 공간에 기록된다.</p>
+      <p><b>저장분의 성격:</b> 그 컴퓨터의 그 브라우저 안에만 있고, <b>서버로는 전송되지 않으며</b>, "저장된 기록 지우기"를 누르면 즉시, 완전히 삭제된다. 다음 진단이 마지막 제출 다음 날부터 시작되게 해서 이미 공유한 기간을 다시 보내지 않도록 하는 용도다. 로그 파일 경로·세션 ID·requestId·대화 내용은 저장하지 않는다. 제출 스키마에서 빼 둔 것과 같은 기준이다. <b>공용·공유 컴퓨터에서는 저장하지 말 것.</b></p>
+    </div></details>
     <details class="faq" open><summary>이 코드가 뭐 하는지 어떻게 믿나?</summary><div class="body">
       <p>실행되는 코드가 repo 파일 그대로다(빌드 없음). 브라우저 view-source와 repo를 한 줄씩 대조할 수 있다. 구성은 이게 전부다:</p>
       <ul class="filemap">
         <li><span class="mono">assets/parse.js</span>: 유실 판정 엔진(브라우저에서 실행). CLI <span class="mono">scripts/check_cache_loss.py</span>와 같은 규칙이고, 두 결과가 같은지 자동 테스트로 대조한다.</li>
         <li><span class="mono">assets/charts.js</span>: 그래프 그리기 전용. 판정 계산은 하지 않는다.</li>
+        <li><span class="mono">assets/store.js</span>: 진단 페이지의 선택적 로컬 저장. 브라우저 저장 공간만 쓰고 네트워크는 쓰지 않으며, 확인했을 때만 동작한다.</li>
         <li><span class="mono">functions/api/submit.js</span>: 서버에서 도는 유일한 코드. 제출 버튼을 눌렀을 때만 호출되고, 스키마 검증 후 이 repo에 커밋한다.</li>
         <li><span class="mono">data/submissions.json</span>: 이 페이지가 읽는 공개 데이터. 제출 1건 = 커밋 1건이라 이력 전체가 감사 대상이다.</li>
         <li><span class="mono">wrangler.toml</span>: 서버 설정도 repo에 공개. 숨겨진 백엔드가 없다.</li>
