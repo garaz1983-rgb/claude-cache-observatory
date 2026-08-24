@@ -16,6 +16,10 @@ Compares:
   - daily[] self-consistency: per-day sums equal totals, dates sorted
     and unique.
 
+Also runs parse.js alone on tests/fixtures_hostile/ (malformed cc values a
+hostile JSONL could carry — the CLI cannot ingest these, a string cc would
+crash its sums) and holds it to fixed coerced expectations.
+
 Exit 0 on full match, exit 1 with a diff otherwise. Never touches the real
 ~/.claude/projects. Python stdlib + node only.
 """
@@ -30,8 +34,14 @@ import tempfile
 HERE = os.path.dirname(os.path.abspath(__file__))
 SITE_DIR = os.path.dirname(HERE)
 FIXTURE_DIR = os.path.join(HERE, "fixtures")
+HOSTILE_DIR = os.path.join(HERE, "fixtures_hostile")
 CLI_SCRIPT = os.path.join(SITE_DIR, "scripts", "check_cache_loss.py")
 RUNNER = os.path.join(HERE, "run_parse.js")
+
+# fixtures_hostile/: 2 requests, one in-TTL PMNF loss whose
+# cache_creation_input_tokens is the STRING "777" — must coerce to 0.
+HOSTILE_EXPECTED = {"requests": 2, "in_ttl_losses": 1, "iron_losses": 0,
+                    "wasted_tokens": 0}
 
 NODE_FALLBACKS = [
     r"C:\Program Files\nodejs\node.exe",
@@ -111,9 +121,9 @@ def parse_cli_output(out):
     return months, total
 
 
-def run_js(node):
+def run_js(node, fixture_dir=FIXTURE_DIR):
     proc = subprocess.run(
-        [node, RUNNER, FIXTURE_DIR],
+        [node, RUNNER, fixture_dir],
         capture_output=True, text=True, encoding="utf-8", errors="replace",
         timeout=120,
     )
@@ -197,6 +207,14 @@ def main():
             errors.append("daily sum %s=%r != totals.%s=%r"
                           % (day_key, day_sums[day_key],
                              total_key, totals.get(total_key)))
+
+    # JS-only hostile fixtures: malformed cc must coerce to 0, never leak
+    # a non-int into totals (the DOM XSS vector the coercion closes).
+    hostile_totals = run_js(node, HOSTILE_DIR).get("totals") or {}
+    for key, want in sorted(HOSTILE_EXPECTED.items()):
+        got = hostile_totals.get(key)
+        if got != want or not isinstance(got, int):
+            errors.append("hostile totals.%s: js=%r want=%r" % (key, got, want))
 
     if errors:
         print("PARITY_FAIL (%d diff%s):" % (len(errors), "s" if len(errors) > 1 else ""))

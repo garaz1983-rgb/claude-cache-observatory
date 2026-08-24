@@ -2,8 +2,9 @@
 """Mutation harness for the site's judgment + submission-validation logic.
 
 Targets:
-  - assets/parse.js          — judged by tests/parity_check.py (M01..M15)
-  - functions/api/submit.js  — judged by tests/submit_contract_test.py (S16..S21)
+  - assets/parse.js          — judged by tests/parity_check.py (M01..M15, M22)
+  - functions/api/submit.js  — judged by tests/submit_contract_test.py
+                               (S16..S21, S23..S24)
 
 For each mutation: apply a single-anchor source edit to the target file, run
 that mutation's test runner, judge by exit code, then restore the target from
@@ -102,9 +103,13 @@ MUTATIONS = [
     ("S17_period_span_widened", SUBMIT_JS_REL,
      "if (spanDays > MAX_PERIOD_DAYS) {",
      "if (spanDays > MAX_PERIOD_DAYS + 1) {", "contract"),
+    # The pre-check comparison mutant (count >= -> count >) became equivalent
+    # once the post-increment re-check landed (the re-check still 429s the
+    # 4th submit), so the limit CONSTANT is mutated instead — that relaxes
+    # both checks at once and stays observable.
     ("S18_rate_limit_relaxed", SUBMIT_JS_REL,
-     "if (count >= RATE_LIMIT_MAX) {",
-     "if (count > RATE_LIMIT_MAX) {", "contract"),
+     "const RATE_LIMIT_MAX = 3;",
+     "const RATE_LIMIT_MAX = 4;", "contract"),
     ("S19_unknown_field_check_disabled", SUBMIT_JS_REL,
      'errors.push("undefined field: " + key);',
      "void key;", "contract"),
@@ -114,6 +119,17 @@ MUTATIONS = [
     ("S21_sha_retry_disabled", SUBMIT_JS_REL,
      "if (put.status !== 409) break;",
      "if (put.status === 409) break;", "contract"),
+
+    # -- M3.1 codex-review fixes ------------------------------------------
+    ("M22_cc_coercion_removed", PARSE_JS_REL,
+     'if (typeof cc !== "number" || !isFinite(cc) || cc < 0) cc = 0;',
+     "cc = cc || 0;", "parity"),
+    ("S23_daily_sum_check_inverted", SUBMIT_JS_REL,
+     "if (sumRequests !== t.requests) {",
+     "if (sumRequests === t.requests) {", "contract"),
+    ("S24_daily_empty_allowed", SUBMIT_JS_REL,
+     "if (body.daily.length === 0) {",
+     "if (false) {", "contract"),
 ]
 
 

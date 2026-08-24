@@ -198,7 +198,13 @@ function validateSanity(body) {
     }
   }
 
+  if (body.daily.length === 0) {
+    errors.push("daily: must have at least 1 entry");
+  }
   const seenDates = new Set();
+  let sumRequests = 0;
+  let sumLosses = 0;
+  let sumWasted = 0;
   body.daily.forEach(function (entry, i) {
     const day = parseDay(entry.date);
     if (entry.losses > entry.requests) {
@@ -211,7 +217,23 @@ function validateSanity(body) {
       errors.push("daily[" + i + "].date duplicates " + entry.date);
     }
     seenDates.add(entry.date);
+    sumRequests += entry.requests;
+    sumLosses += entry.losses;
+    sumWasted += entry.wasted_tokens;
   });
+  // daily must sum to totals — blocks inflating totals alone (codex review).
+  if (sumRequests !== t.requests) {
+    errors.push("daily requests sum " + sumRequests +
+      " != totals.requests " + t.requests);
+  }
+  if (sumLosses !== t.in_ttl_losses) {
+    errors.push("daily losses sum " + sumLosses +
+      " != totals.in_ttl_losses " + t.in_ttl_losses);
+  }
+  if (sumWasted !== t.wasted_tokens) {
+    errors.push("daily wasted_tokens sum " + sumWasted +
+      " != totals.wasted_tokens " + t.wasted_tokens);
+  }
   return errors;
 }
 
@@ -232,12 +254,19 @@ async function checkRateLimit(request, env) {
   const now = new Date();
   const hourKey = now.toISOString().slice(0, 13).replace(/[-T]/g, ""); // yyyymmddhh (UTC)
   const key = "rl:" + ipHash + ":" + hourKey;
+  const retryAfter = 3600 - (Math.floor(now.getTime() / 1000) % 3600);
   const count = parseInt((await env.RATE_LIMIT.get(key)) || "0", 10) || 0;
   if (count >= RATE_LIMIT_MAX) {
-    const secondsIntoHour = Math.floor(now.getTime() / 1000) % 3600;
-    return { allowed: false, retryAfter: 3600 - secondsIntoHour };
+    return { allowed: false, retryAfter: retryAfter };
   }
   await env.RATE_LIMIT.put(key, String(count + 1), { expirationTtl: RATE_LIMIT_TTL_SECONDS });
+  // KV read-modify-write is not atomic; bursts can exceed the limit. Accepted
+  // limitation (defense = schema + public revert). Narrowed by post-increment
+  // re-check.
+  const recheck = parseInt((await env.RATE_LIMIT.get(key)) || "0", 10) || 0;
+  if (recheck > RATE_LIMIT_MAX) {
+    return { allowed: false, retryAfter: retryAfter };
+  }
   return { allowed: true };
 }
 

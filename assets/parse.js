@@ -16,8 +16,8 @@
  *   - wasted_tokens = cache_creation_input_tokens of each in-TTL-lost request.
  *
  * Input : array of {name, text} — one entry per *.jsonl file (name may carry
- *         a relative path; a "subagents" path segment marks a subagent file,
- *         as does any record with isSidechain === true).
+ *         a relative path; a "subagents" path segment marks a subagent file —
+ *         path-only classification, same as the CLI SSOT).
  * Output: {totals, daily, events} — totals/daily follow 04_DATA_MODEL.md;
  *         events is render-only detail that never leaves the browser.
  *
@@ -104,7 +104,6 @@
       var name = typeof file.name === "string" ? file.name : "";
       var text = typeof file.text === "string" ? file.text : "";
       var isSubByName = /(^|[\\/])subagents[\\/]/.test(name);
-      var sawSidechain = false;
       // Per-file map (CLI parity: reason back-fill is same-file only).
       var byrid = new Map();
 
@@ -118,7 +117,6 @@
           return;
         }
         if (!isPlainObject(o)) return;
-        if (o.isSidechain === true) sawSidechain = true;
         var msg = isPlainObject(o.message) ? o.message : {};
         var u = msg.usage;
         if (!isPlainObject(u)) return;
@@ -141,7 +139,10 @@
         seen.add(rid);
         var ts = parseTimestamp(typeof o.timestamp === "string" ? o.timestamp : "");
         if (!ts) return;
-        var cc = u.cache_creation_input_tokens || 0;
+        // Coerce to a finite non-negative number — a hostile JSONL could
+        // smuggle a string here and ride it into the DOM (XSS vector).
+        var cc = u.cache_creation_input_tokens;
+        if (typeof cc !== "number" || !isFinite(cc) || cc < 0) cc = 0;
         byrid.set(rid, {
           rid: rid,
           epochMs: ts.epochMs,
@@ -152,7 +153,7 @@
         });
       });
 
-      var isSub = isSubByName || sawSidechain;
+      var isSub = isSubByName;
       var reqs = Array.from(byrid.values()).sort(function (a, b) {
         return (a.epochMs - b.epochMs) || (a.cc - b.cc);
       });

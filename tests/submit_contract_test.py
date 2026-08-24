@@ -14,6 +14,8 @@ drives the contract cases:
   case6  4th submit, same IP     -> 429 with retry_after
   case7  sha conflict (409) once -> re-GET + one retry -> 200
   case8  GitHub 5xx              -> 502 storage (single PUT, no retry)
+  case9  daily []                -> 400 (inflated totals AND all-zero totals)
+  case10 daily sums != totals    -> 400 (requests / losses / wasted each)
 
 All pass -> prints CONTRACT_OK as the last line, exit 0.
 Contract violation -> exit 1. Setup/infra failure -> exit 2 (the mutation
@@ -431,6 +433,36 @@ def run_cases(xff_ip):
     status, data = post(valid_payload(nickname="a" * 21))
     expect_schema_400("case5", status, data)
     print("PASS case5 nickname 21 chars -> 400 schema")
+
+    # -- case9: daily [] => 400 ----------------------------------------------
+    # 9a: inflated totals with no daily backing them.
+    status, data = post(valid_payload(daily=[]))
+    expect_schema_400("case9a", status, data)
+    check(any("daily" in str(d) for d in data["detail"]),
+          "case9a: detail does not mention daily: %r" % (data["detail"],))
+    # 9b: all-zero totals — sums match (0=0), only the min-entries rule fires.
+    status, data = post(valid_payload(
+        daily=[],
+        totals={"requests": 0, "in_ttl_losses": 0,
+                "iron_losses": 0, "wasted_tokens": 0}))
+    expect_schema_400("case9b", status, data)
+    check(any("at least 1" in str(d) for d in data["detail"]),
+          "case9b: detail misses the min-entries rule: %r" % (data["detail"],))
+    print("PASS case9 daily [] -> 400 schema (inflated + all-zero totals)")
+
+    # -- case10: daily sums != totals => 400 (each equality separately) ------
+    for field, total_key in (("requests", "totals.requests"),
+                             ("losses", "totals.in_ttl_losses"),
+                             ("wasted_tokens", "totals.wasted_tokens")):
+        bad = valid_payload()
+        bad["daily"] = [dict(bad["daily"][0]), dict(bad["daily"][1])]
+        bad["daily"][0][field] += 1
+        status, data = post(bad)
+        expect_schema_400("case10 " + field, status, data)
+        check(any(total_key in str(d) for d in data["detail"]),
+              "case10 %s: detail does not name %s: %r"
+              % (field, total_key, data["detail"]))
+    print("PASS case10 daily sums != totals -> 400 schema (3 fields)")
 
     # (none of the 400 cases may have reached storage or the rate limiter)
     with MOCK.lock:

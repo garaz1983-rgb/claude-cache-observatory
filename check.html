@@ -435,8 +435,9 @@ async function processList(list){
   setProgress("Done — " + files.length + " files · " + fmtInt(result.totals.requests) + " requests scanned.");
   LAST = { result: result, census: census };
   buildEvtMap(result.events);
-  renderResults();
+  // Unhide BEFORE drawing: canvases in a hidden section have zero width.
   document.getElementById("results").hidden = false;
+  renderResults();
   document.getElementById("results").scrollIntoView({ behavior: "smooth" });
 }
 
