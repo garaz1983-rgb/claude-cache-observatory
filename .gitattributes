@@ -1,0 +1,4 @@
+# No EOL conversion: the mutation harness restores parse.js via
+# `git checkout --` and byte-compares against the pre-mutation source;
+# autocrlf rewriting would break that roundtrip.
+* -text
