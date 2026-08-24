@@ -49,15 +49,27 @@ The check page's paste fallback consumes the CLI's `--json` output (`script_vers
 
 Saving is opt-in: it happens only after the user presses the save button **and** confirms the modal. The confirmation is a custom modal, never `confirm()`/`alert()` (theme, translation, and headless testability).
 
+A stored run keeps the **engine's own UTC buckets**. It must never freeze a local date at save time: the machine's timezone can change and the same profile can be read elsewhere, so the reader's clock is applied on the way to the screen instead (see below).
+
+## Which clock a date is on
+
+Two clocks, deliberately:
+
+- **The engines, the submission payload and the public observatory are UTC.** `parse.js` and `check_cache_loss.py` bucket by the record's own offset, which is UTC for the `...Z` stamps Claude Code writes. Submissions from many countries are summed day by day, so every one of them has to be cut the same way; cutting each by its own local date would scramble the fleet's daily totals. `daily[].date`, `period_start` and `period_end` are UTC and must stay that way — the contract, the existing dataset and `tests/submit_contract_test.py` all depend on it.
+- **The personal screens (`check.html`, `ko/check.html`) are the reader's own timezone.** The heatmap's day rows and hour columns, the per-event popover, the daily trend and the observed period are re-cut by `assets/localtime.js`, which is display-only: it moves whole records between buckets and never re-decides anything. Judgment is the idle gap between requests and cannot depend on a timezone.
+
+**Convert in the display layer only.** If a conversion ever needs to reach into `parse.js` or `check_cache_loss.py`, the design is wrong. `tests/localtime_test.py` holds the two invariants that make the split safe: every column sums to the same total after re-bucketing, and at offset 0 the output is byte-identical to the pre-M12 code. Both pages state on screen which clock they are on, and the payload preview says plainly that it is UTC while the screen above it is not.
+
 ## Running the tests
 
-All five must exit 0 before a push. Requirements: Python 3.8+, Node (for `parse.js` / `store.js` runs), and `npx` (the contract test boots `wrangler pages dev` locally; first run downloads wrangler).
+All six must exit 0 before a push. Requirements: Python 3.8+, Node (for `parse.js` / `store.js` / `localtime.js` runs), and `npx` (the contract test boots `wrangler pages dev` locally; first run downloads wrangler).
 
 ```
 python tests/parity_check.py          # parse.js vs CLI on the same fixtures
 python tests/submit_contract_test.py  # /api/submit contract (mock GitHub, local KV)
 python tests/range_filter_test.py     # submission period picker (filterRange/clampRange/daySpan)
 python tests/storage_test.py          # local save: round trip, forbidden fields, increment, overlap
+python tests/localtime_test.py        # local-time view: sum preservation, boundary days, offset-0 no-op
 python tests/mutation_run.py          # mutation harness over both engines
 ```
 

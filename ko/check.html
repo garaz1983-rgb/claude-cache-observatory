@@ -96,6 +96,13 @@ details.paste .hint{font-size:.76rem; color:var(--muted)}
 .kpi .val{font-family:ui-monospace,'Cascadia Mono',Consolas,monospace; font-variant-numeric:tabular-nums; font-size:1.45rem; font-weight:600; line-height:1.2}
 .kpi .note{font-size:.78rem; color:var(--muted); margin-top:4px}
 .kpi.crit .val{color:var(--crit)}
+/* M12: 개인 화면은 읽는 사람의 시계로, 제출은 UTC로 간다. 두 사실 모두 날짜
+   경계에서 뒤늦게 눈치채게 두지 않고 화면에 적는다. 화면 쪽은 KPI 아래
+   .tz-note, JSON 쪽은 전송 미리보기 안의 .tz-mismatch. */
+.tz-note{margin:10px 0 0; font-size:.8rem; color:var(--muted)}
+.tz-note b{color:var(--ink)}
+details.preview .tz-mismatch{margin:0; padding:9px 12px 11px; font-size:.78rem; line-height:1.6; color:var(--muted); border-top:1px solid var(--line)}
+details.preview .tz-mismatch b{color:var(--ink)}
 canvas{display:block; width:100%}
 .legend{display:flex; gap:18px; flex-wrap:wrap; margin-top:10px; font-size:.78rem; color:var(--muted)}
 .legend span{display:inline-flex; align-items:center; gap:6px}
@@ -271,7 +278,7 @@ a{color:inherit}
 <section id="results" hidden>
   <h2>2 · 내 결과</h2>
   <p class="desc">TTL-strict 판정 v2.1: 캐시 TTL 안쪽에서 일어난 유실만 집계하고, 정당한 만료는 제외한다.</p>
-  <div class="notice" id="pasteSrcNote" hidden>붙여넣은 CLI JSON(집계 전용)으로 렌더되어 시간대별 히트맵은 표시되지 않는다. 공유를 포함한 나머지 기능은 동일하게 동작한다.</div>
+  <div class="notice" id="pasteSrcNote" hidden>붙여넣은 CLI JSON(집계 전용)으로 렌더되어 시간대별 히트맵은 표시되지 않고, 날짜도 CLI가 자른 그대로 <b>UTC 달력 기준</b>이다. 요청 단위 정보가 없어 이 페이지가 현지 시각으로 다시 자를 수 없기 때문이다. 공유를 포함한 나머지 기능은 동일하게 동작한다.</div>
   <div class="notice" id="storeRestored" hidden></div>
 
   <div class="kpis">
@@ -281,6 +288,7 @@ a{color:inherit}
     <div class="kpi crit"><div class="label">재과금 토큰</div><div class="val" id="kTokens">–</div><div class="note">다시 과금된 캐시 생성 토큰</div></div>
     <div class="kpi"><div class="label">유실률</div><div class="val" id="kRate">–</div><div class="note">in-TTL 유실 / 요청</div></div>
   </div>
+  <p class="tz-note" id="tzNote"></p>
 
   <div class="card" style="margin-top:14px">
     <canvas id="daily" height="260"></canvas>
@@ -293,7 +301,7 @@ a{color:inherit}
 
   <section id="hmSection">
     <h2>일 × 1시간 히트맵: 사용량 대비 유실</h2>
-    <p class="desc">바탕 회청색 = 그 시간의 요청량(진할수록 많이 사용). 빨강 숫자 = in-TTL 유실 건수. 이렇게 보면 "안 써서 0"과 "많이 썼는데도 0"이 구분된다. <b>빨간 셀을 클릭</b>하면 건별 상세(시각·유휴 간격·토큰)가 셀 옆 팝오버로 열린다. 이 상세도 브라우저 밖으로 나가지 않는다.</p>
+    <p class="desc">바탕 회청색 = 그 시간의 요청량(진할수록 많이 사용). 빨강 숫자 = in-TTL 유실 건수. 이렇게 보면 "안 써서 0"과 "많이 썼는데도 0"이 구분된다. <b>빨간 셀을 클릭</b>하면 건별 상세(시각·유휴 간격·토큰)가 셀 옆 팝오버로 열린다. 이 상세도 브라우저 밖으로 나가지 않는다. <b>날짜 행과 시각 열은 UTC가 아니라 이 브라우저가 있는 곳의 시계</b>다. 여기 08시는 지금 앉아 있는 곳의 08시다.</p>
     <div class="card hm-scroll">
       <table class="hm" id="heatmap"></table>
       <div class="legend">
@@ -321,7 +329,7 @@ a{color:inherit}
 
   <div class="store-box" id="storeBox">
     <h3>이 결과를 이 브라우저에 남기기 (선택)</h3>
-    <p class="lead">자동 저장은 없다. 버튼을 누르면 총계·일별 집계·시간대별 요청 수가 <b>이 컴퓨터의 브라우저 저장 공간</b>에 기록된다. 서버로는 가지 않고, "저장된 기록 지우기"를 누르면 즉시 지워진다. 저장해 두면 다음 진단이 마지막 제출 다음 날부터 시작되므로 이미 보낸 기간을 다시 보내지 않아도 된다. <b>공용·공유 컴퓨터에서는 저장하지 말 것.</b></p>
+    <p class="lead">자동 저장은 없다. 버튼을 누르면 총계·일별 집계·시간대별 요청 수가 <b>이 컴퓨터의 브라우저 저장 공간</b>에 기록된다. 서버로는 가지 않고, "저장된 기록 지우기"를 누르면 즉시 지워진다. 저장해 두면 다음 진단이 마지막 제출 다음 날부터 시작되므로 이미 보낸 기간을 다시 보내지 않아도 된다. 이 카드에 적히는 기간은 모두 <b>UTC</b> 기준으로, 위 그래프가 아니라 제출 카드와 같은 기준이다. <b>공용·공유 컴퓨터에서는 저장하지 말 것.</b></p>
     <p class="store-state off" id="storeState">이 브라우저에 저장된 기록이 없다.</p>
     <div class="store-actions">
       <button id="storeSaveBtn" type="button" class="go">이 브라우저에 저장</button>
@@ -332,7 +340,7 @@ a{color:inherit}
 
   <section id="submitSection">
     <h2>3 · 관측소에 집계 공유하기 (선택)</h2>
-    <p class="desc">전송되는 것은 아래 JSON <b>전문 그대로</b>다. 기간·총계·일별 카운트뿐. 로그·파일 경로·세션 내용·건별 상세는 절대 전송되지 않는다. 공유 기간을 좁히면 총계도 그 기간으로 다시 계산된다.</p>
+    <p class="desc">전송되는 것은 아래 JSON <b>전문 그대로</b>다. 기간·총계·일별 카운트뿐. 로그·파일 경로·세션 내용·건별 상세는 절대 전송되지 않는다. 공유 기간을 좁히면 총계도 그 기간으로 다시 계산된다. <b>이 카드의 날짜는 위 화면과 달리 UTC 기준</b>이다. 여러 나라의 제출을 날짜별로 더하는 자리라, 각자의 현지 날짜로 자르면 전체 일별 합계가 어긋나기 때문이다. 아래 기간 선택도 실제로 전송될 UTC 날짜를 보여 준다.</p>
     <div class="card">
       <div class="range-box" id="subRange" hidden>
         <div class="range-head">공유 기간</div>
@@ -394,6 +402,7 @@ a{color:inherit}
       </div>
       <details class="preview">
         <summary>전송될 JSON 전문 보기</summary>
+        <p class="tz-mismatch" id="tzPayloadNote"></p>
         <pre id="subPreview"></pre>
       </details>
       <div class="submit-actions">
@@ -431,11 +440,17 @@ a{color:inherit}
 <script src="../assets/parse.js"></script>
 <script src="../assets/store.js"></script>
 <script src="../assets/charts.js"></script>
+<script src="../assets/localtime.js"></script>
 <script>
 "use strict";
 
 var LAST = null;     // {result, census, source_version}, census null = 붙여넣은 CLI JSON(시간별 데이터 없음)
-var EVT_MAP = null;  // "date#hour" -> [events]
+/* M12: LAST는 엔진이 낸 그대로다. UTC 버킷, 제출이 싣는 바로 그 숫자.
+   VIEW는 같은 스캔을 이 브라우저의 시계로 다시 자른 것이고 그리기 전용이다
+   (assets/localtime.js). VIEW로 payload를 만들지 않고, LAST로 날짜 행을
+   그리지 않는다. */
+var VIEW = null;     // {localized, daily, census, evtMap, period, utcPeriod}
+var ZONE = ObservatoryLocalTime.detect("ko-KR");
 
 function fmtInt(n){ return n.toLocaleString("ko-KR"); }
 function fmtTok(n){
@@ -448,7 +463,10 @@ function mdLabel(iso){ return (+iso.slice(5,7)) + "/" + (+iso.slice(8,10)); }
 function hh(h){ return String(h).padStart(2, "0"); }
 
 /* 타임스탬프 처리는 assets/parse.js와 동일(레코드 자체의 UTC 오프셋 유지,
-   오프셋 없는 값은 UTC 고정). 카운팅 전용, 판정 로직 아님. */
+   오프셋 없는 값은 UTC 고정). 카운팅 전용, 판정 로직 아님.
+   여기는 의도적으로 엔진의 격자에 머문다. 이 census가 만드는 격자는 일별
+   집계와 store.js 저장분이 쓰는 UTC 일 x 시각 격자 그대로이고, 읽는 사람의
+   시계로 옮기는 일은 그 뒤 assets/localtime.js에서 한다. */
 function tsParse(ts){
   if(typeof ts !== "string" || ts === "") return null;
   var offsetMinutes = 0, hasOffset = false;
@@ -614,7 +632,6 @@ async function processList(list){
   }
   setProgress("완료: 파일 " + files.length + "개 · 요청 " + fmtInt(result.totals.requests) + "건 스캔.");
   LAST = { result: result, census: census, source_version: null };
-  buildEvtMap(result.events);
   document.getElementById("pasteSrcNote").hidden = true;
   document.getElementById("storeRestored").hidden = true;
   // Unhide BEFORE drawing: canvases in a hidden section have zero width.
@@ -722,7 +739,6 @@ document.getElementById("pasteBtn").addEventListener("click", function(){
   document.getElementById("singleFileNote").hidden = true;
   setProgress("붙여넣은 CLI JSON 렌더 완료: 요청 " + fmtInt(v.result.totals.requests) + "건, " + v.result.daily.length + "일.");
   LAST = { result: v.result, census: null, source_version: v.version };
-  buildEvtMap(v.result.events);
   document.getElementById("storeRestored").hidden = true;
   document.getElementById("pasteSrcNote").hidden = false;
   document.getElementById("results").hidden = false;
@@ -730,27 +746,52 @@ document.getElementById("pasteBtn").addEventListener("click", function(){
   document.getElementById("results").scrollIntoView({ behavior: "smooth" });
 });
 
-function buildEvtMap(events){
-  EVT_MAP = new Map();
-  events.forEach(function(e){
-    if(e.classification !== "in_ttl" && e.classification !== "iron") return;
-    var dh = tsDateHour(e.timestamp);
-    if(!dh) return;
-    var key = dh.date + "#" + dh.hour;
-    if(!EVT_MAP.has(key)) EVT_MAP.set(key, []);
-    EVT_MAP.get(key).push({ time: dh.timeStr, gapMin: e.gap_seconds / 60, tokens: e.cache_creation_tokens, sub: e.is_subagent });
-  });
-  EVT_MAP.forEach(function(list){ list.sort(function(a, b){ return a.time < b.time ? -1 : 1; }); });
+/* 지금 스캔을 이 브라우저의 시계로 다시 자른다. 그리기 전용이고, LAST는
+   엔진이 낸 그대로 남는다. 그래서 LAST로 만드는 제출 payload는 계약이
+   요구하는 UTC 날짜를 그대로 싣는다. */
+function rebuildView(){
+  VIEW = LAST ? ObservatoryLocalTime.localize(LAST.result, LAST.census) : null;
+}
+
+function periodText(p){
+  if(!p) return "–";
+  return p.start === p.end ? p.start : p.start + " ~ " + p.end;
+}
+
+/* 어느 시계로 읽는 화면인지 먼저 적는다. 하루 어긋난 행을 보고 역산하게 두지
+   않는다. 표기는 페이지 언어에서 추측하지 않고 이 기기에서 읽어 온다. */
+function updateTzNote(){
+  var el = document.getElementById("tzNote");
+  if(!VIEW || !VIEW.period){
+    el.textContent = "";
+    return;
+  }
+  var head = "관측 기간 " + periodText(VIEW.period) + ". ";
+  if(!VIEW.localized){
+    el.textContent = head + "CLI가 자른 그대로의 UTC 달력 날짜다. 이 소스에는 일별 집계만 있어 " +
+      "현지 시각(" + ZONE.label + ")으로 다시 자를 요청 단위 정보가 남아 있지 않다.";
+    return;
+  }
+  if(ZONE.isUtc){
+    el.textContent = head + "아래 그래프·히트맵·건별 시각은 이 브라우저의 시계인 " + ZONE.label +
+      " 기준이다. 3번 카드의 제출도 같은 시계로 자르므로, 보는 날짜와 보내는 날짜가 일치한다.";
+    return;
+  }
+  el.textContent = head + "아래 그래프·히트맵·건별 시각은 이 브라우저에서 읽어 온 현지 시각 " +
+    ZONE.label + " 기준이다. 3번 카드의 제출은 UTC로 자르므로, 자정 근처의 요청은 그쪽에서 " +
+    "다른 날짜에 들어갈 수 있다.";
 }
 
 function renderResults(){
   if(!LAST) return;
+  rebuildView();
   var t = LAST.result.totals;
   document.getElementById("kRequests").textContent = fmtInt(t.requests);
   document.getElementById("kLosses").textContent = fmtInt(t.in_ttl_losses);
   document.getElementById("kIron").textContent = fmtInt(t.iron_losses);
   document.getElementById("kTokens").textContent = fmtTok(t.wasted_tokens);
   document.getElementById("kRate").textContent = t.requests > 0 ? (100 * t.in_ttl_losses / t.requests).toFixed(2) + "%" : "–";
+  updateTzNote();
   drawCharts();
   setupRange();
   updateSubmitCard();
@@ -884,11 +925,36 @@ function submitMsg(kind, text, links){
   return el;
 }
 
+/* 이 미리보기의 신뢰는 "보이는 것이 곧 보내는 것"에서 나온다. 위 화면이 읽는
+   사람의 시계이고 아래 payload가 UTC가 된 이상, 그 차이를 말해 두지 않으면
+   경계일에 조용히 어긋나는 날짜가 신뢰 장치를 거짓말의 증거로 바꾼다. */
+function updateTzPayloadNote(){
+  var el = document.getElementById("tzPayloadNote");
+  if(!VIEW || !VIEW.localized){
+    el.textContent = "아래 날짜는 이 소스가 만든 그대로의 UTC 달력 날짜이고, 그대로 전송된다.";
+    return;
+  }
+  if(ZONE.isUtc){
+    el.textContent = "이 브라우저의 시간대는 " + ZONE.label + "로 payload와 같은 기준이다. " +
+      "아래 모든 날짜가 위 화면에서 본 날짜와 같다.";
+    return;
+  }
+  var text = "위 화면과 이 JSON은 서로 다른 시계로 잘려 있다. 위는 " + ZONE.label + " 기준이고, " +
+    "아래의 period_start·period_end와 daily의 모든 날짜는 UTC 기준이다. 요청 수와 총계는 " +
+    "어느 쪽이든 똑같지만, 자정 근처의 요청은 화면에서 본 날짜와 여기의 날짜가 하루 다를 수 있다.";
+  var a = periodText(VIEW.period), b = periodText(VIEW.utcPeriod);
+  if(VIEW.utcPeriod && a !== b){
+    text += " 이번 스캔 전체로 보면 화면은 " + a + ", UTC 날짜로는 " + b + "다.";
+  }
+  el.textContent = text;
+}
+
 function updateSubmitCard(){
   var payload = buildSubmitPayload();
   var pre = document.getElementById("subPreview");
   var btn = document.getElementById("subBtn");
   var hint = document.getElementById("subRangeHint");
+  updateTzPayloadNote();
   if(!payload){
     pre.textContent = "(아직 파싱된 결과 없음)";
     hint.textContent = "";
@@ -906,7 +972,7 @@ function updateSubmitCard(){
   if(span === null) span = payload.daily.length;
   var over = span > MAX_PERIOD_DAYS || payload.daily.length > MAX_PERIOD_DAYS;
   if(RANGE_READY){
-    hint.textContent = "선택: " + payload.period_start + " ~ " + payload.period_end +
+    hint.textContent = "선택(UTC 날짜): " + payload.period_start + " ~ " + payload.period_end +
       " · " + span + "일 (기록 있는 날 " + payload.daily.length + "일) / 최대 " +
       MAX_PERIOD_DAYS + "일";
     hint.className = over ? "range-hint over" : "range-hint";
@@ -1021,6 +1087,11 @@ document.getElementById("subBtn").addEventListener("click", async function(){
    사이트 데이터 차단 환경이면 저장 기능만 꺼지고 진단은 그대로 동작한다. */
 var Store = window.CacheObservatoryStore || null;
 var STORE_OK = false;
+/* 저장이 꺼진 이유에 따라 안내가 달라야 한다. "blocked"는 프라이빗 창이거나
+   사이트 데이터 차단이라 아예 못 쓰는 경우이고, "full"은 store.js의 축소 재시도
+   뒤에도 거부된 용량 초과다. 후자에게 저장을 못 쓴다고 말하면 문제가 아닌
+   설정을 고치러 보내는 셈이 된다. */
+var STORE_FAIL = "blocked";
 var STATE = null;   // {v, runs, submissions} 이 브라우저의 기억
 var INC = null;     // 현재 스캔에 대한 증분 구간 제안
 
@@ -1095,8 +1166,12 @@ function updateStoreCard(){
   var cmp = document.getElementById("storeCmp");
   if(!STORE_OK){
     state.className = "store-state off";
-    state.textContent = "이 브라우저가 로컬 저장을 허용하지 않는다(프라이빗 창이거나 사이트 데이터 차단). " +
-      "저장 기능만 꺼진 상태이고 위 진단은 그대로 동작한다. 탭을 닫으면 결과가 사라진다.";
+    state.textContent = STORE_FAIL === "full"
+      ? "이 사이트에 배정된 브라우저 저장 공간이 가득 차서 결과를 저장하지 못했다. " +
+        "저장 기능 자체는 살아 있고, 브라우저 설정에서 이 사이트의 사이트 데이터를 비워 공간을 " +
+        "확보하면 저장된다. 위 진단은 그대로 동작하고, 탭을 닫으면 결과가 사라진다."
+      : "이 브라우저가 로컬 저장을 허용하지 않는다(프라이빗 창이거나 사이트 데이터 차단). " +
+        "저장 기능만 꺼진 상태이고 위 진단은 그대로 동작한다. 탭을 닫으면 결과가 사라진다.";
     saveBtn.disabled = true;
     clearBtn.hidden = true;
     cmp.hidden = true;
@@ -1170,7 +1245,13 @@ function closeSaveModal(){
 }
 modalEl().addEventListener("mousedown", function(ev){
   // 바깥(백드롭) 클릭만 닫는다. 다이얼로그 안 클릭은 닫으면 안 된다.
-  if(ev.target === modalEl()) closeSaveModal();
+  if(ev.target !== modalEl()) return;
+  // mousedown의 기본 동작이 누른 대상으로 포커스를 옮기고, 그 동작은 이
+  // 핸들러보다 뒤에 실행된다. preventDefault가 없으면 closeSaveModal()이
+  // 저장 버튼으로 돌려놓은 포커스를 곧바로 빼앗아 키보드 사용자가 문서
+  // 맨 위로 떨어진다.
+  ev.preventDefault();
+  closeSaveModal();
 });
 document.addEventListener("keydown", function(ev){
   if(!modalOpen()) return;
@@ -1211,7 +1292,10 @@ function doSave(){
   if(Store.save(next)){
     STATE = Store.load() || next;
   } else {
-    // 쓰기 실패(용량 초과, 세션 도중 저장 권한 회수). 저장된 것처럼 믿게 두지 않는다.
+    // 쓰기 실패. 저장된 것처럼 믿게 두지 않고, 어떤 실패인지까지 말한다.
+    // store.js가 이미 건별 상세를 빼고 census까지 뺀 채로 재시도했으므로,
+    // 프로브에는 응답하는 저장소가 그래도 거부했다면 차단이 아니라 용량 초과다.
+    STORE_FAIL = Store.available() ? "full" : "blocked";
     STORE_OK = false;
   }
   updateStoreCard();
@@ -1246,7 +1330,9 @@ function restoreRun(run){
     census: h.events_saved ? h.census : null,
     source_version: run.script_version || null
   };
-  EVT_MAP = h.evtMap;
+  // 저장분은 엔진의 UTC 버킷에 그대로 묶여 있고, 읽는 사람의 시계는 화면으로
+  // 나가는 길목에서 적용된다(renderResults -> rebuildView). 기기를 옮기거나
+  // 시간대가 바뀌면 저장 시점의 현지 날짜가 남지 않고 다시 잘린다.
   var note = document.getElementById("storeRestored");
   note.hidden = false;
   note.textContent = "이 브라우저에 저장된 결과를 복원했다(저장 시각 " + fmtWhen(run.saved_at) +
@@ -1287,7 +1373,11 @@ function recordSubmission(payload, data){
 
 function drawCharts(){
   if(!LAST) return;
-  var days = LAST.result.daily.map(function(d){
+  if(!VIEW) rebuildView();
+  // 두 그래프 모두 현지 시각으로 다시 자른 VIEW를 읽는다. 일별 막대도 같은
+  // 건들로 다시 집계하므로, 현지 자정 직후의 유실은 실제로 겪은 날짜로 옮겨
+  // 간다. 위 총계는 이 이동으로 바뀌지 않는다.
+  var days = VIEW.daily.map(function(d){
     return { label: mdLabel(d.date), count: d.losses, pct: d.requests > 0 ? 100 * d.losses / d.requests : 0 };
   });
   if(days.length){
@@ -1295,24 +1385,24 @@ function drawCharts(){
   }
   // 붙여넣은 CLI JSON은 일별 집계뿐이라 시간별 히트맵을 그릴 수 없다.
   var hmSection = document.getElementById("hmSection");
-  if(!LAST.census){
+  if(!VIEW.census){
     hmSection.hidden = true;
     return;
   }
   hmSection.hidden = false;
   var zeros = new Array(24).fill(0);
-  var dates = Array.from(LAST.census.keys()).sort();
+  var dates = Array.from(VIEW.census.keys()).sort();
   var rows = dates.map(function(date){
     var losses = zeros.slice();
     for(var h = 0; h < 24; h++){
-      var l = EVT_MAP.get(date + "#" + h);
+      var l = VIEW.evtMap.get(date + "#" + h);
       if(l) losses[h] = l.length;
     }
-    return { key: date, label: mdLabel(date), usage: LAST.census.get(date) || zeros, losses: losses };
+    return { key: date, label: mdLabel(date), usage: VIEW.census.get(date) || zeros, losses: losses };
   });
   ObservatoryCharts.renderUsageHeatmap(document.getElementById("heatmap"), rows, {
     cellTitle: function(row, hour, rq, v){
-      return row.key + " " + hh(hour) + ":00 · 요청 " + rq + "건 · 유실 " + v + "건";
+      return row.key + " " + hh(hour) + ":00 " + ZONE.offset + " · 요청 " + rq + "건 · 유실 " + v + "건";
     },
     onSelect: function(row, hour, td){ showEvents(row.key, hour, td); },
     onClear: function(){ hideEvents(); },
@@ -1353,14 +1443,14 @@ function placeEvtPanel(p, td){
 
 function showEvents(date, hour, td){
   var p = document.getElementById("evtPanel");
-  var rows = EVT_MAP.get(date + "#" + hour) || [];
+  var rows = (VIEW && VIEW.evtMap.get(date + "#" + hour)) || [];
   if(!rows.length){ hideEvents(); return; }
   var tot = rows.reduce(function(a, e){ return a + e.tokens; }, 0);
-  var html = "<div class='evt-head'><h3>" + date + " " + hh(hour) + "시 · 유실 " + rows.length +
+  var html = "<div class='evt-head'><h3>" + date + " " + hh(hour) + "시 " + ZONE.offset + " · 유실 " + rows.length +
     "건 · 재과금 " + (tot / 1e6).toFixed(2) + "M 토큰 " +
     "<span style='font-weight:400;color:var(--muted)'>(닫기: ×, ESC, 바깥 클릭, 셀 다시 클릭)</span></h3>" +
     "<button type='button' class='evt-close' aria-label='상세 닫기'>×</button></div>";
-  html += "<table><tr><th>시각</th><th>직전 요청과의 간격</th><th>재과금 토큰</th><th>세션</th></tr>";
+  html += "<table><tr><th>시각(" + ZONE.offset + ")</th><th>직전 요청과의 간격</th><th>재과금 토큰</th><th>세션</th></tr>";
   rows.forEach(function(e){
     html += "<tr><td>" + e.time + "</td><td>" + e.gapMin.toFixed(1) + "분</td><td>" +
       e.tokens.toLocaleString("ko-KR") + "</td><td>" + (e.sub ? "서브에이전트" : "메인") + "</td></tr>";

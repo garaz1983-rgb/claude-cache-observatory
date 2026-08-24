@@ -548,8 +548,14 @@
   /* Rebuild the render-side shapes from a stored run.
      - census: Map(date -> usage[24]), what drawCharts() expects
      - evtMap: Map("date#hour" -> [{time, gapMin, tokens, sub}])
-     - events: the minimal {date, classification} rows filterRange() reads, so
-       a restored run can still recount iron losses for a narrowed window. */
+     - events: the {date, classification} rows filterRange() reads so a restored
+       run can still recount iron losses for a narrowed window, carrying the
+       stored hour, clock time, gap, tokens and main/subagent flag alongside.
+       Those extra fields are what lets M12 re-cut a restored run into the
+       reader's own timezone at DISPLAY time (assets/localtime.js) instead of
+       freezing a local date into storage, and they are also what makes saving
+       a restored run keep its per-event detail instead of silently dropping it.
+       Nothing new is written to storage: these are the fields already stored. */
   function hydrate(run) {
     if (!isPlainObject(run)) return null;
     var census = null;
@@ -568,6 +574,11 @@
         });
         events.push({
           date: e.date,
+          hour: e.hour,
+          time: e.time,
+          gap_min: e.gap_min,
+          tokens: e.tokens,
+          main: e.main,
           classification: e.gap_min < IRON_MINUTES ? "iron" : "in_ttl"
         });
       });

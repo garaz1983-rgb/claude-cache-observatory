@@ -96,6 +96,14 @@ details.paste .hint{font-size:.76rem; color:var(--muted)}
 .kpi .val{font-family:ui-monospace,'Cascadia Mono',Consolas,monospace; font-variant-numeric:tabular-nums; font-size:1.45rem; font-weight:600; line-height:1.2}
 .kpi .note{font-size:.78rem; color:var(--muted); margin-top:4px}
 .kpi.crit .val{color:var(--crit)}
+/* M12 — the personal screens read in the reader's own clock, the submission
+   stays UTC. Both facts are printed rather than left to be discovered at a day
+   boundary: .tz-note under the KPIs for the screen, .tz-mismatch inside the
+   payload preview for the JSON. */
+.tz-note{margin:10px 0 0; font-size:.8rem; color:var(--muted)}
+.tz-note b{color:var(--ink)}
+details.preview .tz-mismatch{margin:0; padding:9px 12px 11px; font-size:.78rem; line-height:1.55; color:var(--muted); border-top:1px solid var(--line)}
+details.preview .tz-mismatch b{color:var(--ink)}
 canvas{display:block; width:100%}
 .legend{display:flex; gap:18px; flex-wrap:wrap; margin-top:10px; font-size:.78rem; color:var(--muted)}
 .legend span{display:inline-flex; align-items:center; gap:6px}
@@ -274,7 +282,7 @@ a{color:inherit}
 <section id="results" hidden>
   <h2>2 · Your results</h2>
   <p class="desc">TTL-strict judgment v2.1: only losses inside the cache TTL are counted; legitimate expiries are excluded.</p>
-  <div class="notice" id="pasteSrcNote" hidden>Rendered from pasted CLI JSON (aggregates only), so the hour-level heatmap is not available. Everything else, including sharing, works the same.</div>
+  <div class="notice" id="pasteSrcNote" hidden>Rendered from pasted CLI JSON (aggregates only), so the hour-level heatmap is not available, and the dates stay as the CLI cut them: <b>UTC calendar days</b>. Without per-request detail this page cannot re-cut them into your own timezone. Everything else, including sharing, works the same.</div>
   <div class="notice" id="storeRestored" hidden></div>
 
   <div class="kpis">
@@ -284,6 +292,7 @@ a{color:inherit}
     <div class="kpi crit"><div class="label">Re-billed tokens</div><div class="val" id="kTokens">–</div><div class="note">cache writes charged again</div></div>
     <div class="kpi"><div class="label">Loss rate</div><div class="val" id="kRate">–</div><div class="note">in-TTL losses / requests</div></div>
   </div>
+  <p class="tz-note" id="tzNote"></p>
 
   <div class="card" style="margin-top:14px">
     <canvas id="daily" height="260"></canvas>
@@ -296,7 +305,7 @@ a{color:inherit}
 
   <section id="hmSection">
     <h2>Day × hour heatmap: losses against actual usage</h2>
-    <p class="desc">Background blue-grey = request volume that hour (darker = heavier use). Red with a number = in-TTL losses. This separates "zero because idle" from "zero despite heavy use". <b>Click a red cell</b> for per-event detail (time, idle gap, tokens) in a popover next to the cell; it stays in your browser.</p>
+    <p class="desc">Background blue-grey = request volume that hour (darker = heavier use). Red with a number = in-TTL losses. This separates "zero because idle" from "zero despite heavy use". <b>Click a red cell</b> for per-event detail (time, idle gap, tokens) in a popover next to the cell; it stays in your browser. <b>The day rows and the hour columns are your own local clock</b>, not UTC, so 08:00 here is 08:00 where you are sitting.</p>
     <div class="card hm-scroll">
       <table class="hm" id="heatmap"></table>
       <div class="legend">
@@ -324,7 +333,7 @@ a{color:inherit}
 
   <div class="store-box" id="storeBox">
     <h3>Keep this result in this browser (optional)</h3>
-    <p class="lead">Nothing is saved automatically. Pressing the button writes the totals, the daily rows and the hour-by-hour counts into <b>this browser's own storage on this computer</b>. It is never sent to a server, and “Clear saved results” deletes it immediately. It also lets the next run start the day after your last submission instead of repeating a period you already sent. <b>Do not save on a shared or public computer.</b></p>
+    <p class="lead">Nothing is saved automatically. Pressing the button writes the totals, the daily rows and the hour-by-hour counts into <b>this browser's own storage on this computer</b>. It is never sent to a server, and “Clear saved results” deletes it immediately. It also lets the next run start the day after your last submission instead of repeating a period you already sent. Every period named in this card is a <b>UTC</b> period, matching the submission card rather than the charts above. <b>Do not save on a shared or public computer.</b></p>
     <p class="store-state off" id="storeState">Nothing is saved in this browser yet.</p>
     <div class="store-actions">
       <button id="storeSaveBtn" type="button" class="go">Save to this browser</button>
@@ -335,7 +344,7 @@ a{color:inherit}
 
   <section id="submitSection">
     <h2>3 · Share your aggregate (optional)</h2>
-    <p class="desc">Exactly the JSON shown below is sent: period, totals and daily counts only. Never your logs, file paths, session contents or per-event details. Narrowing the shared period recomputes the totals for that window.</p>
+    <p class="desc">Exactly the JSON shown below is sent: period, totals and daily counts only. Never your logs, file paths, session contents or per-event details. Narrowing the shared period recomputes the totals for that window. <b>The days in this card are UTC days</b>, unlike the screens above, which are in your own timezone: submissions from many countries are summed day by day, and cutting each one by its own local date would scramble the fleet's daily totals. The dates in the picker below are therefore the UTC dates that will be sent.</p>
     <div class="card">
       <div class="range-box" id="subRange" hidden>
         <div class="range-head">Shared period</div>
@@ -397,6 +406,7 @@ a{color:inherit}
       </div>
       <details class="preview">
         <summary>Exact JSON that will be sent</summary>
+        <p class="tz-mismatch" id="tzPayloadNote"></p>
         <pre id="subPreview"></pre>
       </details>
       <div class="submit-actions">
@@ -435,11 +445,17 @@ a{color:inherit}
 <script src="assets/parse.js"></script>
 <script src="assets/store.js"></script>
 <script src="assets/charts.js"></script>
+<script src="assets/localtime.js"></script>
 <script>
 "use strict";
 
 var LAST = null;     // {result, census, source_version} — census null = pasted CLI JSON (no hourly data)
-var EVT_MAP = null;  // "date#hour" -> [events]
+/* M12: LAST stays exactly what the engine produced — UTC buckets, the same
+   numbers the submission carries. VIEW is the same scan re-cut into this
+   browser's own clock for drawing only (assets/localtime.js). Nothing reads
+   VIEW to build a payload, and nothing reads LAST to draw a date row. */
+var VIEW = null;     // {localized, daily, census, evtMap, period, utcPeriod}
+var ZONE = ObservatoryLocalTime.detect("en-US");
 
 function fmtInt(n){ return n.toLocaleString("en-US"); }
 function fmtTok(n){
@@ -452,7 +468,10 @@ function mdLabel(iso){ return (+iso.slice(5,7)) + "/" + (+iso.slice(8,10)); }
 function hh(h){ return String(h).padStart(2, "0"); }
 
 /* Timestamp handling mirrors assets/parse.js (record's own UTC offset;
-   offset-less timestamps anchored to UTC). Counting only — no judgment. */
+   offset-less timestamps anchored to UTC). Counting only — no judgment.
+   This stays on the ENGINE's grid on purpose: the census it builds is the
+   same UTC day x hour grid the daily rows use and store.js persists, and the
+   move into the reader's clock happens afterwards, in assets/localtime.js. */
 function tsParse(ts){
   if(typeof ts !== "string" || ts === "") return null;
   var offsetMinutes = 0, hasOffset = false;
@@ -618,7 +637,6 @@ async function processList(list){
   }
   setProgress("Done: " + files.length + " files · " + fmtInt(result.totals.requests) + " requests scanned.");
   LAST = { result: result, census: census, source_version: null };
-  buildEvtMap(result.events);
   document.getElementById("pasteSrcNote").hidden = true;
   document.getElementById("storeRestored").hidden = true;
   // Unhide BEFORE drawing: canvases in a hidden section have zero width.
@@ -727,7 +745,6 @@ document.getElementById("pasteBtn").addEventListener("click", function(){
   document.getElementById("singleFileNote").hidden = true;
   setProgress("Rendered from pasted CLI JSON: " + fmtInt(v.result.totals.requests) + " requests, " + v.result.daily.length + " days.");
   LAST = { result: v.result, census: null, source_version: v.version };
-  buildEvtMap(v.result.events);
   document.getElementById("storeRestored").hidden = true;
   document.getElementById("pasteSrcNote").hidden = false;
   document.getElementById("results").hidden = false;
@@ -735,27 +752,54 @@ document.getElementById("pasteBtn").addEventListener("click", function(){
   document.getElementById("results").scrollIntoView({ behavior: "smooth" });
 });
 
-function buildEvtMap(events){
-  EVT_MAP = new Map();
-  events.forEach(function(e){
-    if(e.classification !== "in_ttl" && e.classification !== "iron") return;
-    var dh = tsDateHour(e.timestamp);
-    if(!dh) return;
-    var key = dh.date + "#" + dh.hour;
-    if(!EVT_MAP.has(key)) EVT_MAP.set(key, []);
-    EVT_MAP.get(key).push({ time: dh.timeStr, gapMin: e.gap_seconds / 60, tokens: e.cache_creation_tokens, sub: e.is_subagent });
-  });
-  EVT_MAP.forEach(function(list){ list.sort(function(a, b){ return a.time < b.time ? -1 : 1; }); });
+/* Re-cut the current scan into this browser's own clock, for drawing only.
+   LAST is left exactly as the engine produced it, so the submission payload
+   built from it still carries the UTC dates the contract requires. */
+function rebuildView(){
+  VIEW = LAST ? ObservatoryLocalTime.localize(LAST.result, LAST.census) : null;
+}
+
+function periodText(p){
+  if(!p) return "–";
+  return p.start === p.end ? p.start : p.start + " to " + p.end;
+}
+
+/* Say which clock the screen is on before the reader has to work it out from a
+   row that looks a day off. Named concretely and detected from this machine,
+   never assumed from the page language. */
+function updateTzNote(){
+  var el = document.getElementById("tzNote");
+  if(!VIEW || !VIEW.period){
+    el.textContent = "";
+    return;
+  }
+  var head = "Observed period " + periodText(VIEW.period) + ". ";
+  if(!VIEW.localized){
+    el.textContent = head + "These are UTC calendar days, as the CLI cut them: " +
+      "this source carries daily aggregates only, so there is no per-request " +
+      "detail left to re-cut into your own timezone (" + ZONE.label + ").";
+    return;
+  }
+  if(ZONE.isUtc){
+    el.textContent = head + "The charts, the heatmap and the per-event times below are in this browser's own timezone, " +
+      ZONE.label + " — the same clock the submission in step 3 uses, so the dates you see and the dates you send match.";
+    return;
+  }
+  el.textContent = head + "The charts, the heatmap and the per-event times below are in your own timezone, " +
+    ZONE.label + ", detected from this browser. The submission in step 3 is cut by UTC instead, " +
+    "so a request near midnight can land on a different date there.";
 }
 
 function renderResults(){
   if(!LAST) return;
+  rebuildView();
   var t = LAST.result.totals;
   document.getElementById("kRequests").textContent = fmtInt(t.requests);
   document.getElementById("kLosses").textContent = fmtInt(t.in_ttl_losses);
   document.getElementById("kIron").textContent = fmtInt(t.iron_losses);
   document.getElementById("kTokens").textContent = fmtTok(t.wasted_tokens);
   document.getElementById("kRate").textContent = t.requests > 0 ? (100 * t.in_ttl_losses / t.requests).toFixed(2) + "%" : "–";
+  updateTzNote();
   drawCharts();
   setupRange();
   updateSubmitCard();
@@ -892,11 +936,38 @@ function submitMsg(kind, text, links){
   return el;
 }
 
+/* The preview earns its trust from "what you see is what you send". Once the
+   screen above is on the reader's clock and the payload below is on UTC, that
+   promise needs the difference spelled out: a boundary day disagreeing in
+   silence would turn the trust device into evidence of dishonesty. */
+function updateTzPayloadNote(){
+  var el = document.getElementById("tzPayloadNote");
+  if(!VIEW || !VIEW.localized){
+    el.textContent = "Dates below are UTC calendar days, exactly as this source produced them, and are sent unchanged.";
+    return;
+  }
+  if(ZONE.isUtc){
+    el.textContent = "This browser's timezone is " + ZONE.label +
+      ", the same cut the payload uses, so every date below is the date you see above.";
+    return;
+  }
+  var text = "The screens above and this JSON are cut by different clocks. Above is " + ZONE.label +
+    "; every date below — " + "period_start, period_end and each daily entry — is a UTC day. " +
+    "The requests and the totals are identical either way, but a request near midnight can sit on " +
+    "one date on screen and on the neighbouring date here.";
+  var a = periodText(VIEW.period), b = periodText(VIEW.utcPeriod);
+  if(VIEW.utcPeriod && a !== b){
+    text += " Over this whole scan the screen runs " + a + " while its UTC dates run " + b + ".";
+  }
+  el.textContent = text;
+}
+
 function updateSubmitCard(){
   var payload = buildSubmitPayload();
   var pre = document.getElementById("subPreview");
   var btn = document.getElementById("subBtn");
   var hint = document.getElementById("subRangeHint");
+  updateTzPayloadNote();
   if(!payload){
     pre.textContent = "(no parsed results yet)";
     hint.textContent = "";
@@ -914,7 +985,7 @@ function updateSubmitCard(){
   if(span === null) span = payload.daily.length;
   var over = span > MAX_PERIOD_DAYS || payload.daily.length > MAX_PERIOD_DAYS;
   if(RANGE_READY){
-    hint.textContent = "Selected: " + payload.period_start + " to " + payload.period_end +
+    hint.textContent = "Selected (UTC days): " + payload.period_start + " to " + payload.period_end +
       " · " + span + " days (" + payload.daily.length + " with activity) / max " +
       MAX_PERIOD_DAYS + " days";
     hint.className = over ? "range-hint over" : "range-hint";
@@ -1032,6 +1103,12 @@ document.getElementById("subBtn").addEventListener("click", async function(){
    diagnosis untouched. */
 var Store = window.CacheObservatoryStore || null;
 var STORE_OK = false;
+/* Why storage is off decides what the reader is told. "blocked" is a private
+   window or blocked site data — nothing can be written here at all. "full" is a
+   quota rejection after the degraded retries in store.js, where storage works
+   and the result is simply too large: telling that reader storage is
+   unavailable sends them to fix a setting that is not the problem. */
+var STORE_FAIL = "blocked";
 var STATE = null;   // {v, runs, submissions} — the browser's own memory
 var INC = null;     // incremental window proposal for the current scan
 
@@ -1096,7 +1173,8 @@ function updateOverlapWarning(payload){
   }).join(", ");
   box.hidden = false;
   box.textContent = "Overlap warning: " + ov.days + " " + plural(ov.days, "day", "days") +
-    " of the selected period (" + spans + ") were already submitted from this browser. " +
+    " of the selected period (" + spans + ") " + plural(ov.days, "was", "were") +
+    " already submitted from this browser. " +
     "Each submission is a separate row, so overlapping days are counted twice in the observatory's totals. " +
     "This does not block the submission — send it anyway if you are re-sending corrected data or the earlier row was reverted.";
 }
@@ -1108,8 +1186,12 @@ function updateStoreCard(){
   var cmp = document.getElementById("storeCmp");
   if(!STORE_OK){
     state.className = "store-state off";
-    state.textContent = "This browser is not allowing local storage (private window, or site data blocked), so saving is turned off here. " +
-      "Everything above still works; the result simply disappears when you close the tab.";
+    state.textContent = STORE_FAIL === "full"
+      ? "This browser's storage for this site is full, so the result could not be saved. " +
+        "Storage itself is working: freeing space for this site (clearing its site data in the browser's settings) " +
+        "lets a save succeed. Everything above still works; the result simply disappears when you close the tab."
+      : "This browser is not allowing local storage (private window, or site data blocked), so saving is turned off here. " +
+        "Everything above still works; the result simply disappears when you close the tab.";
     saveBtn.disabled = true;
     clearBtn.hidden = true;
     cmp.hidden = true;
@@ -1184,7 +1266,13 @@ function closeSaveModal(){
 }
 modalEl().addEventListener("mousedown", function(ev){
   // Backdrop click only: a click inside the dialog box must not close it.
-  if(ev.target === modalEl()) closeSaveModal();
+  if(ev.target !== modalEl()) return;
+  // mousedown's own default action moves focus to whatever was pressed, and it
+  // runs AFTER this handler — so without preventDefault the focus that
+  // closeSaveModal() hands back to the save button is immediately taken away
+  // again and the keyboard reader is dropped at the top of the document.
+  ev.preventDefault();
+  closeSaveModal();
 });
 document.addEventListener("keydown", function(ev){
   if(!modalOpen()) return;
@@ -1225,8 +1313,11 @@ function doSave(){
   if(Store.save(next)){
     STATE = Store.load() || next;
   } else {
-    // The write failed (quota, or storage revoked mid-session). Say so rather
-    // than letting the user believe a result is kept.
+    // The write failed. Say so rather than letting the user believe a result is
+    // kept — and say WHICH failure: store.js already retried without per-event
+    // detail and without the census, so a still-refused write on a storage that
+    // answers its probe is a full quota, not a blocked one.
+    STORE_FAIL = Store.available() ? "full" : "blocked";
     STORE_OK = false;
   }
   updateStoreCard();
@@ -1263,7 +1354,10 @@ function restoreRun(run){
     census: h.events_saved ? h.census : null,
     source_version: run.script_version || null
   };
-  EVT_MAP = h.evtMap;
+  // The stored run stays anchored to the engine's own UTC buckets; the reader's
+  // clock is applied on the way to the screen (renderResults -> rebuildView),
+  // so moving machine or changing timezone re-cuts it instead of showing a
+  // local date frozen at save time.
   var note = document.getElementById("storeRestored");
   note.hidden = false;
   note.textContent = "Restored from this browser's saved results (saved " + fmtWhen(run.saved_at) +
@@ -1304,7 +1398,11 @@ function recordSubmission(payload, data){
 
 function drawCharts(){
   if(!LAST) return;
-  var days = LAST.result.daily.map(function(d){
+  if(!VIEW) rebuildView();
+  // Both charts read the localised view: the daily bars are re-aggregated from
+  // the same events, so a loss just after local midnight moves to the day the
+  // reader lived it. The totals above are untouched by the move.
+  var days = VIEW.daily.map(function(d){
     return { label: mdLabel(d.date), count: d.losses, pct: d.requests > 0 ? 100 * d.losses / d.requests : 0 };
   });
   if(days.length){
@@ -1312,24 +1410,24 @@ function drawCharts(){
   }
   // Pasted CLI JSON carries daily aggregates only: no hourly census, no heatmap.
   var hmSection = document.getElementById("hmSection");
-  if(!LAST.census){
+  if(!VIEW.census){
     hmSection.hidden = true;
     return;
   }
   hmSection.hidden = false;
   var zeros = new Array(24).fill(0);
-  var dates = Array.from(LAST.census.keys()).sort();
+  var dates = Array.from(VIEW.census.keys()).sort();
   var rows = dates.map(function(date){
     var losses = zeros.slice();
     for(var h = 0; h < 24; h++){
-      var l = EVT_MAP.get(date + "#" + h);
+      var l = VIEW.evtMap.get(date + "#" + h);
       if(l) losses[h] = l.length;
     }
-    return { key: date, label: mdLabel(date), usage: LAST.census.get(date) || zeros, losses: losses };
+    return { key: date, label: mdLabel(date), usage: VIEW.census.get(date) || zeros, losses: losses };
   });
   ObservatoryCharts.renderUsageHeatmap(document.getElementById("heatmap"), rows, {
     cellTitle: function(row, hour, rq, v){
-      return row.key + " " + hh(hour) + ":00 · " + rq + " requests · " + v + " losses";
+      return row.key + " " + hh(hour) + ":00 " + ZONE.offset + " · " + rq + " requests · " + v + " losses";
     },
     onSelect: function(row, hour, td){ showEvents(row.key, hour, td); },
     onClear: function(){ hideEvents(); },
@@ -1371,14 +1469,14 @@ function placeEvtPanel(p, td){
 
 function showEvents(date, hour, td){
   var p = document.getElementById("evtPanel");
-  var rows = EVT_MAP.get(date + "#" + hour) || [];
+  var rows = (VIEW && VIEW.evtMap.get(date + "#" + hour)) || [];
   if(!rows.length){ hideEvents(); return; }
   var tot = rows.reduce(function(a, e){ return a + e.tokens; }, 0);
-  var html = "<div class='evt-head'><h3>" + date + " " + hh(hour) + ":00 · " + rows.length +
-    " losses · " + (tot / 1e6).toFixed(2) + "M tokens re-billed " +
+  var html = "<div class='evt-head'><h3>" + date + " " + hh(hour) + ":00 " + ZONE.offset + " · " + rows.length +
+    " " + plural(rows.length, "loss", "losses") + " · " + (tot / 1e6).toFixed(2) + "M tokens re-billed " +
     "<span style='font-weight:400;color:var(--muted)'>(close: ×, Esc, click outside, or the cell again)</span></h3>" +
     "<button type='button' class='evt-close' aria-label='Close detail'>×</button></div>";
-  html += "<table><tr><th>Time</th><th>Idle gap</th><th>Tokens re-billed</th><th>Session</th></tr>";
+  html += "<table><tr><th>Time (" + ZONE.offset + ")</th><th>Idle gap</th><th>Tokens re-billed</th><th>Session</th></tr>";
   rows.forEach(function(e){
     html += "<tr><td>" + e.time + "</td><td>" + e.gapMin.toFixed(1) + " min</td><td>" +
       e.tokens.toLocaleString("en-US") + "</td><td>" + (e.sub ? "subagent" : "main") + "</td></tr>";

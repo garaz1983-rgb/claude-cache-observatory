@@ -459,7 +459,7 @@ a{color:inherit}
 
 <section id="secFleet">
   <h2>Fleet daily loss rate <span class="badge real h2-badge">Real submissions</span></h2>
-  <p class="desc">In-TTL losses as a share of that day's requests, one line per submission. Vertical alignment across accounts points at server-side events; a step down that holds across accounts points at a fix being deployed.</p>
+  <p class="desc">In-TTL losses as a share of that day's requests, one line per submission. Vertical alignment across accounts points at server-side events; a step down that holds across accounts points at a fix being deployed. <b>Every day on this axis is a UTC day</b>, the same cut for every submission — which is what makes lining two accounts up on the same date mean anything.</p>
   <div class="card">
     <canvas id="fleet" height="260"></canvas>
     <div class="legend" id="fleetLegend"></div>
@@ -553,6 +553,7 @@ a{color:inherit}
       <li><b>TTL-strict judgment</b>: a candidate counts as a loss only if the idle gap to the previous request in the same session file is <b>under 30 minutes</b> (main session) or <b>under 5 minutes</b> (subagent). Anything longer is a legitimate TTL expiry and is <b>excluded</b>.</li>
       <li><b>Iron losses</b>: the subset with an idle gap <b>under 5 minutes</b>, where the cache could not have expired under any published TTL.</li>
       <li><b>Dedup &amp; cost</b>: events are deduplicated by <span class="mono">requestId</span>; the re-billed cost of a loss is that request's <span class="mono">cache_creation_input_tokens</span>.</li>
+      <li><b>Which day a request counts on</b>: this observatory, and every submission in it, cuts days by <b>UTC</b>. Submissions from many countries are summed day by day, and cutting each one by its own local date would scramble the fleet's daily totals. The <a href="check.html">check page</a> is the other way round on purpose: it is one person's own diagnosis, so its charts, heatmap and per-event times are drawn in <b>the reader's own timezone</b>, detected from their browser and named on screen. Same requests, same totals; only the day boundary moves, so a request near midnight can appear on one date there and the neighbouring date here. The payload preview on that page says so before you send it.</li>
     </ul>
     <div class="trust-note">
       <b>Trust model:</b> parsing runs in <b>your browser, locally</b>: log files never leave your machine. What gets transmitted is only the aggregate numbers you explicitly approve (daily counts and totals). The diagnosis page can optionally keep your result in that browser's own storage, but only if you press the save button and confirm: that copy stays on your computer, never reaches a server, and one button deletes it. And because this site has <b>no build step</b>, the code that runs is exactly the code in the repo. Read it line by line before you run it.
