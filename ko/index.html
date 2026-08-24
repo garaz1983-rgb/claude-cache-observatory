@@ -289,6 +289,13 @@ table.env td.grp{font-family:ui-monospace,'Cascadia Mono',Consolas,monospace; te
 /* 값을 보류한 칸. table.subs도 함께 적은 이유는 제출 목록이 환경 표와 같은
    규칙으로 유실률을 보류하기 때문이다. 계산할 수 없는 비율은 숫자로 찍지 않는다. */
 table.subs td.na, table.env td.na{color:var(--muted); font-family:inherit}
+/* 그 행의 일별 원본 파일로 가는 링크(M14). 눌리기 전까지는 흐리게 둔다. 행동을
+   부르는 버튼이 아니라 감사 경로이고, 한 열에 열 개가 줄지어 있으면 정작 그
+   링크가 설명하는 숫자보다 시끄러워진다. */
+table.subs td.detail a{color:var(--muted); text-decoration:underline;
+  text-underline-offset:2px; text-decoration-color:var(--line)}
+table.subs td.detail a:hover{color:var(--ink); text-decoration-color:var(--ink)}
+table.subs td.detail a:focus-visible{outline:2px solid var(--ink); outline-offset:2px}
 table.env tr.pick{cursor:pointer}
 table.env tr.pick:hover td{background:var(--grid)}
 table.env tr.on td{background:var(--ok-soft)}
@@ -377,7 +384,7 @@ a{color:inherit}
 
 <a class="cta" href="check.html">내 데이터 진단하기 →</a>
 
-<div class="err" id="loadErr" hidden><span class="mono">data/submissions.json</span>을 불러오지 못했다. 관측소 데이터 파일이 없거나 읽을 수 없다.</div>
+<div class="err" id="loadErr" hidden><a class="mono" href="../data/submissions.json">data/submissions.json</a>을 불러오지 못했다. 제출 색인이 없거나 읽을 수 없어서 아래의 합계·목록·환경별 분해가 비어 있다.</div>
 
 <section id="secWhy">
   <h2>왜 이 관측소가 있나</h2>
@@ -433,8 +440,10 @@ a{color:inherit}
 
 <section id="secFleet">
   <h2>Fleet 일별 유실률 추이 <span class="badge real h2-badge">실제 제출 데이터</span></h2>
-  <p class="desc">그날 요청 대비 in-TTL 유실 비율, 보고한 기계별 한 선. 기계를 가로질러 수직으로 정렬된 급등은 서버측 이벤트를, 기계 전체에서 유지되는 하락 계단은 수정 배포 시점을 가리킨다. <b>이 축의 하루는 모두 UTC 기준</b>이고 모든 제출에 같은 기준이 적용된다. 서로 다른 기계를 같은 날짜에 놓고 보는 일이 의미를 가지는 근거가 이것이다.</p>
+  <p class="desc">그날 요청 대비 in-TTL 유실 비율을 <b>보고한 기계 전체를 하나로 합쳐 한 선</b>으로 그린다. 선이 올라간다는 건 제출자가 늘었다는 뜻이 아니라 보낸 요청 중 잃은 비율이 커졌다는 뜻이다. 분모가 같은 날의 요청 수이기 때문이다. 유지되는 하락 계단은 수정 배포 시점을 가리킨다. <b>이 축의 하루는 모두 UTC 기준</b>이고 모든 제출에 같은 기준이 적용된다. 서로 다른 기계를 같은 날짜에 합산하는 일이 의미를 가지는 근거가 이것이다. 한 대만 보고한 날은 그 한 대의 유실률이다. 그래서 그날 몇 대가 보고했는지도 함께 그린다. 날짜마다 기계 수가 달라지면 각 날짜 뒤에 옅은 세로 막대로 나타나고, 모든 날이 같은 수인 동안에는 범례가 그 수를 글로 적는다.</p>
+  <p class="desc">기계마다 한 선씩 그리는 게 이전 설계였다. 제출 1건일 때는 읽히지만 50건이면 읽을 수 없고, 방문자마다 모든 제출자의 일별 이력 전체를 내려받게 만든다. 기계별 숫자가 사라진 건 아니다. <a href="#secSubs">제출 목록</a>의 각 행이 그 행의 합계가 곧 그 합인 파일을 링크한다.</p>
   <div class="card">
+    <div class="err" id="fleetErr" hidden><a class="mono" href="../data/daily.json">data/daily.json</a>을 불러오지 못했다. 일자별 시계열이 없거나 읽을 수 없어서 이 그래프만 비어 있다. 페이지의 나머지는 영향을 받지 않는다.</div>
     <canvas id="fleet" height="260"></canvas>
     <div class="legend" id="fleetLegend"></div>
   </div>
@@ -498,6 +507,7 @@ a{color:inherit}
 <section id="secSubs">
   <h2>제출 목록 <span class="badge real h2-badge">실제 제출 데이터</span></h2>
   <p class="desc">제출별 집계 합계. 시각·세션 ID·파일 경로는 없다. 스키마 차원에서 담을 수 없다. 닉네임은 마스킹해서 저장하므로, 본인이 제출한 행은 이 브라우저에 남은 기록으로 표시한다. 열 제목을 누르면 정렬된다. 화면에 보이는 행 순서만 바뀌고 이 페이지의 다른 것은 아무것도 바뀌지 않는다.</p>
+  <p class="desc">마지막 열은 그 행의 일별 원본 파일을 링크한다. 행의 합계가 곧 그 파일의 합이므로 산수를 한 행씩 따로 검증할 수 있다. <a href="../data/submissions.json">색인</a>(이 표), <a href="../data/daily.json">일자별 시계열</a>(위 그래프), 그리고 기계당 상세 파일 1개다. 이 페이지가 내려받는 건 앞의 둘뿐이고 상세 파일은 절대 자동으로 받지 않는다. 여는 건 읽는 사람의 선택이다.</p>
   <div class="card tbl-scroll">
     <table class="subs" id="subsTable">
       <thead><tr>
@@ -511,6 +521,7 @@ a{color:inherit}
         <th aria-sort="none"><button type="button" class="sort-btn" data-sort="plan">플랜<span class="sort-ind" aria-hidden="true">↕</span></button></th>
         <th aria-sort="none"><button type="button" class="sort-btn" data-sort="client">클라이언트<span class="sort-ind" aria-hidden="true">↕</span></button></th>
         <th aria-sort="none"><button type="button" class="sort-btn" data-sort="sessions">동시 세션<span class="sort-ind" aria-hidden="true">↕</span></button></th>
+        <th>일별 원본</th>
       </tr></thead>
       <tbody></tbody>
     </table>
@@ -542,8 +553,10 @@ a{color:inherit}
         <li><span class="mono">assets/parse.js</span>: 유실 판정 엔진(브라우저에서 실행). CLI <span class="mono">scripts/check_cache_loss.py</span>와 같은 규칙이고, 두 결과가 같은지 자동 테스트로 대조한다.</li>
         <li><span class="mono">assets/charts.js</span>: 그래프 그리기 전용. 판정 계산은 하지 않는다.</li>
         <li><span class="mono">assets/store.js</span>: 진단 페이지의 선택적 로컬 저장. 브라우저 저장 공간만 쓰고 네트워크는 쓰지 않으며, 확인했을 때만 동작한다.</li>
-        <li><span class="mono">functions/api/submit.js</span>: 서버에서 도는 유일한 코드. 제출 버튼을 눌렀을 때만 호출되고, 스키마 검증 후 이 repo에 커밋한다.</li>
-        <li><span class="mono">data/submissions.json</span>: 이 페이지가 읽는 공개 데이터. 제출 1건 = 커밋 1건이라 이력 전체가 감사 대상이다.</li>
+        <li><span class="mono">functions/api/submit.js</span>: 서버에서 도는 유일한 코드. 제출 버튼을 눌렀을 때만 호출되고, 스키마 검증 후 아래 세 데이터 파일을 <b>한</b> 커밋에 함께 쓴다.</li>
+        <li><a class="mono" href="../data/submissions.json">data/submissions.json</a>: 색인. 제출한 기계 1대가 1행이고 합계만 담는다. 이 페이지가 읽는다.</li>
+        <li><a class="mono" href="../data/daily.json">data/daily.json</a>: 일자별 시계열. 달력 하루가 1행이고 모든 기계를 합산한 값이다. 그래프가 이걸 읽고, 이 페이지가 받는 파일은 이 둘뿐이다.</li>
+        <li><span class="mono">data/subs/&lt;id&gt;.json</span>: 제출 1건당 1개 파일. 그 기계의 일별 원본이 들어 있다. <b>제출 목록의 모든 행에서 링크되지만 이 페이지가 내려받지는 않는다.</b> 색인 행의 합계는 그 파일의 합과 정확히 같고, <span class="mono">data/daily.json</span>은 모든 상세 파일의 합과 정확히 같다. repo의 <span class="mono">tests/dataset_validate.py</span>가 둘 다 다시 검산한다.</li>
         <li><span class="mono">wrangler.toml</span>: 서버 설정도 repo에 공개. 숨겨진 백엔드가 없다.</li>
       </ul>
     </div></details>
@@ -578,7 +591,17 @@ a{color:inherit}
 <script src="../assets/demo.js"></script>
 <script>
 "use strict";
+/* ===== 이 페이지가 내려받는 것 (M14) =====================================
+   언제나 정확히 두 파일이다. 색인은 제출한 기계 1대당 1행이고 일별 행은 하나도
+   담지 않는다(실측: 지문 붙은 행 1,901바이트, 지문 없는 행 508바이트). 일자별
+   시계열은 몇 대가 보고했든 달력 하루당 96바이트 1행이다. 둘 중 어느 쪽도 다른 쪽 때문에 커지지 않고, 헤드라인
+   숫자 넷을 읽자고 남의 일별 이력 전체를 내려받는 일도 없다.
+   제출별 상세는 data/subs/<id>.json에 있고 링크만 한다. 자동으로 받지 않는다.
+   각 행의 "일별 원본" 링크가 감사 경로다. 의도한 선택이고, 이 페이지에는 남의
+   일별 데이터를 보여주는 뷰어가 없다. */
+var DATA_BASE = "../data/";
 var FLEET_MODEL = null;
+var FLEET_DAYS = null;
 var SUBS = null;
 
 function esc(s){
@@ -597,23 +620,28 @@ function fmtPct(v){ return v.toFixed(2) + "%"; }
 function mdLabel(iso){ return (+iso.slice(5,7)) + "/" + (+iso.slice(8,10)); }
 function hh(h){ return String(h).padStart(2, "0"); }
 
-function buildFleetModel(subs){
-  var dateSet = new Set();
-  subs.forEach(function(s){ s.daily.forEach(function(d){ dateSet.add(d.date); }); });
-  var dates = Array.from(dateSet).sort();
-  var series = subs.map(function(s, i){
-    var byDate = new Map();
-    s.daily.forEach(function(d){ byDate.set(d.date, d); });
-    return {
-      color: ObservatoryCharts.PALETTE[i % ObservatoryCharts.PALETTE.length],
-      values: dates.map(function(dt){
-        var d = byDate.get(dt);
-        if(!d || d.requests <= 0) return null;
-        return 100 * d.losses / d.requests;
-      })
-    };
+/* 기계마다 한 선이 아니라 data/daily.json에서 만든 전체 한 선이다.
+   M14 전에는 제출 1건마다 자기 선을 그렸다. 1건일 때는 읽히지만 50건이면 읽을
+   수 없고, 그 선을 먹이는 파일이 제출자 전원의 일별 이력을 모든 방문자에게
+   내려보냈다. 이제 시계열은 서버에서 계산되고 달력 하루가 전 기계 합산 1행이다.
+   담는 값은 건수가 아니라 비율이다. 유실 건수를 그날 요청 수로 나눈다. 건수
+   선이라면 제출자가 늘 때마다 올라가서 "나빠지고 있나" 대신 "몇 대가 보고
+   중인가"에 답하게 된다. 요청이 0인 날은 비율이 없으므로 0이 아니라 선의
+   빈칸으로 둔다. */
+function buildFleetModel(days){
+  var rows = (days || []).filter(function(d){
+    return d && typeof d.date === "string";
   });
-  return { dates: dates, series: series };
+  return {
+    dates: rows.map(function(d){ return d.date; }),
+    series: [{
+      color: ObservatoryCharts.PALETTE[0],
+      values: rows.map(function(d){
+        return d.requests > 0 ? 100 * d.losses / d.requests : null;
+      })
+    }],
+    coverage: rows.map(function(d){ return d.machines || 0; })
+  };
 }
 
 function renderKpis(subs){
@@ -630,12 +658,34 @@ function renderKpis(subs){
   document.getElementById("kpiPeriod").textContent = minD && maxD ? minD + " ~ " + maxD : "–";
 }
 
-function renderLegend(subs){
+/* 범례는 그래프가 그리는 둘을 모두 이름 붙인다. 두 번째가 중요하다. 기계 수가
+   없으면 한 대가 보고한 날과 쉰 대가 보고한 날을 구분할 수 없고, 비율 선은 양쪽
+   모두 똑같이 보인다. */
+function renderLegend(days){
   var el = document.getElementById("fleetLegend");
-  el.innerHTML = subs.map(function(s, i){
-    var color = ObservatoryCharts.PALETTE[i % ObservatoryCharts.PALETTE.length];
-    return "<span><i class='chip line' style='background:" + color + "'></i>" + esc(s.nickname || "anonymous") + "</span>";
-  }).join("");
+  var rows = days || [];
+  var maxMachines = 0, minMachines = 0;
+  rows.forEach(function(d, i){
+    var m = d.machines || 0;
+    if(m > maxMachines) maxMachines = m;
+    if(i === 0 || m < minMachines) minMachines = m;
+  });
+  // 두 번째 항목이 가리키는 음영은 기계 수가 실제로 달라질 때만 그려진다.
+  // 모두 같으면 화면에 없는 것을 가리키게 되므로, 색 견본을 빼고 그 수를 글로
+  // 적는다.
+  var uniform = !rows.length || minMachines === maxMachines;
+  var cover = rows.length
+    ? (uniform
+        ? "지금까지 모든 날을 " + maxMachines + "대가 보고했다. 음영으로 구분할 것이 없다"
+        : "세로 음영 높이 = 그날 보고한 기계 수(날짜에 따라 " +
+          minMachines + "~" + maxMachines + "대)")
+    : "보고된 날 없음";
+  el.innerHTML =
+    "<span><i class='chip line' style='background:" + ObservatoryCharts.PALETTE[0] +
+      "'></i>전체 유실률: 그날의 in-TTL 유실 ÷ 그날의 요청, 전 기계 합산</span>" +
+    "<span>" + (uniform ? "" :
+      "<i class='chip' style='background:var(--ink);opacity:.16'></i>") +
+      esc(cover) + "</span>";
 }
 
 /* ===== "어느 행이 내 것인가" =============================================
@@ -765,8 +815,33 @@ function renderTable(subs){
       "<td>" + esc(s.plan) + "</td>" +
       "<td>" + esc(s.client) + "</td>" +
       "<td>" + esc(s.concurrent_sessions || "unknown") + "</td>" +
+      "<td class='detail'>" + detailCell(s) + "</td>" +
       "</tr>";
   }).join("");
+}
+
+/* ===== 그 행의 숫자로 가는 링크 ==========================================
+   이 사이트의 주장은 누구나 산수를 검증할 수 있다는 것이다. M14 전에는 그걸
+   가능하게 하는 파일이 파일 지도에 이름만 적혀 있었고 따라갈 경로가 없었다.
+   중심 약속이 클릭 불가였던 유일한 자리다.
+   이제 각 행이 자기 합계의 근거 파일을 링크한다. href는 id로 만들되, 이
+   파이프라인이 발급하는 모양과 정확히 같은 id에서만 만든다. id가 경로 조각이
+   되기 때문에, 손으로 고친 공개 파일이 이 링크를 아무 데나 겨누게 둘 수 없다.
+   검사를 통과하지 못한 행은 깨진 링크 대신 일수만 글자로 보여준다. */
+var SUB_ID_RE = /^sub-[0-9]{14}-[0-9a-f]{4}$/;
+
+function detailHref(s){
+  var id = String((s && s.id) || "");
+  return SUB_ID_RE.test(id) ? DATA_BASE + "subs/" + id + ".json" : null;
+}
+
+function detailCell(s){
+  var days = (typeof s.daily_days === "number" && s.daily_days >= 0) ? s.daily_days : null;
+  var label = days === null ? "일별 원본" : fmtInt(days) + "일";
+  var href = detailHref(s);
+  if(!href) return "<span class='na'>" + esc(label) + "</span>";
+  return "<a href='" + esc(href) + "' title='이 행의 합계가 곧 그 합인 일별 원본'>" +
+    esc(label) + " ↗</a>";
 }
 
 /* ===== 환경별 분해 ======================================================
@@ -828,8 +903,9 @@ function renderEnvFilter(){
   if(!ENV_FILTER){ el.hidden = true; el.innerHTML = ""; return; }
   el.hidden = false;
   el.innerHTML = "필터 적용: <b>" + esc(ENV_FILTER.axis) + " = " + esc(ENV_FILTER.value) +
-    "</b> (n " + filteredSubs().length + "). 위 fleet 추이 차트와 아래 제출 목록에 " +
-    "반영된다. 상단 KPI는 전체 데이터 그대로다." +
+    "</b> (n " + filteredSubs().length + "). 아래 제출 목록에만 반영된다. " +
+    "상단 KPI는 전체 데이터 그대로이고 위 fleet 추이 차트도 마찬가지다. " +
+    "그 차트는 달력 하루 단위로 전 기계를 합산한 값이라 자를 환경 항목 자체가 없다." +
     "<button type='button' id='envClear'>해제</button>";
   document.getElementById("envClear").addEventListener("click", function(){
     ENV_FILTER = null;
@@ -972,16 +1048,16 @@ function renderEnv(){
   renderEnvFilter();
 }
 
-/* 필터는 fleet 추이 차트와 제출 목록만 좁힌다. 상단 KPI는 일부러 건드리지
-   않는다. 그건 관측소의 헤드라인 합계라서 "제출된 전부"라는 뜻을 유지해야
-   한다. */
+/* 필터는 제출 목록만 좁힌다. 상단 KPI는 일부러 건드리지 않는다. 그건 관측소의
+   헤드라인 합계라서 "제출된 전부"라는 뜻을 유지해야 한다.
+   M14에서 fleet 추이 차트가 필터 범위에서 빠졌다. 실제 기능 손실이고, 숨기지
+   않고 적어 둔다. 이 차트는 이제 data/daily.json에서 그리는데 그 파일은 서버가
+   전 기계를 합산한 값이라 환경 항목을 담고 있지 않다. 환경별로 다시 자르려면
+   축마다 값마다 별도 시계열을 배포하거나, 다시 모두의 일별 이력을 브라우저로
+   내려받아야 한다. 화면의 필터 안내 문구가 이 사실을 그대로 말한다. */
 function applyEnvFilter(){
-  var fs = filteredSubs();
-  renderLegend(fs);
-  renderTable(fs);
-  FLEET_MODEL = buildFleetModel(fs);
+  renderTable(filteredSubs());
   renderEnv();
-  drawAll();
 }
 
 function bindEnvControls(){
@@ -1171,35 +1247,49 @@ document.addEventListener("mousedown", function(ev){
    카드가 문서 흐름 안으로 들어오면서 셀과 같이 움직인다. 그대로 뒀다면
    스크롤할 때마다 읽던 카드가 기본 시간대로 되돌아갔을 것이다. */
 
-fetch("../data/submissions.json")
-  .then(function(r){
+/* 두 파일을 같이 받고 따로 실패한다. 받치는 화면이 다르다. 색인은 KPI·목록·환경
+   분해를, 일자별 시계열은 그래프를 받친다. 한쪽을 못 읽었다고 다른 쪽 구역까지
+   비우면 안 되고, 어느 쪽이 없는지도 말해야 한다. 어차피 이 페이지는 대부분이
+   글이라 fetch가 실패해도 읽을 것은 남는다. */
+function fetchJson(url){
+  return fetch(url).then(function(r){
     if(!r.ok) throw new Error("HTTP " + r.status);
     return r.json();
-  })
-  .then(function(doc){
-    SUBS = doc.submissions || [];
+  });
+}
+
+Promise.all([
+  fetchJson(DATA_BASE + "submissions.json").catch(function(){ return null; }),
+  fetchJson(DATA_BASE + "daily.json").catch(function(){ return null; })
+]).then(function(res){
+  var doc = res[0], fleet = res[1];
+
+  if(doc && Array.isArray(doc.submissions)){
+    SUBS = doc.submissions;
     renderKpis(SUBS);
-    renderLegend(SUBS);
     renderTable(SUBS);
-    FLEET_MODEL = buildFleetModel(SUBS);
     bindEnvControls();
     renderEnv();
-    drawAll();
-    syncPaneFocus();
-    // 복원을 먼저, 포커스를 나중에. 판은 fleet 행과 차트가 들어온 지금에야 최종
-    // 높이를 갖는다. focusPane()에 preventScroll을 건 건 바로 방금 복원한 위치를
-    // 되돌리지 못하게 하기 위해서다.
-    initScrollMemory();
-    focusPane();
-  })
-  .catch(function(){
+  } else {
     document.getElementById("loadErr").hidden = false;
-    // fetch가 실패해도 길고 읽을 수 있는 페이지는 그대로 남는다. 키보드와 기억된
-    // 위치는 실패한 것에 속하지 않는다.
-    syncPaneFocus();
-    initScrollMemory();
-    focusPane();
-  });
+  }
+
+  if(fleet && Array.isArray(fleet.days)){
+    FLEET_DAYS = fleet.days;
+    renderLegend(FLEET_DAYS);
+    FLEET_MODEL = buildFleetModel(FLEET_DAYS);
+  } else {
+    document.getElementById("fleetErr").hidden = false;
+  }
+
+  drawAll();
+  syncPaneFocus();
+  // 복원을 먼저, 포커스를 나중에. 판은 fleet 행과 차트가 들어온 지금에야 최종
+  // 높이를 갖는다. focusPane()에 preventScroll을 건 건 바로 방금 복원한 위치를
+  // 되돌리지 못하게 하기 위해서다.
+  initScrollMemory();
+  focusPane();
+});
 
 /* 스크롤되는 판은 div이고, 스크롤되는 div는 포커스를 받을 수 있어야 키보드
    사용자가 방향키를 누를 대상이 생긴다. 실제로 스크롤 컨테이너인 동안만 그렇게

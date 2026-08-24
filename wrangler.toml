@@ -9,6 +9,9 @@ pages_build_output_dir = "."
 
 [vars]
 GITHUB_REPO = "garaz1983-rgb/claude-cache-observatory"
+# The branch the bot commits to. The Git Data API (M14) has to be told which
+# ref to move; the Contents API used to pick the default branch on its own.
+GITHUB_BRANCH = "master"
 
 [[kv_namespaces]]
 binding = "RATE_LIMIT"

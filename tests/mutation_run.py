@@ -4,13 +4,21 @@
 Targets:
   - assets/parse.js          — judged by tests/parity_check.py (M01..M15, M22)
   - functions/api/submit.js  — judged by tests/submit_contract_test.py
-                               (S16..S21, S23..S24, S39..S47)
+                               (S16..S21, S23..S24, S39..S47, S52..S62)
   - assets/localtime.js      — judged by tests/localtime_test.py (L25..L28)
   - check.html, ko/check.html — judged by tests/localtime_test.py
                                (C29..C30, C48..C51)
   - assets/identity.js       — judged by tests/identity_test.py (I34..I38)
 
-M13 added the last target and the S39..S47 block. Those two groups guard an
+M14 added the S52..S62 block. Those guard the split of the public dataset into
+an index, a fleet-wide daily series and one detail file per submission, written
+as ONE commit through the Git Data API. Two properties there have no production
+check behind them: nothing recomputes the fleet series from scratch on the live
+path (it is a delta, on purpose — recomputing it would restore the cost the
+milestone removed), and nothing re-reads a commit to confirm all three files
+were in it. Both therefore have to be proven by mutants that die.
+
+M13 added the identity target and the S39..S47 block. Those two groups guard an
 AUTHORISATION surface that did not exist before: matchIndex decides which
 existing row a submission may rewrite, and mergeRecord decides what survives
 that rewrite. An authorisation check that never runs is worse than none, so
@@ -141,9 +149,13 @@ MUTATIONS = [
     ("S20_nickname_length_widened", SUBMIT_JS_REL,
      "nickname.length > MAX_NICKNAME",
      "nickname.length > MAX_NICKNAME + 1", "contract"),
-    ("S21_sha_retry_disabled", SUBMIT_JS_REL,
-     "if (put.status !== 409) break;",
-     "if (put.status === 409) break;", "contract"),
+    # M14 moved storage onto the Git Data API, so the single retry is no longer
+    # a 409 on a PUT but a 422 on the ref update. Same property, new anchor:
+    # a branch that moved under the read must earn one re-read, and giving up
+    # instead loses the submission.
+    ("S21_ref_retry_disabled", SUBMIT_JS_REL,
+     "if (written.moved) continue;",
+     "if (written.moved) break;", "contract"),
 
     # -- M3.1 codex-review fixes ------------------------------------------
     ("M22_cc_coercion_removed", PARSE_JS_REL,
@@ -275,6 +287,56 @@ MUTATIONS = [
     ("C49_payload_drops_anchors_ko", CHECK_HTML_KO_REL,
      "  if(Array.isArray(LAST.anchors) && LAST.anchors.length) payload.anchors = LAST.anchors.slice(0, 16);",
      "  void 0;", "localtime"),
+    # -- M14: three files, one commit (functions/api/submit.js) --------------
+    # This block guards the two things the split bought and the one thing it
+    # put at risk. S52/S53 are the split itself: a submission that quietly stops
+    # writing one of the three files leaves a dataset whose files disagree, and
+    # every one of those disagreements is a number on the page that no longer
+    # adds up. S54/S55/S56 are the fleet series, which is maintained as a DELTA
+    # and is therefore the one number on the site that can drift silently:
+    # nothing recomputes it from scratch in production, so the mutants that make
+    # it drift have to die in the test. S61/S62 are the atomicity: a commit that
+    # is not chained to the tree and the head the read came from is not "one
+    # commit" at all, it is a race with a nicer name.
+    ("S52_detail_file_not_written", SUBMIT_JS_REL,
+     "      { path: detailPath(id), text: serializeDetail(buildDetail(id, fields)) }",
+     '      { path: "data/.mutant", text: "x\\n" }', "contract"),
+    ("S53_fleet_file_not_written", SUBMIT_JS_REL,
+     "text: serializeFleet(applyFleetDelta(state.fleet, previousDaily, fields.daily)) },",
+     'text: "x\\n" },', "contract"),
+    ("S54_fleet_delta_not_subtracted", SUBMIT_JS_REL,
+     "    cur.requests -= r.requests;",
+     "    cur.requests -= 0;", "contract"),
+    ("S55_fleet_machines_not_counted", SUBMIT_JS_REL,
+     "    cur.machines += 1;",
+     "    cur.machines += 0;", "contract"),
+    # NOT mutated: the `machines <= 0` drop in applyFleetDelta. The merge unions
+    # dates and never removes one, so that branch cannot be reached by any
+    # sequence of submissions — mutating it would be an equivalent mutant, and
+    # a mutation list that carries one teaches the next reader to tolerate
+    # survivors. It stays in the source as a guard on a hand-edited file, and
+    # tests/dataset_validate.py is what would catch it going wrong.
+    # 🔴 The rule that makes a merge safe now that the history lives one file
+    # away: no daily rows, no merge. Merging against rows that failed to load
+    # recomputes the row's totals from the incoming submission alone and
+    # deletes that machine's history from a public file.
+    ("S57_merge_without_history", SUBMIT_JS_REL,
+     "      if (previousDaily === null) return { ok: false };",
+     "      if (previousDaily === null) previousDaily = [];", "contract"),
+    ("S58_detail_totals_zeroed", SUBMIT_JS_REL,
+     "    totals: fields.totals,",
+     "    totals: { requests: 0, in_ttl_losses: 0, iron_losses: 0, wasted_tokens: 0 },",
+     "contract"),
+    ("S59_index_row_keeps_daily", SUBMIT_JS_REL,
+     "  rec.daily_days = fields.daily.length;",
+     "  rec.daily_days = fields.daily.length; rec.daily = fields.daily;", "contract"),
+    ("S61_commit_parent_dropped", SUBMIT_JS_REL,
+     "parents: [state.headSha]",
+     "parents: []", "contract"),
+    ("S62_base_tree_dropped", SUBMIT_JS_REL,
+     "body: JSON.stringify({ base_tree: state.rootTreeSha, tree: entries })",
+     "body: JSON.stringify({ tree: entries })", "contract"),
+
     ("C50_payload_drops_token", CHECK_HTML_REL,
      '  if(typeof LAST.link_token === "string" && LAST.link_token) payload.token = LAST.link_token;',
      "  void 0;", "localtime"),

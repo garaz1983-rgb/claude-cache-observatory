@@ -312,6 +312,13 @@ table.env td.grp{font-family:ui-monospace,'Cascadia Mono',Consolas,monospace; te
    list withholds a loss rate on the same rule the environment table does: a
    rate that cannot be computed is not printed as a number. */
 table.subs td.na, table.env td.na{color:var(--muted); font-family:inherit}
+/* The per-row link to that row's own daily file (M14). Muted until hovered:
+   it is an audit path, not a call to action, and ten of them down a column
+   would otherwise out-shout the numbers they are about. */
+table.subs td.detail a{color:var(--muted); text-decoration:underline;
+  text-underline-offset:2px; text-decoration-color:var(--line)}
+table.subs td.detail a:hover{color:var(--ink); text-decoration-color:var(--ink)}
+table.subs td.detail a:focus-visible{outline:2px solid var(--ink); outline-offset:2px}
 table.env tr.pick{cursor:pointer}
 table.env tr.pick:hover td{background:var(--grid)}
 table.env tr.on td{background:var(--ok-soft)}
@@ -403,7 +410,7 @@ a{color:inherit}
 
 <a class="cta" href="check.html">Check your own data →</a>
 
-<div class="err" id="loadErr" hidden>Could not load <span class="mono">data/submissions.json</span>. The observatory data file is missing or unreadable.</div>
+<div class="err" id="loadErr" hidden>Could not load <a class="mono" href="data/submissions.json">data/submissions.json</a>. The submission index is missing or unreadable, so the totals, the list and the environment breakdown below are empty.</div>
 
 <section id="secWhy">
   <h2>Why this observatory exists</h2>
@@ -459,8 +466,10 @@ a{color:inherit}
 
 <section id="secFleet">
   <h2>Fleet daily loss rate <span class="badge real h2-badge">Real submissions</span></h2>
-  <p class="desc">In-TTL losses as a share of that day's requests, one line per reporting machine. Vertical alignment across machines points at server-side events; a step down that holds across machines points at a fix being deployed. <b>Every day on this axis is a UTC day</b>, the same cut for every submission — which is what makes lining two machines up on the same date mean anything.</p>
+  <p class="desc">In-TTL losses as a share of that day's requests, <b>every reporting machine pooled into one line</b>. A rising line means the fleet is losing a larger share of what it sends, not that more people are submitting: the denominator is that same day's requests. A step down that holds points at a fix being deployed. <b>Every day on this axis is a UTC day</b>, the same cut for every submission — which is what makes summing machines on the same date mean anything. A day carried by one machine is one machine's rate, so how many reported each day is drawn too: once the count varies from day to day it appears as a faint column behind each date, and while every day has the same number the legend prints that number instead.</p>
+  <p class="desc">One line each was the previous design. It is readable at one submission and unreadable at fifty, and it cost every visitor a download of every submitter's entire daily history. The per-machine numbers did not go away: each row in <a href="#secSubs">Submissions</a> links the file its own totals are the sum of.</p>
   <div class="card">
+    <div class="err" id="fleetErr" hidden>Could not load <a class="mono" href="data/daily.json">data/daily.json</a>. The fleet series is missing or unreadable, so this chart is empty; the rest of the page is unaffected.</div>
     <canvas id="fleet" height="260"></canvas>
     <div class="legend" id="fleetLegend"></div>
   </div>
@@ -525,6 +534,7 @@ a{color:inherit}
 <section id="secSubs">
   <h2>Submissions <span class="badge real h2-badge">Real submissions</span></h2>
   <p class="desc">Aggregate totals per submission. No timestamps, no session IDs, no file paths; the schema cannot carry them. Nicknames are stored masked, so the row you submitted is marked from this browser's own record instead. Click a column header to sort: it reorders the rows on screen and changes nothing else on the page.</p>
+  <p class="desc">The last column links each row's own daily rows. That file is what the row's totals are the sum of, so the arithmetic on this page is checkable one row at a time: <a href="data/submissions.json">the index</a> (these rows), <a href="data/daily.json">the fleet series</a> (the chart above), and one detail file per machine. This page downloads the first two and never the third — opening one is your choice, not the page's.</p>
   <div class="card tbl-scroll">
     <table class="subs" id="subsTable">
       <thead><tr>
@@ -538,6 +548,7 @@ a{color:inherit}
         <th aria-sort="none"><button type="button" class="sort-btn" data-sort="plan">Plan<span class="sort-ind" aria-hidden="true">↕</span></button></th>
         <th aria-sort="none"><button type="button" class="sort-btn" data-sort="client">Client<span class="sort-ind" aria-hidden="true">↕</span></button></th>
         <th aria-sort="none"><button type="button" class="sort-btn" data-sort="sessions">Sessions<span class="sort-ind" aria-hidden="true">↕</span></button></th>
+        <th>Daily detail</th>
       </tr></thead>
       <tbody></tbody>
     </table>
@@ -569,8 +580,10 @@ a{color:inherit}
         <li><span class="mono">assets/parse.js</span> — the scoring engine, running in your browser. Same rules as the CLI <span class="mono">scripts/check_cache_loss.py</span>, with an automated test comparing both outputs.</li>
         <li><span class="mono">assets/charts.js</span> — drawing only. It does no scoring.</li>
         <li><span class="mono">assets/store.js</span> — the check page's optional local save. Browser storage only, never the network, and only after you confirm.</li>
-        <li><span class="mono">functions/api/submit.js</span> — the only code that runs on a server. Called only when you press submit; it validates the schema and commits to this repo.</li>
-        <li><span class="mono">data/submissions.json</span> — the public dataset this page reads. One submission is one commit, so the full history is auditable.</li>
+        <li><span class="mono">functions/api/submit.js</span> — the only code that runs on a server. Called only when you press submit; it validates the schema and commits all three data files below in <b>one</b> commit.</li>
+        <li><a class="mono" href="data/submissions.json">data/submissions.json</a> — the index: one row per submitting machine, totals only. This page reads it.</li>
+        <li><a class="mono" href="data/daily.json">data/daily.json</a> — the fleet series: one row per calendar day, summed across every machine. This page reads it for the chart, and it is the only other file it fetches.</li>
+        <li><span class="mono">data/subs/&lt;id&gt;.json</span> — one file per submission, holding that machine's daily rows. <b>Linked from every row of the submission list, never downloaded by this page.</b> An index row's totals are exactly the sum of its own file, and <span class="mono">data/daily.json</span> is exactly the sum across all of them; <span class="mono">tests/dataset_validate.py</span> in the repo re-checks both.</li>
         <li><span class="mono">wrangler.toml</span> — even the deployment configuration is public: there is no hidden backend.</li>
       </ul>
     </div></details>
@@ -606,7 +619,18 @@ a{color:inherit}
 <script src="assets/demo.js"></script>
 <script>
 "use strict";
+/* ===== What this page downloads (M14) ====================================
+   Exactly two files, ever. The index carries one row per submitting machine
+   (measured 1,901 bytes with a fingerprint, 508 without) and no per-day rows at
+   all; the fleet series carries one 96-byte row per calendar DATE no matter how
+   many machines report it. Neither grows with the other, and a visitor is never
+   made to download somebody else's daily history to read four headline numbers.
+   The per-submission detail lives in data/subs/<id>.json and is LINKED, not
+   fetched: the row's own "daily detail" link is the audit path. That is a
+   deliberate choice — the page has no viewer for another machine's days. */
+var DATA_BASE = "data/";
 var FLEET_MODEL = null;
+var FLEET_DAYS = null;
 var SUBS = null;
 
 function esc(s){
@@ -625,23 +649,29 @@ function fmtPct(v){ return v.toFixed(2) + "%"; }
 function mdLabel(iso){ return (+iso.slice(5,7)) + "/" + (+iso.slice(8,10)); }
 function hh(h){ return String(h).padStart(2, "0"); }
 
-function buildFleetModel(subs){
-  var dateSet = new Set();
-  subs.forEach(function(s){ s.daily.forEach(function(d){ dateSet.add(d.date); }); });
-  var dates = Array.from(dateSet).sort();
-  var series = subs.map(function(s, i){
-    var byDate = new Map();
-    s.daily.forEach(function(d){ byDate.set(d.date, d); });
-    return {
-      color: ObservatoryCharts.PALETTE[i % ObservatoryCharts.PALETTE.length],
-      values: dates.map(function(dt){
-        var d = byDate.get(dt);
-        if(!d || d.requests <= 0) return null;
-        return 100 * d.losses / d.requests;
-      })
-    };
+/* ONE fleet-wide line, built from data/daily.json — not one line per machine.
+   Until M14 every submission drew its own line, which was readable at one
+   submission and unreadable at fifty; the file that fed it also carried every
+   submitter's whole daily history to every visitor. The series is now computed
+   on the server, one row per calendar date across all machines.
+   It carries a RATE, not counts: losses divided by that day's requests. A count
+   line would rise whenever more people submitted and answer "how many machines
+   are reporting" instead of "is this getting worse". A day with no requests has
+   no rate and becomes a gap in the line rather than a zero. */
+function buildFleetModel(days){
+  var rows = (days || []).filter(function(d){
+    return d && typeof d.date === "string";
   });
-  return { dates: dates, series: series };
+  return {
+    dates: rows.map(function(d){ return d.date; }),
+    series: [{
+      color: ObservatoryCharts.PALETTE[0],
+      values: rows.map(function(d){
+        return d.requests > 0 ? 100 * d.losses / d.requests : null;
+      })
+    }],
+    coverage: rows.map(function(d){ return d.machines || 0; })
+  };
 }
 
 function renderKpis(subs){
@@ -658,12 +688,37 @@ function renderKpis(subs){
   document.getElementById("kpiPeriod").textContent = minD && maxD ? minD + " → " + maxD : "–";
 }
 
-function renderLegend(subs){
+/* The legend names both things the chart draws, and the second one matters:
+   without the machine count a reader cannot tell a day that one machine
+   reported from a day that fifty did, and the rate line looks identical either
+   way. */
+function renderLegend(days){
   var el = document.getElementById("fleetLegend");
-  el.innerHTML = subs.map(function(s, i){
-    var color = ObservatoryCharts.PALETTE[i % ObservatoryCharts.PALETTE.length];
-    return "<span><i class='chip line' style='background:" + color + "'></i>" + esc(s.nickname || "anonymous") + "</span>";
-  }).join("");
+  var rows = days || [];
+  var maxMachines = 0, minMachines = 0;
+  rows.forEach(function(d, i){
+    var m = d.machines || 0;
+    if(m > maxMachines) maxMachines = m;
+    if(i === 0 || m < minMachines) minMachines = m;
+  });
+  // The second entry describes a shading the chart only draws when the machine
+  // count actually varies. When it does not, the swatch would point at nothing
+  // on screen, so the count is stated in words and the swatch is left out.
+  var uniform = !rows.length || minMachines === maxMachines;
+  var cover = rows.length
+    ? (uniform
+        ? "every day so far was reported by " + maxMachines + " machine" +
+          (maxMachines === 1 ? "" : "s") + ", so there is nothing to shade"
+        : "shaded column height = machines reporting that day (" +
+          minMachines + " to " + maxMachines + ", depending on the day)")
+    : "no days reported yet";
+  el.innerHTML =
+    "<span><i class='chip line' style='background:" + ObservatoryCharts.PALETTE[0] +
+      "'></i>fleet loss rate: that day's in-TTL losses ÷ that day's requests, " +
+      "all machines pooled</span>" +
+    "<span>" + (uniform ? "" :
+      "<i class='chip' style='background:var(--ink);opacity:.16'></i>") +
+      esc(cover) + "</span>";
 }
 
 /* ===== "which row is mine" ===============================================
@@ -799,8 +854,34 @@ function renderTable(subs){
       "<td>" + esc(s.plan) + "</td>" +
       "<td>" + esc(s.client) + "</td>" +
       "<td>" + esc(s.concurrent_sessions || "unknown") + "</td>" +
+      "<td class='detail'>" + detailCell(s) + "</td>" +
       "</tr>";
   }).join("");
+}
+
+/* ===== The link to the row's own numbers =================================
+   The site's claim is that anyone can check the arithmetic. Until M14 the file
+   that would let them was named in the file map as plain text, with no path to
+   follow — the one place where the central promise was unclickable.
+   Each row now links the file its own totals are the sum of. The href is built
+   from the id, and only from an id shaped exactly like the ones this pipeline
+   mints: the id becomes a path segment, so a hand-edited public file must not
+   be able to aim this link anywhere it likes. A row that fails the check shows
+   its day count as plain text instead of a broken link. */
+var SUB_ID_RE = /^sub-[0-9]{14}-[0-9a-f]{4}$/;
+
+function detailHref(s){
+  var id = String((s && s.id) || "");
+  return SUB_ID_RE.test(id) ? DATA_BASE + "subs/" + id + ".json" : null;
+}
+
+function detailCell(s){
+  var days = (typeof s.daily_days === "number" && s.daily_days >= 0) ? s.daily_days : null;
+  var label = days === null ? "daily rows" : fmtInt(days) + (days === 1 ? " day" : " days");
+  var href = detailHref(s);
+  if(!href) return "<span class='na'>" + esc(label) + "</span>";
+  return "<a href='" + esc(href) + "' title='The daily rows this row's totals are the sum of'>" +
+    esc(label) + " ↗</a>";
 }
 
 /* ===== Environment breakdown ============================================
@@ -864,8 +945,10 @@ function renderEnvFilter(){
   if(!ENV_FILTER){ el.hidden = true; el.innerHTML = ""; return; }
   el.hidden = false;
   el.innerHTML = "Filtered to <b>" + esc(ENV_FILTER.axis) + " = " + esc(ENV_FILTER.value) +
-    "</b> (n " + filteredSubs().length + "). Applied to the fleet chart above and the " +
-    "submission list below; the KPIs stay on the whole dataset." +
+    "</b> (n " + filteredSubs().length + "). Applied to the submission list below. " +
+    "The KPIs stay on the whole dataset, and so does the fleet chart: it is " +
+    "summed per calendar day across every machine and carries no environment " +
+    "field to cut on." +
     "<button type='button' id='envClear'>clear</button>";
   document.getElementById("envClear").addEventListener("click", function(){
     ENV_FILTER = null;
@@ -1016,16 +1099,18 @@ function renderEnv(){
   renderEnvFilter();
 }
 
-/* The filter narrows the fleet chart and the submission list. It deliberately
-   leaves the KPIs alone: those are the observatory's headline totals and must
-   keep meaning "everything submitted". */
+/* The filter narrows the submission list. It deliberately leaves the KPIs
+   alone: those are the observatory's headline totals and must keep meaning
+   "everything submitted".
+   M14 took the fleet chart out of its reach, and that is a real loss, stated
+   rather than hidden. The chart is now drawn from data/daily.json, which is
+   summed across every machine on the server and carries no environment fields;
+   re-cutting it per environment would mean shipping a separate series for every
+   value of every axis, or going back to downloading everyone's daily history to
+   the browser. The filter's own caption says so on screen. */
 function applyEnvFilter(){
-  var fs = filteredSubs();
-  renderLegend(fs);
-  renderTable(fs);
-  FLEET_MODEL = buildFleetModel(fs);
+  renderTable(filteredSubs());
   renderEnv();
-  drawAll();
 }
 
 function bindEnvControls(){
@@ -1219,35 +1304,50 @@ document.addEventListener("mousedown", function(ev){
    cell anyway, and keeping the handler would have snapped the card a reader
    was mid-way through back to the default hour on every scroll. */
 
-fetch("data/submissions.json")
-  .then(function(r){
+/* Two files, fetched together and failing separately. They back different parts
+   of the page — the index backs the KPIs, the table and the environment
+   breakdown; the fleet series backs the chart — so one being unreadable must
+   leave the other's section rendered and say which one is missing, rather than
+   blanking a page that is mostly prose either way. */
+function fetchJson(url){
+  return fetch(url).then(function(r){
     if(!r.ok) throw new Error("HTTP " + r.status);
     return r.json();
-  })
-  .then(function(doc){
-    SUBS = doc.submissions || [];
+  });
+}
+
+Promise.all([
+  fetchJson(DATA_BASE + "submissions.json").catch(function(){ return null; }),
+  fetchJson(DATA_BASE + "daily.json").catch(function(){ return null; })
+]).then(function(res){
+  var doc = res[0], fleet = res[1];
+
+  if(doc && Array.isArray(doc.submissions)){
+    SUBS = doc.submissions;
     renderKpis(SUBS);
-    renderLegend(SUBS);
     renderTable(SUBS);
-    FLEET_MODEL = buildFleetModel(SUBS);
     bindEnvControls();
     renderEnv();
-    drawAll();
-    syncPaneFocus();
-    // Restore first, then focus: the pane has its final height only now that
-    // the fleet rows and the chart are in it, and focusPane() is preventScroll
-    // precisely so it cannot undo the offset just restored.
-    initScrollMemory();
-    focusPane();
-  })
-  .catch(function(){
+  } else {
     document.getElementById("loadErr").hidden = false;
-    // A failed fetch still leaves a long, readable page. The keyboard and the
-    // remembered position are not part of what failed.
-    syncPaneFocus();
-    initScrollMemory();
-    focusPane();
-  });
+  }
+
+  if(fleet && Array.isArray(fleet.days)){
+    FLEET_DAYS = fleet.days;
+    renderLegend(FLEET_DAYS);
+    FLEET_MODEL = buildFleetModel(FLEET_DAYS);
+  } else {
+    document.getElementById("fleetErr").hidden = false;
+  }
+
+  drawAll();
+  syncPaneFocus();
+  // Restore first, then focus: the pane has its final height only now that the
+  // fleet rows and the chart are in it, and focusPane() is preventScroll
+  // precisely so it cannot undo the offset just restored.
+  initScrollMemory();
+  focusPane();
+});
 
 /* The scrolling pane is a div, and a div that scrolls needs to be focusable or
    a keyboard user has nothing to press arrow keys against. It is only marked up

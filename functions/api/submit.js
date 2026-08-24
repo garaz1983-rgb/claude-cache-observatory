@@ -8,7 +8,7 @@
  *   1. schema whitelist validation  -> 400 {ok:false, error:"schema", detail}
  *   2. sanity validation            -> 400 (same shape)
  *   3. rate limit (KV only)         -> 429 {ok:false, error:"rate_limited", retry_after}
- *   4. bot commit via GitHub Contents API (409 => re-GET + one retry)
+ *   4. bot commit via GitHub Git Data API (ref moved => re-read + one retry)
  *                                   -> 502 {ok:false, error:"storage"} on failure
  *   5. 200 {ok:true, id, commit_url, merged, period_start, period_end[, token]}
  *
@@ -20,6 +20,10 @@
  *     field list is unchanged; only the value written into `nickname` is.
  *   - env.GITHUB_API_BASE overrides the API base for tests
  *     (default https://api.github.com).
+ *   - env.GITHUB_BRANCH names the branch the bot commits to (default master).
+ *     The Contents API defaulted to the repository's default branch on its
+ *     own; the Git Data API has to be told, so wrangler.toml declares it and
+ *     the value stays publicly auditable like every other binding.
  *
  * ---------- M13: one submitter, one row ----------
  *
@@ -53,6 +57,62 @@
  * recomputed from the merged daily rows so the file's own arithmetic stays
  * true. M10's incremental path depends on this — replacing the row outright
  * would let a 3-day increment wipe a 3-month record.
+ *
+ * ---------- M14: three files, one commit ----------
+ *
+ * Until M14 everything above lived in ONE public file, daily rows included,
+ * and index.html downloaded all of it to render four headline numbers. One
+ * daily row is 99 bytes and a machine-year is ~35 KB, so 1000 submitters would
+ * have been a 34 MB download — and long before that the write path itself
+ * would have stopped: the Contents API does not return inline `content` for a
+ * file over 1 MB, so the read would have parsed empty and every submission
+ * would have failed with nothing on screen to explain it. (That limit is
+ * GitHub's documented behaviour; it was never reproduced against the live API,
+ * because the fix is to leave that endpoint rather than to walk up to it.)
+ *
+ * The dataset is now three kinds of file:
+ *
+ *   data/submissions.json  the INDEX. Same path, so existing links and the
+ *                          "one submission is one commit" story survive, but
+ *                          the row carries no `daily` array any more — only
+ *                          `daily_days` (how many rows its detail file holds)
+ *                          and `detail` (where that file is). Measured: 508
+ *                          bytes for a row with no fingerprint, 1,901 with one
+ *                          — about two thirds of that is identity.anchor_hashes,
+ *                          16 digests at 64 hex characters, which makes the
+ *                          identity block the index's dominant growth term.
+ *   data/daily.json        the FLEET series: one row per calendar DATE, summed
+ *                          across every submission, plus how many machines
+ *                          reported that date. Bounded by the calendar, not by
+ *                          the number of submitters — 96.3 bytes a day measured,
+ *                          so ~34 KB a year whether 1 person submits or 1000.
+ *   data/subs/<id>.json    one submission's per-day detail. Written on every
+ *                          submission, linked from the page, fetched by nobody
+ *                          automatically. 80.7 bytes a day, ~29 KB per
+ *                          machine-year, and unbounded per machine on purpose:
+ *                          that history is the record.
+ *
+ * Storage moved off the Contents API onto the Git Data API (blob -> tree ->
+ * commit -> ref) for two reasons, both required:
+ *
+ *   - the blob endpoint has no 1 MB inline cap, so the wall is gone rather
+ *     than pushed further away;
+ *   - a submission writes THREE files and they must land TOGETHER. Three
+ *     sequential Contents-API PUTs would be three commits with no atomicity,
+ *     and a failure between them leaves the fleet series counting a submission
+ *     the index does not list, or a detail file nothing points at. One tree,
+ *     one commit, one ref update.
+ *
+ * The single retry is unchanged in spirit: a ref that moved under us (422 on
+ * the ref update, the equivalent of the old 409) earns one re-read, and the
+ * match, the merge and the fleet delta all re-run against the FRESH content.
+ * Nothing is merged against a stale read.
+ *
+ * 🔴 Whatever a file claims must add up inside itself, and the three must
+ * agree with each other: the index row's totals equal the sum of its own
+ * detail file, and data/daily.json equals the sum across all detail files.
+ * tests/dataset_validate.py is the single definition of that, and the contract
+ * test runs it after every accepted submission.
  */
 
 const MAX_BODY_BYTES = 64 * 1024;
@@ -88,7 +148,22 @@ const ANCHOR_STORE_PREFIX = "cco.anchor2.v1|";
 const TOKEN_STORE_PREFIX = "cco.token.v1|";
 const TOKEN_BYTES = 16;
 
-const DATA_PATH = "data/submissions.json";
+/* M14 layout. SUB_ID_RE is not cosmetic: the id becomes a file NAME under
+   data/subs/, so an id that is not exactly this shape is refused rather than
+   sanitised. Every id this file mints matches it by construction; the check
+   exists for ids read back out of the public index, which a repo admin can
+   hand-edit. */
+const INDEX_PATH = "data/submissions.json";
+const FLEET_PATH = "data/daily.json";
+const SUBS_PREFIX = "data/subs/";
+const INDEX_SCHEMA_VERSION = 2;
+const FLEET_SCHEMA_VERSION = 1;
+const DETAIL_SCHEMA_VERSION = 1;
+const SUB_ID_RE = /^sub-[0-9]{14}-[0-9a-f]{4}$/;
+const DEFAULT_BRANCH = "master";
+const BLOB_MODE = "100644";
+const DETAIL_ROW_KEYS = ["date", "requests", "losses", "wasted_tokens"];
+const FLEET_ROW_KEYS = ["date", "requests", "losses", "wasted_tokens", "machines"];
 
 function jsonResponse(status, body) {
   return new Response(JSON.stringify(body), {
@@ -376,7 +451,7 @@ async function checkRateLimit(request, env) {
   return { allowed: true };
 }
 
-/* ---------- step 4: bot commit via GitHub Contents API ---------- */
+/* ---------- step 4: bot commit via the GitHub Git Data API ---------- */
 
 function b64EncodeUtf8(text) {
   const bytes = new TextEncoder().encode(text);
@@ -441,8 +516,12 @@ function buildIncoming(body) {
   };
 }
 
-/* One stored row, always written in the same field order so a diff of the
-   public file reads as a diff of the numbers. */
+/* One stored INDEX row, always written in the same field order so a diff of the
+   public file reads as a diff of the numbers.
+
+   M14: `daily` is gone from here and `daily_days` + `detail` take its place.
+   The day count is not decoration — it is what lets a reader check that the
+   detail file at that path is complete without the index having to carry it. */
 function composeRecord(id, submittedAt, updatedAt, fields, identity) {
   const rec = { id: id, submitted_at: submittedAt };
   if (updatedAt) rec.updated_at = updatedAt;
@@ -453,10 +532,90 @@ function composeRecord(id, submittedAt, updatedAt, fields, identity) {
   rec.period_start = fields.period_start;
   rec.period_end = fields.period_end;
   rec.totals = fields.totals;
-  rec.daily = fields.daily;
+  rec.daily_days = fields.daily.length;
+  rec.detail = detailPath(id);
   rec.script_version = fields.script_version;
   if (identity) rec.identity = identity;
   return rec;
+}
+
+function detailPath(id) {
+  return SUBS_PREFIX + id + ".json";
+}
+
+/* One submission's per-day detail. It repeats the period and the totals on
+   purpose: a reader who opens only this file can still add its own rows up and
+   check them, and a reader who has both can check the two against each other. */
+function buildDetail(id, fields) {
+  return {
+    schema_version: DETAIL_SCHEMA_VERSION,
+    id: id,
+    period_start: fields.period_start,
+    period_end: fields.period_end,
+    totals: fields.totals,
+    daily: fields.daily
+  };
+}
+
+/* ---------- serialisation ----------
+ *
+ * The index is ordinary 2-space JSON: it holds one record per submitter and
+ * those are read as records.
+ *
+ * The two files that grow with TIME are written one row per line instead. Two
+ * reasons, both about the reader: `git log -p data/daily.json` then reads as a
+ * list of the days that changed rather than a five-line block per day, and the
+ * file is about a quarter smaller than the same rows pretty-printed (measured
+ * on the migrated dataset: 89 days, 11,779 bytes pretty vs 8,575 as lines —
+ * 96 bytes a day). It is still plain JSON; nothing needs a custom parser.
+ */
+function inlineRow(obj, keys) {
+  const parts = [];
+  for (let i = 0; i < keys.length; i++) {
+    parts.push(JSON.stringify(keys[i]) + ": " + JSON.stringify(obj[keys[i]]));
+  }
+  return "{" + parts.join(", ") + "}";
+}
+
+/* head: [[key, already-encoded value], ...] written at 2-space indent, then
+   `arrayKey` with one encoded row per line. */
+function serializeRowFile(head, arrayKey, rows, rowKeys) {
+  const out = ["{"];
+  for (let i = 0; i < head.length; i++) {
+    out.push("  " + JSON.stringify(head[i][0]) + ": " + head[i][1] + ",");
+  }
+  if (!rows.length) {
+    out.push("  " + JSON.stringify(arrayKey) + ": []");
+  } else {
+    out.push("  " + JSON.stringify(arrayKey) + ": [");
+    for (let i = 0; i < rows.length; i++) {
+      out.push("    " + inlineRow(rows[i], rowKeys) +
+        (i === rows.length - 1 ? "" : ","));
+    }
+    out.push("  ]");
+  }
+  out.push("}");
+  return out.join("\n") + "\n";
+}
+
+function serializeIndex(doc) {
+  return JSON.stringify(doc, null, 2) + "\n";
+}
+
+function serializeDetail(detail) {
+  return serializeRowFile([
+    ["schema_version", JSON.stringify(detail.schema_version)],
+    ["id", JSON.stringify(detail.id)],
+    ["period_start", JSON.stringify(detail.period_start)],
+    ["period_end", JSON.stringify(detail.period_end)],
+    ["totals", inlineRow(detail.totals, TOTALS_FIELDS)]
+  ], "daily", detail.daily, DETAIL_ROW_KEYS);
+}
+
+function serializeFleet(fleet) {
+  return serializeRowFile([
+    ["schema_version", JSON.stringify(fleet.schema_version)]
+  ], "days", fleet.days, FLEET_ROW_KEYS);
 }
 
 function commitMessage(submission, merged) {
@@ -563,9 +722,14 @@ function dailyRowOf(d) {
  * between. Iron is the worst subset of the losses, so under-counting it is the
  * direction that cannot flatter the site's own headline.
  */
-function mergeRecord(existing, incoming) {
+/* M14: the existing daily rows arrive as their own argument, because they no
+   longer live on the index row — they live in data/subs/<id>.json, which the
+   caller has to read before it may merge. Passing them in rather than reaching
+   for `existing.daily` is what makes it impossible to "merge" against a row
+   whose history was never loaded and silently rewrite its totals downward. */
+function mergeRecord(existing, existingDaily, incoming) {
   const byDate = new Map();
-  const exDaily = Array.isArray(existing.daily) ? existing.daily : [];
+  const exDaily = Array.isArray(existingDaily) ? existingDaily : [];
   let existingLosses = 0;
   for (let i = 0; i < exDaily.length; i++) {
     const row = dailyRowOf(exDaily[i]);
@@ -624,6 +788,83 @@ function mergeRecord(existing, incoming) {
   };
 }
 
+/* ---------- M14: the fleet-wide daily series ----------
+ *
+ * data/daily.json is the sum across every submission, one row per calendar
+ * date. It is maintained as a DELTA, not recomputed: recomputing it would mean
+ * reading every submitter's detail file on every submission, which is the exact
+ * cost this milestone exists to remove. Applying a delta is O(this row's days)
+ * no matter how many people have submitted.
+ *
+ * The delta is exact because both halves are known at the same instant: the
+ * row's OLD daily rows (just read from its detail file, empty for a new row)
+ * come out, its NEW daily rows go in, and `machines` moves by -1/+1 per date.
+ * The merge unions dates, so a date a row already covered nets to zero and a
+ * genuinely new date nets to +1.
+ *
+ * Delta arithmetic is inductive: it keeps the file correct if the file was
+ * correct. tests/dataset_validate.py is the check that closes that induction —
+ * it recomputes the whole series from the detail files and compares.
+ */
+function fleetRowOf(d) {
+  if (!isPlainObject(d) || parseDay(d.date) === null) return null;
+  return {
+    date: d.date,
+    requests: isCount(d.requests) ? d.requests : 0,
+    losses: isCount(d.losses) ? d.losses : 0,
+    wasted_tokens: isCount(d.wasted_tokens) ? d.wasted_tokens : 0,
+    machines: isCount(d.machines) ? d.machines : 0
+  };
+}
+
+function applyFleetDelta(fleet, oldDaily, newDaily) {
+  const byDate = new Map();
+  const days = fleet && Array.isArray(fleet.days) ? fleet.days : [];
+  for (let i = 0; i < days.length; i++) {
+    const row = fleetRowOf(days[i]);
+    if (!row) continue;            // a hand-edited file must not poison the series
+    byDate.set(row.date, row);
+  }
+  for (let i = 0; i < oldDaily.length; i++) {
+    const r = oldDaily[i];
+    const cur = byDate.get(r.date);
+    if (!cur) continue;            // never covered by the series; nothing to take out
+    cur.requests -= r.requests;
+    cur.losses -= r.losses;
+    cur.wasted_tokens -= r.wasted_tokens;
+    cur.machines -= 1;
+  }
+  for (let i = 0; i < newDaily.length; i++) {
+    const r = newDaily[i];
+    let cur = byDate.get(r.date);
+    if (!cur) {
+      cur = { date: r.date, requests: 0, losses: 0, wasted_tokens: 0, machines: 0 };
+      byDate.set(r.date, cur);
+    }
+    cur.requests += r.requests;
+    cur.losses += r.losses;
+    cur.wasted_tokens += r.wasted_tokens;
+    cur.machines += 1;
+  }
+  const out = [];
+  byDate.forEach(function (d) {
+    // A date no submission covers any more is dropped rather than left at zero:
+    // a row reading "0 requests, 0 machines" is a claim about a day nobody
+    // observed. The clamps below can only fire on a file that was already
+    // wrong, and a negative count in a public file would be worse than a low one.
+    if (d.machines <= 0) return;
+    out.push({
+      date: d.date,
+      requests: Math.max(0, d.requests),
+      losses: Math.max(0, d.losses),
+      wasted_tokens: Math.max(0, d.wasted_tokens),
+      machines: d.machines
+    });
+  });
+  out.sort(function (a, b) { return a.date < b.date ? -1 : (a.date > b.date ? 1 : 0); });
+  return { schema_version: FLEET_SCHEMA_VERSION, days: out };
+}
+
 function ghFetch(url, token, options) {
   const headers = {
     "Authorization": "Bearer " + token,
@@ -635,40 +876,201 @@ function ghFetch(url, token, options) {
   return fetch(url, { method: options.method, headers: headers, body: options.body });
 }
 
-/* The match, the merge and the write are all inside the retry loop on purpose:
-   a 409 means somebody else's commit landed in between, and after the re-GET
-   the answer to "does this machine already have a row" may have changed. */
+/* Every GitHub call goes through here so a transport failure and an error
+   status arrive in the same shape. status 0 = the fetch itself threw. */
+async function ghJson(url, token, options) {
+  let res;
+  try {
+    res = await ghFetch(url, token, options || { method: "GET" });
+  } catch (e) {
+    return { status: 0, body: null };
+  }
+  let body = null;
+  try { body = await res.json(); } catch (e) { /* status is what matters */ }
+  return { status: res.status, body: body };
+}
+
+/* One entry of a NON-recursive tree listing, where `path` is the bare name.
+   The walk is deliberately not `?recursive=1`: that would pull every path in
+   the repository into the worker on every submission, and data/subs/ is the
+   one directory that grows with the number of submitters. Walked a level at a
+   time, the listing of that directory is fetched only when a row is actually
+   being merged into. */
+function treeEntry(tree, name, type) {
+  const list = tree && Array.isArray(tree.tree) ? tree.tree : [];
+  for (let i = 0; i < list.length; i++) {
+    const e = list[i];
+    if (e && e.path === name && e.type === type) return e;
+  }
+  return null;
+}
+
+/* A blob, parsed. `null` means "should be there and is not readable", which is
+   always a hard failure; a caller that can tolerate absence checks the sha
+   before calling. The blob endpoint carries content up to 100 MB, which is the
+   whole reason this file left the Contents API and its 1 MB inline cap. */
+async function readJsonBlob(api, token, sha) {
+  const got = await ghJson(api + "/git/blobs/" + sha, token);
+  if (got.status !== 200 || !got.body || typeof got.body.content !== "string") {
+    return null;
+  }
+  try {
+    return JSON.parse(b64DecodeUtf8(got.body.content));
+  } catch (e) {
+    return null;
+  }
+}
+
+/* Read the whole write-relevant state of the repository at HEAD:
+   ref -> commit -> root tree -> data/ tree -> the two blobs the page reads.
+   Returns null on any failure. A file that is simply absent is not a failure:
+   an empty index and an empty fleet series are what a repository looks like
+   before its first submission. */
+async function readState(api, token, branch) {
+  const ref = await ghJson(api + "/git/ref/heads/" + branch, token);
+  if (ref.status !== 200 || !ref.body || !isPlainObject(ref.body.object)) return null;
+  const headSha = ref.body.object.sha;
+  if (typeof headSha !== "string" || !headSha) return null;
+
+  const commit = await ghJson(api + "/git/commits/" + headSha, token);
+  if (commit.status !== 200 || !commit.body || !isPlainObject(commit.body.tree)) {
+    return null;
+  }
+  const rootTreeSha = commit.body.tree.sha;
+  if (typeof rootTreeSha !== "string" || !rootTreeSha) return null;
+
+  const root = await ghJson(api + "/git/trees/" + rootTreeSha, token);
+  if (root.status !== 200) return null;
+
+  let indexSha = "", fleetSha = "", subsSha = "";
+  const dataDir = treeEntry(root.body, "data", "tree");
+  if (dataDir) {
+    const dataTree = await ghJson(api + "/git/trees/" + dataDir.sha, token);
+    if (dataTree.status !== 200) return null;
+    const i = treeEntry(dataTree.body, "submissions.json", "blob");
+    const f = treeEntry(dataTree.body, "daily.json", "blob");
+    const s = treeEntry(dataTree.body, "subs", "tree");
+    if (i) indexSha = i.sha;
+    if (f) fleetSha = f.sha;
+    if (s) subsSha = s.sha;
+  }
+
+  let index = { schema_version: INDEX_SCHEMA_VERSION, submissions: [] };
+  if (indexSha) {
+    index = await readJsonBlob(api, token, indexSha);
+    if (!isPlainObject(index) || !Array.isArray(index.submissions)) return null;
+  }
+  let fleet = { schema_version: FLEET_SCHEMA_VERSION, days: [] };
+  if (fleetSha) {
+    fleet = await readJsonBlob(api, token, fleetSha);
+    if (!isPlainObject(fleet) || !Array.isArray(fleet.days)) return null;
+  }
+  return {
+    headSha: headSha,
+    rootTreeSha: rootTreeSha,
+    subsSha: subsSha,
+    index: index,
+    fleet: fleet
+  };
+}
+
+/* The daily rows of the row being merged into. Returns null on ANY doubt —
+   missing directory, missing file, unreadable file, an id that is not the id
+   the file claims. The caller turns null into a 502 instead of merging, because
+   a merge against daily rows that failed to load would recompute the row's
+   totals from the incoming submission alone and silently delete that machine's
+   history from a public file. */
+async function readDetailDaily(api, token, subsSha, id) {
+  if (!subsSha) return null;
+  const listing = await ghJson(api + "/git/trees/" + subsSha, token);
+  if (listing.status !== 200) return null;
+  const entry = treeEntry(listing.body, id + ".json", "blob");
+  if (!entry) return null;
+  const detail = await readJsonBlob(api, token, entry.sha);
+  if (!isPlainObject(detail) || detail.id !== id || !Array.isArray(detail.daily)) {
+    return null;
+  }
+  return detail.daily;
+}
+
+/* blobs -> tree -> commit -> ref, in that order, which is what makes the three
+   files ONE commit. `base_tree` is the tree the read came from, so every path
+   this commit does not mention is carried over unchanged and GitHub resolves
+   the nested directories for us.
+   Returns {url} on success, {moved:true} when the ref moved under us (the
+   caller's one retry), or null for any other failure. */
+async function writeCommit(api, token, branch, state, files, message) {
+  const entries = [];
+  for (let i = 0; i < files.length; i++) {
+    const blob = await ghJson(api + "/git/blobs", token, {
+      method: "POST",
+      body: JSON.stringify({
+        content: b64EncodeUtf8(files[i].text),
+        encoding: "base64"
+      })
+    });
+    if (blob.status !== 200 && blob.status !== 201) return null;
+    if (!blob.body || typeof blob.body.sha !== "string") return null;
+    entries.push({
+      path: files[i].path,
+      mode: BLOB_MODE,
+      type: "blob",
+      sha: blob.body.sha
+    });
+  }
+
+  const tree = await ghJson(api + "/git/trees", token, {
+    method: "POST",
+    body: JSON.stringify({ base_tree: state.rootTreeSha, tree: entries })
+  });
+  if (tree.status !== 200 && tree.status !== 201) return null;
+  if (!tree.body || typeof tree.body.sha !== "string") return null;
+
+  const commit = await ghJson(api + "/git/commits", token, {
+    method: "POST",
+    body: JSON.stringify({
+      message: message,
+      tree: tree.body.sha,
+      parents: [state.headSha]
+    })
+  });
+  if (commit.status !== 200 && commit.status !== 201) return null;
+  if (!commit.body || typeof commit.body.sha !== "string") return null;
+
+  // force stays false: a submission may only fast-forward the branch. If
+  // somebody else's commit landed after our read, this is the 422 that used to
+  // be the Contents API's 409, and nothing has been published yet — the blobs
+  // and the commit exist as unreferenced objects and no branch points at them.
+  const upd = await ghJson(api + "/git/refs/heads/" + branch, token, {
+    method: "PATCH",
+    body: JSON.stringify({ sha: commit.body.sha, force: false })
+  });
+  if (upd.status === 200) {
+    return { url: typeof commit.body.html_url === "string" ? commit.body.html_url : "" };
+  }
+  if (upd.status === 422) return { moved: true };
+  return null;
+}
+
+/* The read, the match, the merge, the fleet delta and the write are all inside
+   the retry loop on purpose: a moved ref means somebody else's commit landed in
+   between, and after the re-read the answer to "does this machine already have
+   a row" — and what that row contains — may both have changed. Nothing computed
+   before the conflict is carried across it. */
 async function commitSubmission(env, incoming, ident, issued, now) {
   const token = env.GITHUB_TOKEN;
   const repo = env.GITHUB_REPO;
   if (!token || !repo) return { ok: false };
   const base = (env.GITHUB_API_BASE || "https://api.github.com").replace(/\/+$/, "");
-  const url = base + "/repos/" + repo + "/contents/" + DATA_PATH;
+  const api = base + "/repos/" + repo;
+  const branch = env.GITHUB_BRANCH || DEFAULT_BRANCH;
   const today = now.toISOString().slice(0, 10); // truncated to the day
 
-  // attempt 0 = normal path; attempt 1 = the single re-GET retry after a 409.
+  // attempt 0 = normal path; attempt 1 = the single re-read retry.
   for (let attempt = 0; attempt < 2; attempt++) {
-    let sha = null;
-    let doc = { schema_version: 1, submissions: [] };
-    let got;
-    try {
-      got = await ghFetch(url, token, { method: "GET" });
-    } catch (e) {
-      return { ok: false };
-    }
-    if (got.status === 200) {
-      let meta;
-      try {
-        meta = await got.json();
-        doc = JSON.parse(b64DecodeUtf8(meta.content));
-      } catch (e) {
-        return { ok: false };
-      }
-      sha = meta.sha;
-      if (!isPlainObject(doc) || !Array.isArray(doc.submissions)) return { ok: false };
-    } else if (got.status !== 404) {
-      return { ok: false }; // 404 = first-ever submission; anything else is storage failure
-    }
+    const state = await readState(api, token, branch);
+    if (!state) return { ok: false };
+    const doc = state.index;
 
     const idx = matchIndex(doc.submissions, ident.anchorHashes, ident.tokenHash);
     const merged = idx !== -1;
@@ -686,47 +1088,57 @@ async function commitSubmission(env, incoming, ident, issued, now) {
     const identity = buildIdentity(prevIdentity, ident,
       needsToken ? issued.tokenHash : "");
 
-    let record;
+    let id, submittedAt, updatedAt, fields, previousDaily;
     if (merged) {
-      const fields = mergeRecord(previous, incoming);
-      const submittedAt = typeof previous.submitted_at === "string" &&
+      // The id addresses a FILE now, so a row whose id is not the shape this
+      // API mints is not merged into at all. Minting a fresh id here instead
+      // would orphan the detail file the old id points at and split one
+      // machine across two rows — exactly what M13 removed.
+      id = typeof previous.id === "string" && SUB_ID_RE.test(previous.id)
+        ? previous.id : "";
+      if (!id) return { ok: false };
+      previousDaily = await readDetailDaily(api, token, state.subsSha, id);
+      if (previousDaily === null) return { ok: false };
+      fields = mergeRecord(previous, previousDaily, incoming);
+      submittedAt = typeof previous.submitted_at === "string" &&
         /^\d{4}-\d{2}-\d{2}$/.test(previous.submitted_at) ? previous.submitted_at : today;
-      const id = typeof previous.id === "string" && previous.id ? previous.id
-        : newSubmissionId(now);
-      record = composeRecord(id, submittedAt, today, fields, identity);
+      updatedAt = today;
+    } else {
+      id = newSubmissionId(now);
+      previousDaily = [];
+      fields = incoming;
+      submittedAt = today;
+      updatedAt = "";
+    }
+
+    const record = composeRecord(id, submittedAt, updatedAt, fields, identity);
+    if (merged) {
       doc.submissions[idx] = record;   // in place: the row keeps its slot and its id
     } else {
-      record = composeRecord(newSubmissionId(now), today, "", incoming, identity);
       doc.submissions.push(record);
     }
+    doc.schema_version = INDEX_SCHEMA_VERSION;
 
-    const putBody = {
-      message: commitMessage(record, merged),
-      content: b64EncodeUtf8(JSON.stringify(doc, null, 2) + "\n")
+    const files = [
+      { path: INDEX_PATH, text: serializeIndex(doc) },
+      { path: FLEET_PATH,
+        text: serializeFleet(applyFleetDelta(state.fleet, previousDaily, fields.daily)) },
+      { path: detailPath(id), text: serializeDetail(buildDetail(id, fields)) }
+    ];
+
+    const written = await writeCommit(api, token, branch, state, files,
+      commitMessage(record, merged));
+    if (written === null) return { ok: false };
+    if (written.moved) continue;      // re-read, re-resolve, re-merge, write once more
+    return {
+      ok: true,
+      commitUrl: written.url,
+      id: record.id,
+      merged: merged,
+      periodStart: record.period_start,
+      periodEnd: record.period_end,
+      token: needsToken ? issued.token : ""
     };
-    if (sha) putBody.sha = sha;
-
-    let put;
-    try {
-      put = await ghFetch(url, token, { method: "PUT", body: JSON.stringify(putBody) });
-    } catch (e) {
-      return { ok: false };
-    }
-    if (put.status === 200 || put.status === 201) {
-      let out = null;
-      try { out = await put.json(); } catch (e) { /* commit landed; url optional */ }
-      const commitUrl = out && out.commit && out.commit.html_url ? out.commit.html_url : "";
-      return {
-        ok: true,
-        commitUrl: commitUrl,
-        id: record.id,
-        merged: merged,
-        periodStart: record.period_start,
-        periodEnd: record.period_end,
-        token: needsToken ? issued.token : ""
-      };
-    }
-    if (put.status !== 409) break; // only a sha conflict earns the single retry
   }
   return { ok: false };
 }

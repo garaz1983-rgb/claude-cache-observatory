@@ -2,18 +2,21 @@
 """Contract test for functions/api/submit.js (06_FUNCTIONAL_SPEC.md section 2).
 
 Self-contained: boots `npx wrangler pages dev` against the site directory
-(KV binding RATE_LIMIT, GitHub API base pointed at a local mock), runs the
-mock GitHub Contents API (GET/PUT of data/submissions.json) in-process, and
-drives the contract cases:
+(KV binding RATE_LIMIT, GitHub API base pointed at a local mock), runs a mock
+GitHub **Git Data** API in-process — a real content-addressed object store with
+blobs, nested trees, commits and a fast-forward-only branch ref — and drives
+the contract cases:
 
-  case1  valid submission        -> 200, PUT reaches the mock, append verified
+  case1  valid submission        -> 200, ONE commit carrying all three files
   case2  undefined field         -> 400 (reject, not drop)
   case3  losses > requests       -> 400
   case4  period > 92 days        -> 400
   case5  nickname 21 chars       -> 400
   case6  4th submit, same IP     -> 429 with retry_after
-  case7  sha conflict (409) once -> re-GET + one retry -> 200
-  case8  GitHub 5xx              -> 502 storage (single PUT, no retry)
+  case7  ref moved (422) once    -> re-read + one retry -> 200, and the retry
+                                    merges against the commit that landed in
+                                    between rather than its own stale read
+  case8  GitHub 5xx              -> 502 storage (no commit, no retry)
   case9  daily []                -> 400 (inflated totals AND all-zero totals)
   case10 daily sums != totals    -> 400 (requests / losses / wasted each)
   case11 nickname masking        -> the raw nickname reaches neither the stored
@@ -47,6 +50,24 @@ M13 (one submitter, one row) adds:
   case19 masking on update       -> a merge cannot smuggle a raw nickname into
                                     the record or the commit message
 
+M14 (three files, one commit) adds:
+
+  case20 atomicity               -> every accepted submission lands the index,
+                                    the fleet series and its own detail file in
+                                    exactly ONE commit, and touches nothing else
+  case21 fleet series            -> data/daily.json is the sum across detail
+                                    files date by date, `machines` is how many
+                                    cover each date, and a merge moves it by the
+                                    delta rather than double counting
+  case22 missing detail file     -> a row whose detail file cannot be read is
+                                    NOT merged into: 502, and the public files
+                                    are left exactly as they were
+
+🔴 After every accepted submission the whole dataset is re-checked with
+tests/dataset_validate.py — the same validator that runs against the committed
+files in data/. An index row's totals must equal the sum of its own detail
+file, and data/daily.json must equal the sum across all of them.
+
 All pass -> prints CONTRACT_OK as the last line, exit 0.
 Contract violation -> exit 1. Setup/infra failure -> exit 2 (the mutation
 harness treats exit 1 as KILLED and exit 2 as fatal, so infra problems can
@@ -61,7 +82,6 @@ import json
 import os
 import random
 import re
-import secrets
 import shutil
 import socket
 import stat
@@ -73,6 +93,8 @@ import time
 import urllib.error
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+import dataset_validate
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SITE_DIR = os.path.dirname(HERE)
@@ -176,30 +198,165 @@ def guarded_delete_scratch(path):
 
 
 # ---------------------------------------------------------------------------
-# mock GitHub Contents API
+# mock GitHub Git Data API (M14)
 # ---------------------------------------------------------------------------
+#
+# Not a stub that says yes: a small content-addressed object store with real
+# blobs, real nested trees, real commits and a real branch ref. Two properties
+# of the write path only exist if the mock behaves like git, and both are what
+# M14 is about:
+#
+#   * ATOMICITY. Three files land as one tree under one commit or not at all.
+#     A mock that recorded "path X was written" could not tell that apart from
+#     three separate writes; this one records the commit each path landed in.
+#   * FAST-FORWARD ONLY. A commit whose parent is no longer the branch tip is
+#     rejected with 422, exactly as GitHub rejects it, because the mock checks
+#     the parent rather than being told to fail. That is the conflict the one
+#     retry exists for, and `conflict_once` produces it by LANDING A REAL
+#     COMMIT — so a retry that merged against its stale read would be caught.
+
+INDEX_PATH = "data/submissions.json"
+FLEET_PATH = "data/daily.json"
+EMPTY_INDEX = {"schema_version": 2, "submissions": []}
+EMPTY_FLEET = {"schema_version": 1, "days": []}
+MOCK_BRANCH = "master"
+
+
+def _sha(text):
+    return hashlib.sha1(text.encode("utf-8")).hexdigest()
+
 
 class MockState(object):
     def __init__(self):
         self.lock = threading.Lock()
-        self.doc = {"schema_version": 1, "submissions": []}
-        self.sha = secrets.token_hex(20)
+        self.files = {}               # path -> text, the branch tip's snapshot
+        self.blobs = {}               # blob sha -> text
+        self.trees = {}               # tree sha -> {name: (type, sha)}
+        self.tree_files = {}          # tree sha -> {path: text} (flat snapshot)
+        self.commits = {}             # commit sha -> {tree, parents, message}
+        self.head = None              # commit sha at refs/heads/master
         self.mode = "normal"          # normal | conflict_once | server_error
         self.conflict_fired = False
-        self.get_count = 0
-        self.put_count = 0
-        self.put_messages = []
-        self.commit_serial = 0
+        self.ref_gets = 0             # GET /git/ref  (one per read attempt)
+        self.blob_posts = 0           # POST /git/blobs
+        self.ref_patches = 0          # PATCH /git/refs
+        self.commit_count = 0         # commits that actually moved the branch
+        self.commit_messages = []
+        self.commit_log = []          # [{message, paths}] per landed commit
         self.errors = []              # protocol violations noticed by the mock
 
 
 MOCK = MockState()
-CONTENTS_PATH = "/repos/%s/contents/data/submissions.json" % MOCK_REPO
+REPO_PREFIX = "/repos/%s" % MOCK_REPO
 
 
-def _b64_github(text):
-    raw = base64.b64encode(text.encode("utf-8")).decode("ascii")
-    return "\n".join(raw[i:i + 60] for i in range(0, len(raw), 60)) + "\n"
+def _build_trees(files):
+    """Materialise {path: text} into blobs + nested trees. Returns the root sha."""
+    def build(prefix):
+        entries = {}
+        subdirs = set()
+        for path in files:
+            if not path.startswith(prefix):
+                continue
+            rest = path[len(prefix):]
+            if "/" in rest:
+                subdirs.add(rest.split("/", 1)[0])
+            else:
+                sha = _sha(files[path])
+                MOCK.blobs[sha] = files[path]
+                entries[rest] = ("blob", sha)
+        for d in sorted(subdirs):
+            entries[d] = ("tree", build(prefix + d + "/"))
+        key = json.dumps(sorted((n, t, s) for n, (t, s) in entries.items()))
+        sha = _sha("tree\x00" + key)
+        MOCK.trees[sha] = entries
+        return sha
+    root = build("")
+    MOCK.tree_files[root] = dict(files)
+    return root
+
+
+def _land(files, message, paths):
+    """Commit `files` onto the branch tip. Used by reset and by the mock's own
+    simulated third-party commit; the worker's own writes go through the API."""
+    root = _build_trees(files)
+    sha = _sha("commit\x00%s\x00%s\x00%s" % (root, MOCK.head, message))
+    MOCK.commits[sha] = {"tree": root, "parents": [MOCK.head] if MOCK.head else [],
+                         "message": message}
+    MOCK.head = sha
+    MOCK.files = dict(files)
+    MOCK.commit_count += 1
+    MOCK.commit_messages.append(message)
+    MOCK.commit_log.append({"message": message, "paths": sorted(paths)})
+    return sha
+
+
+def _reset_repo():
+    """A repository with the dataset present and empty — what the site looks
+    like before its first submission, plus a file the data path never touches
+    so `base_tree` carry-over is actually observable."""
+    MOCK.files = {}
+    MOCK.blobs = {}
+    MOCK.trees = {}
+    MOCK.tree_files = {}
+    MOCK.commits = {}
+    MOCK.head = None
+    MOCK.commit_count = 0
+    MOCK.commit_messages = []
+    MOCK.commit_log = []
+    files = {
+        "README.md": "# mock repo\n",
+        "index.html": "<!doctype html>\n",
+        INDEX_PATH: json.dumps(EMPTY_INDEX, indent=2) + "\n",
+        FLEET_PATH: json.dumps(EMPTY_FLEET, indent=2) + "\n",
+    }
+    _land(files, "seed", sorted(files))
+    # the seed is scaffolding, not a submission the assertions should see
+    MOCK.commit_count = 0
+    MOCK.commit_messages = []
+    MOCK.commit_log = []
+
+
+FOREIGN_ID = "sub-20260101000000-beef"
+
+
+def _land_foreign_commit():
+    """Somebody else's submission landing between our read and our ref update.
+
+    A real row, in a real commit, on the branch. The retry has to re-read and
+    re-resolve against it: a retry that reused its first read would write an
+    index without this row, and the cross-file validator would then see a fleet
+    series counting a submission the index does not list."""
+    index = json.loads(MOCK.files[INDEX_PATH])
+    fleet = json.loads(MOCK.files[FLEET_PATH])
+    daily = [{"date": "2026-02-01", "requests": 40, "losses": 2, "wasted_tokens": 900}]
+    totals = {"requests": 40, "in_ttl_losses": 2, "iron_losses": 1,
+              "wasted_tokens": 900}
+    index["submissions"].append({
+        "id": FOREIGN_ID, "submitted_at": "2026-01-01", "nickname": "f***",
+        "plan": "pro", "client": "cli", "concurrent_sessions": "single",
+        "period_start": "2026-02-01", "period_end": "2026-02-01",
+        "totals": totals, "daily_days": 1,
+        "detail": "data/subs/%s.json" % FOREIGN_ID, "script_version": "web-1.0",
+    })
+    by_date = {d["date"]: d for d in fleet["days"]}
+    for row in daily:
+        slot = by_date.setdefault(row["date"], {"date": row["date"], "requests": 0,
+                                                "losses": 0, "wasted_tokens": 0,
+                                                "machines": 0})
+        slot["requests"] += row["requests"]
+        slot["losses"] += row["losses"]
+        slot["wasted_tokens"] += row["wasted_tokens"]
+        slot["machines"] += 1
+    fleet["days"] = [by_date[k] for k in sorted(by_date)]
+    detail = {"schema_version": 1, "id": FOREIGN_ID, "period_start": "2026-02-01",
+              "period_end": "2026-02-01", "totals": totals, "daily": daily}
+    files = dict(MOCK.files)
+    files[INDEX_PATH] = json.dumps(index, indent=2) + "\n"
+    files[FLEET_PATH] = json.dumps(fleet, indent=2) + "\n"
+    files["data/subs/%s.json" % FOREIGN_ID] = json.dumps(detail, indent=2) + "\n"
+    _land(files, "data: submission %s — f***, someone else's commit" % FOREIGN_ID,
+          [INDEX_PATH, FLEET_PATH, "data/subs/%s.json" % FOREIGN_ID])
 
 
 class MockHandler(BaseHTTPRequestHandler):
@@ -223,66 +380,164 @@ class MockHandler(BaseHTTPRequestHandler):
         if not self.headers.get("User-Agent"):
             MOCK.errors.append("missing User-Agent")
 
+    def _body(self):
+        length = int(self.headers.get("Content-Length", "0"))
+        try:
+            return json.loads(self.rfile.read(length).decode("utf-8"))
+        except ValueError:
+            return None
+
+    def _rel(self):
+        if not self.path.startswith(REPO_PREFIX + "/"):
+            return None
+        return self.path[len(REPO_PREFIX):]
+
     def do_GET(self):
         with MOCK.lock:
             self._check_common()
-            if self.path != CONTENTS_PATH:
+            rel = self._rel()
+            if rel is None:
                 self._send(404, {"message": "Not Found"})
                 return
-            MOCK.get_count += 1
-            text = json.dumps(MOCK.doc, ensure_ascii=False, indent=2) + "\n"
-            self._send(200, {
-                "path": "data/submissions.json",
-                "sha": MOCK.sha,
-                "encoding": "base64",
-                "content": _b64_github(text),
-            })
+            if rel == "/git/ref/heads/" + MOCK_BRANCH:
+                MOCK.ref_gets += 1
+                if MOCK.head is None:
+                    self._send(404, {"message": "Not Found"})
+                    return
+                self._send(200, {"ref": "refs/heads/" + MOCK_BRANCH,
+                                 "object": {"type": "commit", "sha": MOCK.head}})
+                return
+            if rel.startswith("/git/commits/"):
+                sha = rel[len("/git/commits/"):]
+                c = MOCK.commits.get(sha)
+                if not c:
+                    self._send(404, {"message": "Not Found"})
+                    return
+                self._send(200, {"sha": sha, "message": c["message"],
+                                 "tree": {"sha": c["tree"]}})
+                return
+            if rel.startswith("/git/trees/"):
+                sha = rel[len("/git/trees/"):].split("?")[0]
+                t = MOCK.trees.get(sha)
+                if t is None:
+                    self._send(404, {"message": "Not Found"})
+                    return
+                self._send(200, {"sha": sha, "truncated": False, "tree": [
+                    {"path": name, "type": typ, "sha": s,
+                     "mode": "040000" if typ == "tree" else "100644"}
+                    for name, (typ, s) in sorted(t.items())]})
+                return
+            if rel.startswith("/git/blobs/"):
+                sha = rel[len("/git/blobs/"):]
+                text = MOCK.blobs.get(sha)
+                if text is None:
+                    self._send(404, {"message": "Not Found"})
+                    return
+                raw = base64.b64encode(text.encode("utf-8")).decode("ascii")
+                self._send(200, {
+                    "sha": sha, "encoding": "base64", "size": len(text),
+                    # GitHub wraps blob content at 60 columns; a client that
+                    # forgot to strip the newlines would decode to garbage.
+                    "content": "\n".join(raw[i:i + 60]
+                                         for i in range(0, len(raw), 60)) + "\n",
+                })
+                return
+            self._send(404, {"message": "Not Found"})
 
-    def do_PUT(self):
+    def do_POST(self):
         with MOCK.lock:
             self._check_common()
-            if self.path != CONTENTS_PATH:
+            rel = self._rel()
+            body = self._body()
+            if rel is None or body is None:
+                self._send(400, {"message": "bad request"})
+                return
+            if rel == "/git/blobs":
+                MOCK.blob_posts += 1
+                if MOCK.mode == "server_error":
+                    self._send(500, {"message": "boom"})
+                    return
+                if body.get("encoding") != "base64":
+                    MOCK.errors.append("blob POST encoding %r" % body.get("encoding"))
+                try:
+                    text = base64.b64decode(body["content"]).decode("utf-8")
+                except Exception as exc:
+                    MOCK.errors.append("blob content undecodable: %r" % exc)
+                    self._send(400, {"message": "bad content"})
+                    return
+                sha = _sha(text)
+                MOCK.blobs[sha] = text
+                self._send(201, {"sha": sha})
+                return
+            if rel == "/git/trees":
+                base = body.get("base_tree")
+                if base not in MOCK.tree_files:
+                    MOCK.errors.append("tree POST with unknown base_tree %r" % base)
+                    self._send(422, {"message": "bad base_tree"})
+                    return
+                files = dict(MOCK.tree_files[base])
+                for e in body.get("tree", []):
+                    if e.get("mode") != "100644" or e.get("type") != "blob":
+                        MOCK.errors.append("tree entry %r" % e)
+                    text = MOCK.blobs.get(e.get("sha"))
+                    if text is None:
+                        self._send(422, {"message": "unknown blob"})
+                        return
+                    files[e["path"]] = text
+                self._send(201, {"sha": _build_trees(files)})
+                return
+            if rel == "/git/commits":
+                tree = body.get("tree")
+                if tree not in MOCK.tree_files:
+                    self._send(422, {"message": "unknown tree"})
+                    return
+                if not isinstance(body.get("message"), str) or not body["message"]:
+                    MOCK.errors.append("commit without a message")
+                parents = body.get("parents") or []
+                sha = _sha("commit\x00%s\x00%s\x00%s"
+                           % (tree, parents, body.get("message")))
+                MOCK.commits[sha] = {"tree": tree, "parents": parents,
+                                     "message": body["message"]}
+                self._send(201, {
+                    "sha": sha,
+                    "html_url": "https://example.invalid/commit/" + sha[:12],
+                })
+                return
+            self._send(404, {"message": "Not Found"})
+
+    def do_PATCH(self):
+        with MOCK.lock:
+            self._check_common()
+            rel = self._rel()
+            body = self._body()
+            if rel != "/git/refs/heads/" + MOCK_BRANCH or body is None:
                 self._send(404, {"message": "Not Found"})
                 return
-            MOCK.put_count += 1
-            length = int(self.headers.get("Content-Length", "0"))
-            try:
-                body = json.loads(self.rfile.read(length).decode("utf-8"))
-            except ValueError:
-                MOCK.errors.append("PUT body is not JSON")
-                self._send(400, {"message": "bad body"})
-                return
-            if MOCK.mode == "server_error":
-                self._send(500, {"message": "boom"})
-                return
+            MOCK.ref_patches += 1
             if MOCK.mode == "conflict_once" and not MOCK.conflict_fired:
-                # simulate a commit landing in between: rotate the sha
                 MOCK.conflict_fired = True
-                MOCK.sha = secrets.token_hex(20)
-                self._send(409, {"message": "data/submissions.json does not match"})
+                _land_foreign_commit()   # the branch really moves under the caller
+            if body.get("force") is True:
+                MOCK.errors.append("ref update asked for force")
+            sha = body.get("sha")
+            commit = MOCK.commits.get(sha)
+            if commit is None:
+                self._send(422, {"message": "unknown commit"})
                 return
-            if body.get("sha") != MOCK.sha:
-                self._send(409, {"message": "sha mismatch"})
+            # fast-forward only: the parent must still be the branch tip
+            if (commit["parents"] or [None])[0] != MOCK.head:
+                self._send(422, {"message": "Update is not a fast forward"})
                 return
-            if not isinstance(body.get("message"), str) or not body["message"]:
-                MOCK.errors.append("PUT without a commit message")
-            try:
-                text = base64.b64decode(body["content"]).decode("utf-8")
-                MOCK.doc = json.loads(text)
-            except Exception as exc:
-                MOCK.errors.append("PUT content undecodable: %r" % exc)
-                self._send(400, {"message": "bad content"})
-                return
-            MOCK.put_messages.append(body["message"])
-            MOCK.sha = secrets.token_hex(20)
-            MOCK.commit_serial += 1
-            self._send(201, {
-                "content": {"sha": MOCK.sha},
-                "commit": {
-                    "sha": "c" * 40,
-                    "html_url": "https://example.invalid/commit/%d" % MOCK.commit_serial,
-                },
-            })
+            paths = [p for p, text in MOCK.tree_files[commit["tree"]].items()
+                     if MOCK.files.get(p) != text]
+            MOCK.head = sha
+            MOCK.files = dict(MOCK.tree_files[commit["tree"]])
+            MOCK.commit_count += 1
+            MOCK.commit_messages.append(commit["message"])
+            MOCK.commit_log.append({"message": commit["message"],
+                                    "paths": sorted(paths)})
+            self._send(200, {"ref": "refs/heads/" + MOCK_BRANCH,
+                             "object": {"sha": sha}})
 
 
 class QuietThreadingHTTPServer(ThreadingHTTPServer):
@@ -324,6 +579,7 @@ def start_wrangler(npx, mock_port, scratch):
         args += [
             "--binding", "GITHUB_TOKEN=" + MOCK_TOKEN,
             "--binding", "GITHUB_REPO=" + MOCK_REPO,
+            "--binding", "GITHUB_BRANCH=" + MOCK_BRANCH,
             "--binding", "GITHUB_API_BASE=http://127.0.0.1:%d" % mock_port,
         ]
     env = dict(os.environ)
@@ -443,6 +699,77 @@ def expect_schema_400(name, status, data):
     check("detail" in data, "%s: 400 body carries no detail" % name)
 
 
+# ---------------------------------------------------------------------------
+# reading the mock repository (M14: three kinds of file, one dataset)
+# ---------------------------------------------------------------------------
+
+def repo_files():
+    with MOCK.lock:
+        return dict(MOCK.files)
+
+
+def _parse(files, path):
+    """A public data file the pipeline wrote. Unparsable is a contract failure
+    with a name, not a traceback: whatever is at that path is served to readers
+    as JSON, so "it is not JSON" is a finding, not an accident of the test."""
+    text = files.get(path)
+    if text is None:
+        raise ContractFail("%s is missing from the repository" % path)
+    try:
+        return json.loads(text)
+    except ValueError as exc:
+        raise ContractFail("%s is not valid JSON (%s): %r" % (path, exc, text[:120]))
+
+
+def index_doc(files=None):
+    return _parse(files or repo_files(), INDEX_PATH)
+
+
+def fleet_doc(files=None):
+    return _parse(files or repo_files(), FLEET_PATH)
+
+
+def detail_docs(files=None):
+    files = files or repo_files()
+    out = {}
+    for path in files:
+        if path.startswith("data/subs/") and path.endswith(".json"):
+            out[path[len("data/subs/"):-len(".json")]] = _parse(files, path)
+    return out
+
+
+def detail_doc(sub_id, files=None):
+    return detail_docs(files).get(sub_id)
+
+
+def leak_blob():
+    """Every byte this pipeline made public: all three kinds of data file plus
+    every commit message. A raw value that leaked into any of them is a leak."""
+    files = repo_files()
+    with MOCK.lock:
+        messages = list(MOCK.commit_messages)
+    return "\n".join(sorted(files.values())) + "\n" + "\n".join(messages)
+
+
+def check_file_arithmetic(tag):
+    """🔴 After every path: the public dataset still adds up, checked by the
+    SAME validator that runs against the committed files in data/. Nothing here
+    reimplements the rule; a rule the live write path is not checked against is
+    a rule that drifts."""
+    files = repo_files()
+    try:
+        errors = dataset_validate.validate(index_doc(files), fleet_doc(files),
+                                           detail_docs(files))
+    except ContractFail:
+        raise
+    except Exception as exc:                      # a shape the validator cannot walk
+        raise ContractFail("%s: the dataset could not even be validated: %r"
+                           % (tag, exc))
+    check(not errors, "%s: the dataset no longer adds up:\n  %s"
+          % (tag, "\n  ".join(errors)))
+    return index_doc(files)
+
+
 def run_cases(xff_ip):
     submit_url = BASE + "/api/submit"
     headers = {"X-Forwarded-For": xff_ip}
@@ -510,10 +837,10 @@ def run_cases(xff_ip):
 
     # (none of the 400 cases may have reached storage or the rate limiter)
     with MOCK.lock:
-        check(MOCK.put_count == 0, "400 cases must not reach storage "
-                                   "(put_count=%d)" % MOCK.put_count)
+        check(MOCK.commit_count == 0, "400 cases must not reach storage "
+                                      "(%d commits landed)" % MOCK.commit_count)
 
-    # -- case1: valid submission => 200 + append verified --------------------
+    # -- case1 + case20: valid submission => 200, ONE commit, THREE files -----
     payload = valid_payload()
     status, data = post(payload)
     check(status == 200, "case1: status %s, want 200 (body %r)" % (status, data))
@@ -522,96 +849,150 @@ def run_cases(xff_ip):
     sub_id = data.get("id", "")
     check(re.fullmatch(r"sub-\d{14}-[0-9a-f]{4}", sub_id),
           "case1: id %r does not match sub-{timestamp14}-{hex4}" % sub_id)
-    check(data.get("commit_url") == "https://example.invalid/commit/1",
+    check(str(data.get("commit_url", "")).startswith("https://example.invalid/commit/"),
           "case1: commit_url %r not the mock's html_url" % data.get("commit_url"))
+    files = repo_files()
     with MOCK.lock:
-        check(MOCK.put_count == 1, "case1: put_count=%d, want 1" % MOCK.put_count)
-        subs = MOCK.doc.get("submissions", [])
-        check(MOCK.doc.get("schema_version") == 1, "case1: schema_version lost")
-        check(len(subs) == 1, "case1: %d submissions stored, want 1" % len(subs))
-        stored = subs[0]
-        check(stored.get("id") == sub_id, "case1: stored id mismatch")
-        check(re.fullmatch(r"\d{4}-\d{2}-\d{2}", stored.get("submitted_at", "")),
-              "case1: submitted_at %r not truncated to a day" % stored.get("submitted_at"))
-        for key in ("plan", "client", "concurrent_sessions",
-                    "period_start", "period_end", "script_version"):
-            check(stored.get(key) == payload[key],
-                  "case1: stored %s=%r != %r" % (key, stored.get(key), payload[key]))
-        # The nickname is stored masked (M11): first code point + a fixed
-        # three-asterisk mask, so neither the string nor its length survives.
-        check(stored.get("nickname") == "c***",
-              "case1: nickname %r, want the masked 'c***'" % stored.get("nickname"))
-        check(stored.get("totals") == payload["totals"], "case1: totals mismatch")
-        check(stored.get("daily") == payload["daily"], "case1: daily mismatch")
-        # M13 adds exactly two server-generated keys, and `updated_at` only
-        # once a row has actually been merged into.
-        extra = set(stored) - {"id", "submitted_at", "nickname", "plan", "client",
-                               "concurrent_sessions", "period_start", "period_end",
-                               "totals", "daily", "script_version", "identity"}
-        check(not extra, "case1: undefined fields stored: %r" % extra)
-        check("updated_at" not in stored,
-              "case1: a first submission is marked as updated")
-        # This payload carries no anchors, so the API falls back to layer 2 and
-        # issues a token. Only its hash may be stored.
-        check(re.fullmatch(r"[0-9a-f]{32}", data.get("token", "")),
-              "case1: no link token issued to a submission with no anchors (%r)"
-              % data.get("token"))
-        check(data.get("merged") is False, "case1: a first submission reported a merge")
-        check(stored["identity"].get("token_hash") ==
-              hashlib.sha256(("cco.token.v1|" + data["token"]).encode("utf-8")).hexdigest(),
-              "case1: identity.token_hash is not the hash of the issued token")
-        check(data["token"] not in json.dumps(MOCK.doc),
-              "case1: the token itself was written into the public dataset")
-        want_msg = ("data: submission %s — c***, 2026-08-01~2026-08-15, "
-                    "10 losses / 1000 req" % sub_id)
-        check(MOCK.put_messages[-1] == want_msg,
-              "case1: commit message %r != %r" % (MOCK.put_messages[-1], want_msg))
-        check("contract-test" not in MOCK.put_messages[-1],
+        check(MOCK.commit_count == 1,
+              "case1: %d commits, want 1" % MOCK.commit_count)
+        landed = MOCK.commit_log[-1]
+    detail_rel = "data/subs/%s.json" % sub_id
+    check(landed["paths"] == sorted([INDEX_PATH, FLEET_PATH, detail_rel]),
+          "🔴 case20: one submission must land the index, the fleet series and "
+          "its own detail file in ONE commit — this commit changed %r"
+          % (landed["paths"],))
+    check("README.md" in files and files["README.md"] == "# mock repo\n",
+          "case20: the commit disturbed a file outside data/")
+    doc = index_doc(files)
+    subs = doc.get("submissions", [])
+    check(doc.get("schema_version") == 2, "case1: index schema_version %r, want 2"
+          % doc.get("schema_version"))
+    check(len(subs) == 1, "case1: %d submissions stored, want 1" % len(subs))
+    stored = subs[0]
+    check(stored.get("id") == sub_id, "case1: stored id mismatch")
+    check(re.fullmatch(r"\d{4}-\d{2}-\d{2}", stored.get("submitted_at", "")),
+          "case1: submitted_at %r not truncated to a day" % stored.get("submitted_at"))
+    for key in ("plan", "client", "concurrent_sessions",
+                "period_start", "period_end", "script_version"):
+        check(stored.get(key) == payload[key],
+              "case1: stored %s=%r != %r" % (key, stored.get(key), payload[key]))
+    # The nickname is stored masked (M11): first code point + a fixed
+    # three-asterisk mask, so neither the string nor its length survives.
+    check(stored.get("nickname") == "c***",
+          "case1: nickname %r, want the masked 'c***'" % stored.get("nickname"))
+    check(stored.get("totals") == payload["totals"], "case1: totals mismatch")
+    # M14: the daily rows are in the detail file, and the index row says how
+    # many of them there are and where they live.
+    check("daily" not in stored,
+          "case1: the index row still carries the daily array")
+    check(stored.get("daily_days") == len(payload["daily"]),
+          "case1: daily_days %r, want %d" % (stored.get("daily_days"),
+                                             len(payload["daily"])))
+    check(stored.get("detail") == detail_rel,
+          "case1: detail %r, want %r" % (stored.get("detail"), detail_rel))
+    detail = detail_doc(sub_id, files)
+    check(detail is not None, "case1: no detail file at %s" % detail_rel)
+    check(detail.get("daily") == payload["daily"], "case1: detail daily mismatch")
+    check(detail.get("totals") == payload["totals"], "case1: detail totals mismatch")
+    # M13 adds exactly two server-generated keys, and `updated_at` only
+    # once a row has actually been merged into.
+    extra = set(stored) - {"id", "submitted_at", "nickname", "plan", "client",
+                           "concurrent_sessions", "period_start", "period_end",
+                           "totals", "daily_days", "detail", "script_version",
+                           "identity"}
+    check(not extra, "case1: undefined fields stored: %r" % extra)
+    check("updated_at" not in stored,
+          "case1: a first submission is marked as updated")
+    # This payload carries no anchors, so the API falls back to layer 2 and
+    # issues a token. Only its hash may be stored.
+    check(re.fullmatch(r"[0-9a-f]{32}", data.get("token", "")),
+          "case1: no link token issued to a submission with no anchors (%r)"
+          % data.get("token"))
+    check(data.get("merged") is False, "case1: a first submission reported a merge")
+    check(stored["identity"].get("token_hash") ==
+          hashlib.sha256(("cco.token.v1|" + data["token"]).encode("utf-8")).hexdigest(),
+          "case1: identity.token_hash is not the hash of the issued token")
+    check(data["token"] not in leak_blob(),
+          "case1: the token itself was written into the public dataset")
+    want_msg = ("data: submission %s — c***, 2026-08-01~2026-08-15, "
+                "10 losses / 1000 req" % sub_id)
+    with MOCK.lock:
+        check(MOCK.commit_messages[-1] == want_msg,
+              "case1: commit message %r != %r" % (MOCK.commit_messages[-1], want_msg))
+        check("contract-test" not in MOCK.commit_messages[-1],
               "case1: raw nickname leaked into the commit message")
-    print("PASS case1 valid submit -> 200, append + commit message verified")
+    check_file_arithmetic("case1")
+    print("PASS case1 valid submit -> 200, index + detail + commit message verified")
+    print("PASS case20 one submission = one commit carrying %s"
+          % ", ".join(landed["paths"]))
 
-    # -- case7: sha conflict once => re-GET + single retry => 200 ------------
+    # -- case7: the ref moves under us => re-read + single retry => 200 ------
+    # The mock lands a REAL third-party commit at the moment of the first ref
+    # update. A retry that reused its first read would write an index without
+    # that row, and check_file_arithmetic would then find a fleet series
+    # counting a submission the index does not list.
     with MOCK.lock:
         MOCK.mode = "conflict_once"
         MOCK.conflict_fired = False
-        put_before = MOCK.put_count
-        get_before = MOCK.get_count
+        commits_before = MOCK.commit_count
+        patches_before = MOCK.ref_patches
+        refgets_before = MOCK.ref_gets
     status, data = post(valid_payload(nickname="<b>x</b>"))
     check(status == 200, "case7: status %s, want 200 after retry (body %r)" % (status, data))
     with MOCK.lock:
         MOCK.mode = "normal"
-        check(MOCK.put_count - put_before == 2,
-              "case7: %d PUTs, want 2 (409 then success)" % (MOCK.put_count - put_before))
-        check(MOCK.get_count - get_before == 2,
-              "case7: %d GETs, want 2 (re-GET before the retry)" % (MOCK.get_count - get_before))
-        subs = MOCK.doc.get("submissions", [])
-        check(len(subs) == 2, "case7: %d submissions stored, want 2" % len(subs))
-        # Masking runs before escaping, so the escape has to survive the slice:
-        # "<b>x</b>" keeps "<" as its one visible code point and stores it as
-        # the entity. A raw "<" here would be an injection into the public JSON.
-        check(subs[-1].get("nickname") == "&lt;***",
-              "case7: nickname not masked+escaped: %r" % subs[-1].get("nickname"))
-    print("PASS case7 sha conflict -> one retry -> 200, nickname masked + escaped")
+        patch_delta = MOCK.ref_patches - patches_before
+        refget_delta = MOCK.ref_gets - refgets_before
+        commit_delta = MOCK.commit_count - commits_before
+    check(patch_delta == 2,
+          "case7: %d ref updates, want 2 (422 then success)" % patch_delta)
+    check(refget_delta == 2,
+          "case7: %d ref reads, want 2 (the retry must re-read HEAD)" % refget_delta)
+    check(commit_delta == 2,
+          "case7: %d commits landed, want 2 (the third party's and ours)"
+          % commit_delta)
+    doc = check_file_arithmetic("case7")
+    subs = doc.get("submissions", [])
+    ids = [s["id"] for s in subs]
+    check(len(subs) == 3, "case7: %d submissions stored, want 3" % len(subs))
+    check(FOREIGN_ID in ids,
+          "🔴 case7: the retry overwrote the commit that landed under it — the "
+          "third party's row is gone, so the merge used a stale read (%r)" % ids)
+    # Masking runs before escaping, so the escape has to survive the slice:
+    # "<b>x</b>" keeps "<" as its one visible code point and stores it as
+    # the entity. A raw "<" here would be an injection into the public JSON.
+    check(subs[-1].get("nickname") == "&lt;***",
+          "case7: nickname not masked+escaped: %r" % subs[-1].get("nickname"))
+    print("PASS case7 ref moved -> one re-read + retry -> 200, the third party's "
+          "row survives (rows now %d)" % len(subs))
 
     # -- case8: GitHub 5xx => 502 storage, no retry --------------------------
     with MOCK.lock:
         MOCK.mode = "server_error"
-        put_before = MOCK.put_count
+        commits_before = MOCK.commit_count
+        blobs_before = MOCK.blob_posts
+        files_before = dict(MOCK.files)
     status, data = post(valid_payload())
     with MOCK.lock:
         MOCK.mode = "normal"
-        put_delta = MOCK.put_count - put_before
+        commit_delta = MOCK.commit_count - commits_before
+        blob_delta = MOCK.blob_posts - blobs_before
+        files_after = dict(MOCK.files)
     check(status == 502, "case8: status %s, want 502 (body %r)" % (status, data))
     check(isinstance(data, dict) and data.get("ok") is False and
           data.get("error") == "storage",
           "case8: body %r, want {ok:false, error:'storage'}" % (data,))
-    check(put_delta == 1, "case8: %d PUTs, want 1 (5xx earns no retry)" % put_delta)
-    print("PASS case8 storage 5xx -> 502, single PUT")
+    check(commit_delta == 0, "case8: %d commits landed on a 5xx" % commit_delta)
+    check(files_after == files_before, "case8: a 5xx still changed the files")
+    check(blob_delta == 1,
+          "case8: %d blob writes attempted, want 1 (a 5xx earns no retry)"
+          % blob_delta)
+    print("PASS case8 storage 5xx -> 502, nothing committed, no retry")
 
     # -- case6: 4th rate-limited submission from the same IP => 429 ----------
     # Ledger so far for this IP hash+hour: case1 + case7 + case8 = 3 counted.
     with MOCK.lock:
-        put_before = MOCK.put_count
+        commits_before = MOCK.commit_count
     status, data = post(valid_payload())
     check(status == 429, "case6: status %s, want 429 on the 4th submit (body %r)"
           % (status, data))
@@ -621,7 +1002,7 @@ def run_cases(xff_ip):
     check(isinstance(data.get("retry_after"), int) and 0 < data["retry_after"] <= 3600,
           "case6: retry_after %r not a sane second count" % data.get("retry_after"))
     with MOCK.lock:
-        check(MOCK.put_count == put_before,
+        check(MOCK.commit_count == commits_before,
               "case6: rate-limited request still reached storage")
     print("PASS case6 4th same-IP submit -> 429 retry_after=%ds" % data["retry_after"])
 
@@ -669,20 +1050,21 @@ def run_mask_cases():
             headers={"X-Forwarded-For": "198.51.100.%d" % (10 + i // 3)})
         check(status == 200,
               "case11 (%s): status %s, want 200 (body %r)" % (why, status, data))
+        stored = index_doc()["submissions"][-1].get("nickname")
         with MOCK.lock:
-            stored = MOCK.doc["submissions"][-1].get("nickname")
-            msg = MOCK.put_messages[-1]
+            msg = MOCK.commit_messages[-1]
         check(stored == want,
               "case11 (%s): stored %r, want %r" % (why, stored, want))
         check(("— %s," % want) in msg,
               "case11 (%s): commit message %r does not carry the masked value"
               % (why, msg))
 
-    # A per-case check only looks at the last record. Scan the whole stored
-    # document and every commit message the mock ever received: a raw value
-    # that leaked into an earlier field would otherwise pass unnoticed.
-    with MOCK.lock:
-        blob = json.dumps(MOCK.doc, ensure_ascii=False) + "\n".join(MOCK.put_messages)
+    # A per-case check only looks at the last record. Scan EVERY public file the
+    # pipeline wrote — index, fleet series and every detail file — plus every
+    # commit message the mock ever received: a raw value that leaked into an
+    # earlier field, or into a file the assertions above never open, would
+    # otherwise pass unnoticed.
+    blob = leak_blob()
     for probe in MASK_LEAK_PROBES:
         check(probe not in blob,
               "case11: raw nickname %r survives in the stored data or a commit "
@@ -742,15 +1124,15 @@ def scan_payload(start, days, requests, losses, wasted, iron, **over):
 
 def reset_doc():
     """Start a stage from an empty dataset. Each M13 case is about the
-    relationship between rows, so it needs to own the whole file."""
+    relationship between rows, so it needs to own the whole repository — and
+    since M14 that means the detail files and the fleet series too, which is
+    why this rebuilds the repo rather than blanking one document."""
     with MOCK.lock:
-        MOCK.doc = {"schema_version": 1, "submissions": []}
-        MOCK.sha = secrets.token_hex(20)
+        _reset_repo()
 
 
 def doc_snapshot():
-    with MOCK.lock:
-        return json.loads(json.dumps(MOCK.doc, ensure_ascii=False))
+    return index_doc()
 
 
 def submit(payload, ip):
@@ -765,35 +1147,16 @@ def expect_ok(name, status, data):
     return data
 
 
-def check_file_arithmetic(tag):
-    """🔴 After every path: the public file's own numbers still add up, and its
-    daily rows stay inside the period they claim. A reader adding up the JSON by
-    hand is the site's whole trust model."""
-    doc = doc_snapshot()
-    check(doc.get("schema_version") == 1, "%s: schema_version lost" % tag)
-    for row in doc["submissions"]:
-        daily = row["daily"]
-        dates = [d["date"] for d in daily]
-        check(dates == sorted(dates), "%s/%s: daily rows are not in date order"
-              % (tag, row["id"]))
-        check(len(set(dates)) == len(dates), "%s/%s: a date appears twice"
-              % (tag, row["id"]))
-        check(row["period_start"] <= dates[0] and dates[-1] <= row["period_end"],
-              "%s/%s: daily rows %s..%s fall outside the period %s..%s"
-              % (tag, row["id"], dates[0], dates[-1],
-                 row["period_start"], row["period_end"]))
-        for field, total in (("requests", "requests"),
-                             ("losses", "in_ttl_losses"),
-                             ("wasted_tokens", "wasted_tokens")):
-            got = sum(d[field] for d in daily)
-            check(got == row["totals"][total],
-                  "%s/%s: daily %s sums to %d but totals.%s says %d"
-                  % (tag, row["id"], field, got, total, row["totals"][total]))
-        check(row["totals"]["iron_losses"] <= row["totals"]["in_ttl_losses"],
-              "%s/%s: iron_losses %d exceeds in_ttl_losses %d"
-              % (tag, row["id"], row["totals"]["iron_losses"],
-                 row["totals"]["in_ttl_losses"]))
-    return doc
+def daily_of(row, files=None):
+    """The daily rows of an index row. Since M14 they live one file away, and
+    every M13 assertion below that used to read row["daily"] reads them through
+    here — which is itself a check that the detail file exists and belongs to
+    the row that points at it."""
+    detail = detail_doc(row["id"], files)
+    check(detail is not None, "no detail file for %s" % row["id"])
+    check(detail.get("id") == row["id"],
+          "detail file for %s names %r" % (row["id"], detail.get("id")))
+    return detail["daily"]
 
 
 def run_identity_cases():
@@ -845,10 +1208,14 @@ def run_identity_cases():
           "case12: submitted_at moved; it records the FIRST submission")
     check(re.fullmatch(r"\d{4}-\d{2}-\d{2}", row.get("updated_at", "")),
           "case12: no updated_at on a merged row (%r)" % row.get("updated_at"))
-    by_date = {d["date"]: d for d in row["daily"]}
-    check(len(row["daily"]) == 15,
+    row_daily = daily_of(row)
+    by_date = {d["date"]: d for d in row_daily}
+    check(len(row_daily) == 15,
           "case12: %d daily rows, want 15 (10 + 8 with 3 overlapping)"
-          % len(row["daily"]))
+          % len(row_daily))
+    check(row.get("daily_days") == 15,
+          "case12: the index says %r daily rows but the detail file holds 15"
+          % row.get("daily_days"))
     check(by_date["2026-06-01"]["requests"] == 100,
           "case12: a day only the first submission covered was overwritten")
     check(by_date["2026-06-08"]["requests"] == 200,
@@ -867,13 +1234,18 @@ def run_identity_cases():
     check(row["identity"]["anchor_hashes"] == [stored_anchor(x) for x in a2],
           "case12: the stored anchors were not refreshed to the newest sample")
     with MOCK.lock:
-        msg = MOCK.put_messages[-1]
+        msg = MOCK.commit_messages[-1]
+        merge_paths = MOCK.commit_log[-1]["paths"]
     check(msg.startswith("data: update " + row_id + " —"),
           "case12: the commit message does not say this was an update: %r" % msg)
+    check(merge_paths == sorted([INDEX_PATH, FLEET_PATH,
+                                 "data/subs/%s.json" % row_id]),
+          "case12: a MERGE must also rewrite all three files in one commit, not "
+          "%r" % (merge_paths,))
     print("PASS case12 two folder submissions, same machine -> 1 row "
           "(%s..%s, %d requests, %d daily rows)"
           % (row["period_start"], row["period_end"],
-             row["totals"]["requests"], len(row["daily"])))
+             row["totals"]["requests"], len(row_daily)))
     print("       rows %d -> %d · id %s kept" % (1, len(after["submissions"]), row_id))
     print("       before %s..%s %s"
           % (stored_first["period_start"], stored_first["period_end"],
@@ -886,7 +1258,12 @@ def run_identity_cases():
              first["totals"]["in_ttl_losses"] + second["totals"]["in_ttl_losses"]))
 
     # -- case13: a value copied out of the PUBLIC file changes nothing --------
+    # M14 widened what "the public file" means: the anchor hash is in the index,
+    # and the victim's daily rows are in a detail file anyone can open and read.
+    # Both are re-proven here — the replay carries a hash lifted out of the
+    # index, and the detail file has to come back byte-identical too.
     published = row["identity"]["anchor_hashes"][0]
+    detail_before = detail_doc(row_id)
     replay = scan_payload("2026-07-01", 3, 9999, 0, 0, 0,
                           anchors=[published], nickname="attacker")
     status, data = submit(replay, "198.51.100.31")
@@ -902,7 +1279,12 @@ def run_identity_cases():
     check(doc["submissions"][0] == row,
           "🔴 case13: the target row CHANGED after a replay of its own published "
           "hash\n  before %r\n  after  %r" % (row, doc["submissions"][0]))
-    print("PASS case13 replay of a published hash -> new row, target byte-identical")
+    check(detail_doc(row_id) == detail_before,
+          "🔴 case13: the target's DETAIL FILE changed after a replay of a hash "
+          "published in the index — the daily rows are public too, and a value "
+          "copied out of any public file must still modify nothing")
+    print("PASS case13 replay of a published hash -> new row, target row AND its "
+          "detail file byte-identical")
     print("       sent anchors=[%s…] (copied from submissions.json), got id %s, "
           "rows %d" % (published[:16], data["id"], len(doc["submissions"])))
 
@@ -959,9 +1341,10 @@ def run_identity_cases():
     doc = check_file_arithmetic("case15")
     row = doc["submissions"][0]
     check(len(doc["submissions"]) == 1, "case15: %d rows" % len(doc["submissions"]))
-    check(len(row["daily"]) == 6,
+    row_daily = daily_of(row)
+    check(len(row_daily) == 6,
           "🔴 case15: %d daily rows, want 6 — a 3-day increment must not wipe the "
-          "days it does not mention" % len(row["daily"]))
+          "days it does not mention" % len(row_daily))
     check(row["period_start"] == "2026-07-01" and row["period_end"] == "2026-07-12",
           "case15: period %s..%s, want 2026-07-01..2026-07-12"
           % (row["period_start"], row["period_end"]))
@@ -985,8 +1368,9 @@ def run_identity_cases():
     doc = check_file_arithmetic("case16")
     row = doc["submissions"][0]
     check(len(doc["submissions"]) == 1, "case16: %d rows" % len(doc["submissions"]))
-    check(len(row["daily"]) == 8, "case16: %d daily rows, want 8" % len(row["daily"]))
-    check(all(d["requests"] == 111 for d in row["daily"]),
+    row_daily = daily_of(row)
+    check(len(row_daily) == 8, "case16: %d daily rows, want 8" % len(row_daily))
+    check(all(d["requests"] == 111 for d in row_daily),
           "case16: a day the re-scan covered kept the older measurement")
     check(row["totals"]["requests"] == 8 * 111,
           "case16: totals.requests %d, want %d" % (row["totals"]["requests"], 8 * 111))
@@ -1015,7 +1399,7 @@ def run_identity_cases():
           "case17: the record does not hold the hash of the issued token")
     check("anchor_hashes" not in ident,
           "case17: a paste row invented anchors: %r" % ident)
-    check(token not in json.dumps(doc),
+    check(token not in leak_blob(),
           "🔴 case17: the token itself was written into the public dataset")
 
     status, data = submit(scan_payload("2026-05-05", 4, 80, 1, 400, 1, token=token), ip)
@@ -1026,9 +1410,9 @@ def run_identity_cases():
     doc = check_file_arithmetic("case17 return")
     check(len(doc["submissions"]) == 1,
           "case17: %d rows after a token-linked return" % len(doc["submissions"]))
-    check(len(doc["submissions"][0]["daily"]) == 8,
+    check(len(daily_of(doc["submissions"][0])) == 8,
           "case17: the token-linked merge lost days (%d)"
-          % len(doc["submissions"][0]["daily"]))
+          % len(daily_of(doc["submissions"][0])))
 
     status, data = submit(scan_payload("2026-05-20", 2, 10, 0, 0, 0), ip)
     data = expect_ok("case17 no token", status, data)
@@ -1089,16 +1473,131 @@ def run_identity_cases():
     check(doc["submissions"][0]["nickname"] == "u***",
           "case19: the updated nickname is not masked: %r"
           % doc["submissions"][0]["nickname"])
-    with MOCK.lock:
-        blob = json.dumps(MOCK.doc, ensure_ascii=False) + "\n".join(MOCK.put_messages)
+    blob = leak_blob()
     for raw in (raw_first, raw_update, "attacker", "contract-test"):
         check(raw not in blob,
               "🔴 case19: the raw nickname %r survives in the stored data or a "
               "commit message" % raw)
     with MOCK.lock:
         check(not MOCK.errors, "mock observed protocol violations: %r" % MOCK.errors)
+        n_messages = len(MOCK.commit_messages)
     print("PASS case19 masking holds across an update (raw values absent from "
-          "%d commit messages and the whole file)" % len(MOCK.put_messages))
+          "%d commit messages and every public file)" % n_messages)
+
+    run_fleet_cases()
+
+
+# ---------------------------------------------------------------------------
+# M14: the fleet series, and what happens when a detail file is not there
+# ---------------------------------------------------------------------------
+
+def fleet_by_date():
+    return {d["date"]: d for d in fleet_doc()["days"]}
+
+
+def run_fleet_cases():
+    # -- case21: data/daily.json is the sum ACROSS submissions ---------------
+    # Two different machines, overlapping days, then one of them merges. The
+    # fleet series has to track all three moves without ever double counting —
+    # it is maintained as a delta, so a merge that added its new totals without
+    # taking the old ones out would inflate every day the two submissions share.
+    reset_doc()
+    a = anchor_set("machine-fleet-a", 16, 0)
+    b = anchor_set("machine-fleet-b", 16, 0)
+
+    status, data = submit(scan_payload("2026-09-01", 3, 100, 5, 700, 2, anchors=a),
+                          "198.51.100.40")
+    expect_ok("case21 A", status, data)
+    check_file_arithmetic("case21 A")
+    days = fleet_by_date()
+    check(sorted(days) == ["2026-09-01", "2026-09-02", "2026-09-03"],
+          "case21: fleet dates %r after one 3-day submission" % sorted(days))
+    check(days["2026-09-01"] == {"date": "2026-09-01", "requests": 100,
+                                 "losses": 5, "wasted_tokens": 700, "machines": 1},
+          "case21: %r" % days["2026-09-01"])
+
+    status, data = submit(scan_payload("2026-09-02", 3, 40, 1, 300, 1, anchors=b),
+                          "198.51.100.41")
+    expect_ok("case21 B", status, data)
+    check_file_arithmetic("case21 B")
+    days = fleet_by_date()
+    check(days["2026-09-02"]["machines"] == 2,
+          "case21: a day two machines both report says machines=%r"
+          % days["2026-09-02"]["machines"])
+    check(days["2026-09-02"]["requests"] == 140 and days["2026-09-02"]["losses"] == 6,
+          "case21: a shared day is not the sum of both machines: %r"
+          % days["2026-09-02"])
+    check(days["2026-09-01"]["machines"] == 1,
+          "case21: a day only one machine reports says machines=%r"
+          % days["2026-09-01"]["machines"])
+
+    # A re-scan from machine A: same 3 days, different numbers. The old rows
+    # must come OUT of the series as the new ones go in.
+    status, data = submit(scan_payload("2026-09-01", 3, 250, 9, 1200, 4, anchors=a),
+                          "198.51.100.40")
+    data = expect_ok("case21 A rescan", status, data)
+    check(data.get("merged") is True, "case21: the re-scan opened a second row")
+    check_file_arithmetic("case21 A rescan")
+    days = fleet_by_date()
+    check(days["2026-09-01"]["requests"] == 250,
+          "🔴 case21: a re-scanned day reads %d requests, want 250 — the merge "
+          "added the fresh numbers without taking the superseded ones out"
+          % days["2026-09-01"]["requests"])
+    check(days["2026-09-02"]["requests"] == 250 + 40,
+          "🔴 case21: a shared, re-scanned day reads %d requests, want 290"
+          % days["2026-09-02"]["requests"])
+    check(days["2026-09-02"]["machines"] == 2,
+          "case21: a merge changed the machine count of a shared day to %r"
+          % days["2026-09-02"]["machines"])
+    total_req = sum(d["requests"] for d in fleet_doc()["days"])
+    want_req = 3 * 250 + 3 * 40
+    check(total_req == want_req,
+          "case21: the fleet series totals %d requests, want %d"
+          % (total_req, want_req))
+    print("PASS case21 fleet series = sum across machines, delta-maintained "
+          "(%d days, %d requests, machines 1..2)"
+          % (len(days), total_req))
+
+    # -- case22: a row whose detail file is unreadable is NOT merged into -----
+    # Deleting a detail file is something only a repo admin can do, and the
+    # honest response is to refuse the write. Merging against daily rows that
+    # failed to load would recompute the row's totals from the incoming
+    # submission alone and silently delete that machine's history.
+    reset_doc()
+    c = anchor_set("machine-orphan", 16, 0)
+    status, data = submit(scan_payload("2026-10-01", 4, 60, 3, 250, 2, anchors=c),
+                          "198.51.100.42")
+    data = expect_ok("case22 base", status, data)
+    row_id = data["id"]
+    check_file_arithmetic("case22 base")
+    with MOCK.lock:
+        removed = MOCK.files.pop("data/subs/%s.json" % row_id)
+        # rebuild the tip so the tree the worker reads really lacks the file
+        _land(dict(MOCK.files), "admin: delete a detail file",
+              ["data/subs/%s.json" % row_id])
+        files_before = dict(MOCK.files)
+        commits_before = MOCK.commit_count
+    status, data = submit(scan_payload("2026-10-10", 2, 70, 1, 100, 1, anchors=c),
+                          "198.51.100.42")
+    check(status == 502, "case22: status %s, want 502 when the row's detail file "
+          "cannot be read (body %r)" % (status, data))
+    with MOCK.lock:
+        check(MOCK.commit_count == commits_before,
+              "🔴 case22: a submission committed after failing to read the row's "
+              "history — the merge would have wiped days it never saw")
+        check(dict(MOCK.files) == files_before,
+              "case22: the refused submission still changed the public files")
+    # put it back so the dataset is whole again for the final leak scan
+    with MOCK.lock:
+        MOCK.files["data/subs/%s.json" % row_id] = removed
+        _land(MOCK.files, "admin: restore the detail file",
+              ["data/subs/%s.json" % row_id])
+    check_file_arithmetic("case22 restored")
+    print("PASS case22 unreadable detail file -> 502, nothing committed, public "
+          "files untouched")
+
+    with MOCK.lock:
+        check(not MOCK.errors, "mock observed protocol violations: %r" % MOCK.errors)
 
 
 def main():
@@ -1128,6 +1627,7 @@ def main():
         print("FATAL: npx not found (node.js install required)")
         return 2
 
+    _reset_repo()   # a repository that exists, with an empty dataset in it
     mock_server, mock_port = start_mock()
     scratch = make_scratch()
     xff_ip = "203.0.113.%d" % random.randint(1, 254)

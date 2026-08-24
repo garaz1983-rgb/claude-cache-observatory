@@ -10,10 +10,10 @@
  * through opts. No data, no fetch, no judgment logic — render only.
  *
  * Browser global: window.ObservatoryCharts
- *   renderFleetTrend(canvas, model, opts)   — per-submission daily loss-rate lines
+ *   renderFleetTrend(canvas, model, opts)   — daily loss-rate line + coverage
  *   renderDailyBars(canvas, days, opts)     — daily loss bars + loss-rate line
  *   renderUsageHeatmap(tableEl, rows, opts) — usage-vs-losses day x hour heatmap
- *   PALETTE                                  — per-submission series colors
+ *   PALETTE                                  — series colors
  */
 (function (root) {
   "use strict";
@@ -24,6 +24,8 @@
   ];
 
   var MONO = "Consolas,monospace";
+  // Tallest a fleet-trend coverage column may reach, as a fraction of the plot.
+  var COVERAGE_MAX_H = 0.4;
 
   function cssVar(name) {
     return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
@@ -172,11 +174,20 @@
   /*
    * Fleet daily loss-rate trend.
    * model = {
-   *   dates : ["YYYY-MM-DD", ...]                     — sorted x axis
-   *   series: [{ color, values: [rate%|null, ...] }]  — aligned to dates,
-   *            null = the submission does not cover that date (gap in line)
+   *   dates   : ["YYYY-MM-DD", ...]                     — sorted x axis
+   *   series  : [{ color, values: [rate%|null, ...] }]  — aligned to dates,
+   *              null = no requests on that date (gap in the line)
+   *   coverage: [machines, ...] | undefined             — aligned to dates
    * }
    * opts = { dateFormat: fn(iso)->string, rateFormat: fn(number)->string }
+   *
+   * M14: the observatory now passes ONE series — the fleet-wide rate out of
+   * data/daily.json — instead of one line per submission. `coverage` exists
+   * because of what that costs: a single rate line makes a day backed by one
+   * machine look exactly like a day backed by fifty, and "one machine's rate
+   * wearing a fleet label" is the inference this site refuses to let a reader
+   * make anywhere else (see ENV_MIN_N in index.html). The faint column behind
+   * each date is how many machines reported it.
    */
   function renderFleetTrend(canvas, model, opts) {
     opts = opts || {};
@@ -224,6 +235,39 @@
       if (i % step !== 0 && i !== n - 1) continue;
       ctx.fillStyle = muted; ctx.textAlign = "center";
       ctx.fillText(dateFormat(dates[i]), xAt(i), h - 8);
+    }
+
+    // Coverage columns, drawn under the line: height is that date's machine
+    // count against the busiest date on the axis. Deliberately faint, and
+    // capped at COVERAGE_MAX_H of the plot, because this is context for the
+    // line and not a second reading of it — at full height it stops looking
+    // like a background and starts looking like a bar chart of something.
+    //
+    // Nothing is drawn when every date has the SAME machine count. A uniform
+    // column behind every point carries no information and, filling the plot,
+    // actively misleads; the caller says the constant in words instead. That is
+    // the state the site is in today with one submitter, so it is the state
+    // this had to get right first.
+    var coverage = Array.isArray(model.coverage) ? model.coverage : null;
+    if (coverage && n) {
+      var maxCov = 0, minCov = Infinity;
+      for (var c = 0; c < n; c++) {
+        var v0 = coverage[c] || 0;
+        if (v0 > maxCov) maxCov = v0;
+        if (v0 < minCov) minCov = v0;
+      }
+      if (maxCov > 0 && minCov !== maxCov) {
+        var cw = n > 1 ? Math.max(2, (iw / n) * 0.7) : Math.max(2, iw * 0.04);
+        ctx.fillStyle = ink;
+        ctx.globalAlpha = 0.12;
+        for (var k = 0; k < n; k++) {
+          var cv = coverage[k] || 0;
+          if (cv <= 0) continue;
+          var ch = ih * COVERAGE_MAX_H * cv / maxCov;
+          ctx.fillRect(xAt(k) - cw / 2, padT + ih - ch, cw, ch);
+        }
+        ctx.globalAlpha = 1;
+      }
     }
 
     series.forEach(function (s) {
