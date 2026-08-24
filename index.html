@@ -18,6 +18,17 @@
   --crit:#D64545; --crit-soft:rgba(214,69,69,.12);
   --ok:#2E9E7B; --ok-soft:rgba(46,158,123,.12);
   --amber:#B07A2A; --amber-soft:rgba(176,122,42,.12);
+  /* Call-to-action button pair. It is a separate token from --crit because a
+     fill has to carry legible label text, and --crit does not: white on the
+     light --crit measures 4.38:1 and on the dark --crit only 2.79:1, both
+     under 4.5. So the light theme darkens the red and keeps white, and the
+     dark theme keeps the bright red and puts near-black on it (6.65:1). */
+  --cta-bg:#B93B3B; --cta-ink:#FFFFFF;
+  /* Lift for the floating button. A shadow has to read against the page it
+     floats over, so it is a per-theme token like every other colour here:
+     a soft drop in light, a much deeper one in dark where a faint shadow is
+     invisible. */
+  --float-shadow:0 6px 20px rgba(0,0,0,.22);
 }
 @media (prefers-color-scheme: dark){
   :root:not([data-theme="light"]){
@@ -26,6 +37,8 @@
     --crit:#FF6B5E; --crit-soft:rgba(255,107,94,.16);
     --ok:#3FBF95; --ok-soft:rgba(63,191,149,.16);
     --amber:#D9A254; --amber-soft:rgba(217,162,84,.16);
+    --cta-bg:#FF6B5E; --cta-ink:#12161B;
+    --float-shadow:0 8px 24px rgba(0,0,0,.55);
   }
 }
 :root[data-theme="dark"]{
@@ -34,6 +47,8 @@
   --crit:#FF6B5E; --crit-soft:rgba(255,107,94,.16);
   --ok:#3FBF95; --ok-soft:rgba(63,191,149,.16);
   --amber:#D9A254; --amber-soft:rgba(217,162,84,.16);
+  --cta-bg:#FF6B5E; --cta-ink:#12161B;
+  --float-shadow:0 8px 24px rgba(0,0,0,.55);
 }
 *{box-sizing:border-box}
 body{
@@ -42,7 +57,11 @@ body{
   font-size:15px; line-height:1.6;
 }
 .mono{font-family:ui-monospace,'Cascadia Mono',Consolas,monospace}
-.wrap{max-width:960px; margin:0 auto; padding:24px 20px 64px}
+/* The bottom padding is not decoration: it is the landing strip the floating
+   button needs. Without it the button sits on the footer once the page is
+   scrolled to the end, and the last line a reader reaches is the one they
+   cannot read. */
+.wrap{max-width:960px; margin:0 auto; padding:24px 20px 104px}
 .topbar{display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:22px}
 .badge{font-size:.72rem; letter-spacing:.04em; text-transform:uppercase; color:var(--amber); border:1px solid var(--amber); border-radius:99px; padding:2px 10px; white-space:nowrap}
 .lang{font-size:.82rem; color:var(--muted)}
@@ -58,8 +77,28 @@ header .sub .mono{font-size:.82rem}
 .kpi .note{font-size:.78rem; color:var(--muted); margin-top:4px}
 .kpi.crit .val{color:var(--crit)}
 .kpi.live .val{color:var(--ok)}
-.cta{display:inline-block; margin-top:16px; padding:10px 18px; border-radius:8px; background:var(--crit); color:#fff; text-decoration:none; font-weight:700; font-size:.95rem}
+.cta{display:inline-block; margin-top:16px; padding:10px 18px; border-radius:8px; background:var(--cta-bg); color:var(--cta-ink); text-decoration:none; font-weight:700; font-size:.95rem}
 .cta:hover{filter:brightness(1.08)}
+.cta:focus-visible{outline:2px solid var(--ink); outline-offset:2px}
+/* Floating diagnosis button. The header CTA scrolls off after the first
+   screen, and everything below it (the history, the preview, the fleet data,
+   the methodology) is exactly the material that talks a reader into acting.
+   The action has to still be on screen when it finally lands.
+   It stays visible at the top of the page too, next to the header CTA: the
+   two occupy different places (one inline in the reading column, one pinned
+   to the corner) rather than stacking, and a scroll-driven fade would add a
+   second piece of scroll state to keep in sync for no reading gain.
+   Layer: z-index 50, deliberately below the 60 that the per-event popover
+   uses in check.html, so any panel on that tier paints above the button
+   instead of under it. This page's own detail panel is now in the document
+   flow, so nothing here competes for the tier.
+   No transition, transform or animation, so prefers-reduced-motion (already
+   handled globally at the end of this stylesheet) has nothing to undo. */
+.cta-float{position:fixed; right:20px; bottom:20px; z-index:50; margin-top:0;
+  box-shadow:var(--float-shadow)}
+@media (max-width:480px){
+  .cta-float{right:12px; bottom:12px; padding:9px 14px; font-size:.88rem}
+}
 section{margin-top:36px}
 section h2{font-size:1.02rem; font-weight:700; margin:0 0 2px}
 section .desc{color:var(--muted); font-size:.85rem; margin:0 0 14px}
@@ -79,8 +118,14 @@ canvas{display:block; width:100%}
 .demo .kpis{grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); margin:0 0 12px}
 .demo .card + .card{margin-top:12px}
 .demo-note{font-size:.82rem; color:var(--muted); margin:0 0 12px}
-.demo-foot{font-size:.85rem; margin:12px 0 0}
-.demo-foot a{font-weight:700}
+/* The preview ends where the decision gets made, so the exit is the page's
+   button, not a sentence with a link in it. It reuses .cta (the header button)
+   rather than inventing a second button language; the wording is what keeps
+   the two apart, and the reassurance sits under the button instead of wrapping
+   around it. */
+.demo-foot{margin:14px 0 0}
+.demo-foot .cta{margin-top:0}
+.demo-foot-note{display:block; margin-top:8px; font-size:.82rem; color:var(--muted)}
 .hm-scroll{overflow-x:auto}
 table.hm{border-collapse:separate; border-spacing:2px; font-family:ui-monospace,'Cascadia Mono',Consolas,monospace; font-variant-numeric:tabular-nums; font-size:.72rem; min-width:760px}
 table.hm th{font-weight:500; color:var(--muted); padding:2px 2px; text-align:center; font-size:.66rem}
@@ -94,24 +139,33 @@ table.hm td{width:27px; height:26px; text-align:center; border-radius:4px; backg
    which also fixes its own contrast against a bright dark-theme cell. */
 table.hm td.hit{color:var(--hm-fg,var(--ink)); font-weight:600; cursor:pointer}
 table.hm td.hit.sel{outline:2px solid var(--hm-fg,var(--ink)); outline-offset:-1px}
-/* Per-event detail popover — same behaviour as check.html: fixed position,
-   anchored to the clicked cell in script and clamped into the viewport, so a
-   top-row cell does not throw the panel off-screen. */
-.evt-panel{display:none; position:fixed; left:0; top:0; z-index:60;
-  max-width:min(92vw,430px); max-height:min(60vh,420px); overflow:auto;
-  border:1px solid var(--line); border-radius:8px; padding:10px 14px;
-  background:var(--surface); box-shadow:0 10px 30px rgba(0,0,0,.24)}
-.evt-panel.on{display:block}
+/* Per-event detail — an in-flow card under the heatmap, not a popover.
+   Until M9 this table existed only as a click-anchored popover, so a visitor
+   who scrolled past never saw the most concrete screen a diagnosis produces:
+   the section promises "this is what you get" and then hid its best exhibit
+   behind an interaction. It now renders on load with the sample's busiest
+   hour, and a click on a red cell re-renders the same card for that hour.
+   One surface only: an inline card plus a floating popover would print the
+   same table twice a few pixels apart. The four dismissal routes (x, Esc,
+   outside click, the cell again) survive as "drop the selection, go back to
+   the default hour", and each still calls clearHeatmapSelection so no stale
+   td.hit.sel desynchronises the table's own click toggle. */
+.evt-panel{border:1px solid var(--line); border-radius:8px; padding:12px 14px;
+  background:var(--surface); margin-top:12px; overflow-x:auto}
+.evt-panel:focus-visible{outline:2px solid var(--ink); outline-offset:2px}
 .evt-panel .evt-head{display:flex; align-items:flex-start; gap:10px; justify-content:space-between}
 .evt-panel .evt-head h3{font-size:.85rem; margin:0 0 8px; font-weight:700}
-.evt-panel .evt-close{flex:0 0 auto; font:inherit; font-size:.95rem; line-height:1;
-  padding:3px 9px; border-radius:6px; border:1px solid var(--line);
-  background:var(--bg); color:var(--ink); cursor:pointer}
+.evt-panel .evt-hint{font-weight:400; color:var(--muted)}
+.evt-panel .evt-close{flex:0 0 auto; font:inherit; font-size:.78rem; line-height:1.3;
+  padding:4px 10px; border-radius:6px; border:1px solid var(--line);
+  background:var(--bg); color:var(--ink); cursor:pointer; white-space:nowrap}
 .evt-panel .evt-close:hover{border-color:var(--muted)}
 .evt-panel table{border-collapse:collapse; font-family:ui-monospace,'Cascadia Mono',Consolas,monospace; font-variant-numeric:tabular-nums; font-size:.78rem}
 .evt-panel td,.evt-panel th{padding:2px 18px 2px 0; text-align:right; border:0}
 .evt-panel th{color:var(--muted); font-weight:500; font-size:.68rem; text-transform:uppercase; letter-spacing:.05em}
 .evt-panel td:first-child,.evt-panel th:first-child{text-align:left}
+.evt-panel td:last-child,.evt-panel th:last-child{padding-right:0}
+.evt-panel td,.evt-panel th{white-space:nowrap}
 .tbl-scroll{overflow-x:auto}
 table.subs{width:100%; border-collapse:collapse; font-size:.82rem}
 table.subs th{font-size:.7rem; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); font-weight:500; text-align:right; padding:4px 8px; border-bottom:1px solid var(--line); white-space:nowrap}
@@ -223,12 +277,18 @@ a{color:inherit}
       <div class="legend">
         <span><i class="chip" style="background:var(--grid)"></i>idle (no requests)</span>
         <span><i class="chip" id="dLgUse"></i>grey shading = requests that hour (darker = more)</span>
-        <span><i class="chip" style="background:var(--crit)"></i>red = losses (number in the cell; <b>click it</b> for per-event detail)</span>
+        <span><i class="chip" style="background:var(--crit)"></i>red = losses (number in the cell; <b>click it</b> and the table below switches to that hour)</span>
       </div>
     </div>
-    <!-- Popover (position:fixed). Kept outside the horizontal scroll box so it never clips. -->
-    <div class="evt-panel" id="demoEvtPanel"></div>
-    <p class="demo-foot"><a href="check.html">Run this on your own logs →</a> Parsing happens in your browser; log files never leave your machine, and nothing is submitted until you press the share button.</p>
+    <!-- Per-event detail. Populated on load with the sample's busiest hour, so
+         the table is visible without clicking; kept outside the heatmap's
+         horizontal scroll box so it scrolls on its own on narrow screens. -->
+    <div class="evt-panel" id="demoEvtPanel" role="region" tabindex="0"
+         aria-live="polite" aria-label="Per-event detail (example data)"></div>
+    <p class="demo-foot">
+      <a class="cta" href="check.html">Run this on your own logs →</a>
+      <span class="demo-foot-note">Parsing happens in your browser; log files never leave your machine, and nothing is submitted until you press the share button.</span>
+    </p>
   </div>
 </section>
 
@@ -332,6 +392,13 @@ a{color:inherit}
 <footer>
   Community-run observatory — not affiliated with Anthropic. Judgment rules v2.1 (<code>assets/parse.js</code> in the browser, <code>scripts/check_cache_loss.py</code> on the CLI: same rules, verifiable against each other). Maintainer: <a href="https://github.com/garaz1983-rgb">garaz1983-rgb</a>
 </footer>
+
+<!-- Floating action. Last in the tab order on purpose: the same action is
+     already the first focusable thing on the page (the header CTA), so a
+     keyboard user meets it early anyway, and repeating it up front would put
+     two identical links back to back. -->
+<a class="cta cta-float" href="check.html"
+   aria-label="Check your own data: open the diagnosis page">Check your own data →</a>
 
 </div>
 <script src="assets/charts.js"></script>
@@ -645,102 +712,118 @@ function drawDemo(){
     cellTitle: function(row, hour, rq, v){
       return "Example data · " + row.key + " " + hh(hour) + ":00 · " + rq + " requests · " + v + " losses";
     },
-    onSelect: function(row, hour, td){ showDemoEvents(row.key, hour, td); },
-    onClear: function(){ hideDemoEvents(); },
+    onSelect: function(row, hour){ selectDemoCell(row.key, hour); },
+    onClear: function(){ clearDemoSelection(); },
     usageLegendEl: document.getElementById("dLgUse")
   });
+
+  // A re-render (resize, theme switch) rebuilds every cell, so the .sel
+  // highlight the table drew is gone. Drop the selection with it rather than
+  // leaving the detail card pointing at an hour the table no longer marks.
+  DEMO_SEL = null;
+  renderDemoDetail();
 }
 
-var DEMO_TD = null;   // cell the popover is anchored to
-var DEMO_AT = null;   // that cell's viewport position when it opened
+/* --- Per-event detail card ------------------------------------------------
+   The card under the heatmap always shows one hour's events. With no selection
+   it shows a default hour picked out of the demo data; a click on a red cell
+   selects that hour instead. Both states run through renderDemoDetail, so the
+   thing a scroller sees and the thing a clicker sees are the same table built
+   by the same code, which is the point: the preview would be lying if the
+   default view and the clicked view looked like different screens. */
+var DEMO_SEL = null;       // {date, hour} the visitor picked, or null
+var DEMO_DEFAULT = null;   // {date, hour} chosen from the data, computed once
 
-function demoPanelOpen(){
-  return document.getElementById("demoEvtPanel").classList.contains("on");
+/* Which hour to show when nothing is selected. Never hardcoded: a cell with
+   several losses in it is what makes the table explain itself (one row shows
+   the columns, four rows show the burst, the main/subagent split and the
+   sub-5-minute gaps that the KPIs above are counting). Most losses wins, ties
+   go to the most re-billed tokens, then to the earliest hour so the pick is
+   deterministic for every visitor. */
+function demoDefaultCell(){
+  var best = null;
+  window.ObservatoryDemo.events.forEach(function(list, key){
+    var p = key.split("#");
+    var c = {
+      date: p[0], hour: parseInt(p[1], 10), n: list.length,
+      tokens: list.reduce(function(a, e){ return a + e.tokens; }, 0)
+    };
+    if(!best || betterDemoCell(c, best)) best = c;
+  });
+  return best;
+}
+function betterDemoCell(c, b){
+  if(c.n !== b.n) return c.n > b.n;
+  if(c.tokens !== b.tokens) return c.tokens > b.tokens;
+  if(c.date !== b.date) return c.date < b.date;
+  return c.hour < b.hour;
 }
 
-/* Anchor the popover to the clicked cell, clamped inside the viewport — the
-   heatmap is a min-width:760px horizontal scroller, and a top-row cell would
-   otherwise push the panel off-screen. Same placement as check.html. */
-function placeDemoPanel(p, td){
-  if(!td || !td.getBoundingClientRect) return;
-  var margin = 8;
-  p.style.left = "0px";
-  p.style.top = "0px";
-  var r = td.getBoundingClientRect();
-  var pw = p.offsetWidth, ph = p.offsetHeight;
-  var vw = document.documentElement.clientWidth;
-  var vh = document.documentElement.clientHeight;
-  var top = r.bottom + 6;
-  if(top + ph > vh - margin){
-    var above = r.top - 6 - ph;
-    top = above >= margin ? above : Math.max(margin, vh - margin - ph);
-  }
-  var left = r.left + r.width / 2 - pw / 2;
-  var maxLeft = Math.max(margin, vw - margin - pw);
-  if(left > maxLeft) left = maxLeft;
-  if(left < margin) left = margin;
-  p.style.left = Math.round(left) + "px";
-  p.style.top = Math.round(Math.max(margin, top)) + "px";
-}
-
-function showDemoEvents(date, hour, td){
+function renderDemoDetail(){
+  var D = window.ObservatoryDemo;
   var p = document.getElementById("demoEvtPanel");
-  var rows = window.ObservatoryDemo.events.get(date + "#" + hour) || [];
-  if(!rows.length){ hideDemoEvents(); return; }
+  if(!D || !p) return;
+  if(!DEMO_DEFAULT) DEMO_DEFAULT = demoDefaultCell();
+  var cell = DEMO_SEL || DEMO_DEFAULT;
+  var rows = cell ? (D.events.get(cell.date + "#" + cell.hour) || []) : [];
+  if(!rows.length){ p.innerHTML = ""; return; }
+
+  var picked = !!DEMO_SEL;
   var tot = rows.reduce(function(a, e){ return a + e.tokens; }, 0);
-  var html = "<div class='evt-head'><h3>" + date + " " + hh(hour) + ":00 · " + rows.length +
-    " losses · " + (tot / 1e6).toFixed(2) + "M tokens re-billed " +
-    "<span style='font-weight:400;color:var(--muted)'>(example data — close: ×, Esc, click outside, or the cell again)</span></h3>" +
-    "<button type='button' class='evt-close' aria-label='Close detail'>×</button></div>";
+  // The example-data marker rides in the header of this card the same way it
+  // rides in the heatmap tooltips: whatever a reader screenshots on its own
+  // still says what it is.
+  var hint = picked
+    ? "(example data — the hour you picked. Clear it with ×, Esc, a click outside, or the same cell again.)"
+    : "(example data — the sample's worst hour, shown by default. Click any red cell above to load that hour here.)";
+  var html = "<div class='evt-head'><h3>" + cell.date + " " + hh(cell.hour) + ":00 · " +
+    rows.length + " losses · " + (tot / 1e6).toFixed(2) + "M tokens re-billed " +
+    "<span class='evt-hint'>" + hint + "</span></h3>" +
+    (picked ? "<button type='button' class='evt-close' aria-label='Clear the selected hour'>× clear</button>" : "") +
+    "</div>";
   html += "<table><tr><th>Time</th><th>Idle gap</th><th>Tokens re-billed</th><th>Session</th></tr>";
   rows.forEach(function(e){
     html += "<tr><td>" + e.time + "</td><td>" + e.gapMin.toFixed(1) + " min</td><td>" +
       e.tokens.toLocaleString("en-US") + "</td><td>" + (e.sub ? "subagent" : "main") + "</td></tr>";
   });
   html += "</table>";
-  p.className = "evt-panel on";
   p.innerHTML = html;
-  var closeBtn = p.querySelector(".evt-close");
-  if(closeBtn) closeBtn.addEventListener("click", hideDemoEvents);
-  placeDemoPanel(p, td);
-  DEMO_TD = td || null;
-  DEMO_AT = (td && td.getBoundingClientRect) ? td.getBoundingClientRect() : null;
+  var clearBtn = p.querySelector(".evt-close");
+  if(clearBtn) clearBtn.addEventListener("click", clearDemoSelection);
 }
 
-function hideDemoEvents(){
-  var p = document.getElementById("demoEvtPanel");
-  p.className = "evt-panel";
-  p.innerHTML = "";
-  DEMO_TD = null;
-  DEMO_AT = null;
-  // Closing by a route the table never sees (×, Esc, outside click, scroll)
-  // would leave a stale .sel cell and desync the next click toggle.
+function selectDemoCell(date, hour){
+  var rows = window.ObservatoryDemo.events.get(date + "#" + hour);
+  if(!rows || !rows.length){ clearDemoSelection(); return; }
+  DEMO_SEL = { date: date, hour: hour };
+  renderDemoDetail();
+}
+
+function clearDemoSelection(){
+  DEMO_SEL = null;
+  renderDemoDetail();
+  // Clearing by a route the table never sees (×, Esc, click outside) would
+  // leave a stale .sel cell and desync the table's next click toggle.
   if(window.ObservatoryCharts && ObservatoryCharts.clearHeatmapSelection){
     ObservatoryCharts.clearHeatmapSelection(document.getElementById("demoHeatmap"));
   }
 }
 
 document.addEventListener("keydown", function(ev){
-  if(ev.key === "Escape" && demoPanelOpen()) hideDemoEvents();
+  if(ev.key === "Escape" && DEMO_SEL) clearDemoSelection();
 });
 document.addEventListener("mousedown", function(ev){
-  if(!demoPanelOpen()) return;
+  if(!DEMO_SEL) return;
   var t = ev.target;
   if(document.getElementById("demoEvtPanel").contains(t)) return;
-  // Clicks on heatmap cells are the table's own toggle — closing here desyncs it.
+  // Clicks on heatmap cells are the table's own toggle — clearing here desyncs it.
   if(t && t.closest && t.closest("#demoHeatmap")) return;
-  hideDemoEvents();
+  clearDemoSelection();
 });
-/* Scrolling detaches the popover from its cell (capture: the heatmap's own
-   horizontal scroller counts too) — but only close when the cell really
-   moved, because a trailing scroll event would otherwise close the popover
-   the click just opened. */
-window.addEventListener("scroll", function(){
-  if(!demoPanelOpen()) return;
-  if(!DEMO_TD || !DEMO_AT){ hideDemoEvents(); return; }
-  var r = DEMO_TD.getBoundingClientRect();
-  if(Math.abs(r.top - DEMO_AT.top) > 1 || Math.abs(r.left - DEMO_AT.left) > 1) hideDemoEvents();
-}, true);
+/* The scroll handler is gone. It existed to keep a floating popover attached
+   to its cell; now that the card is in the document flow it moves with the
+   cell anyway, and keeping the handler would have snapped the card a reader
+   was mid-way through back to the default hour on every scroll. */
 
 fetch("data/submissions.json")
   .then(function(r){
@@ -768,7 +851,7 @@ drawDemo();
 
 var rt;
 window.addEventListener("resize", function(){
-  hideDemoEvents();
+  clearDemoSelection();
   clearTimeout(rt);
   rt = setTimeout(drawAll, 150);
 });

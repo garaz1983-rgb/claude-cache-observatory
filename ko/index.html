@@ -18,6 +18,16 @@
   --crit:#D64545; --crit-soft:rgba(214,69,69,.12);
   --ok:#2E9E7B; --ok-soft:rgba(46,158,123,.12);
   --amber:#B07A2A; --amber-soft:rgba(176,122,42,.12);
+  /* CTA 버튼 배경·글자 쌍. --crit과 따로 두는 이유는 버튼 배경은 글자를
+     읽히게 받쳐야 하는데 --crit이 그걸 못 하기 때문이다. 흰 글자 기준
+     라이트 --crit은 4.38:1, 다크 --crit은 2.79:1로 둘 다 4.5 미만이다.
+     그래서 라이트는 적색을 한 단계 어둡게 하고 흰 글자를 유지하고,
+     다크는 밝은 적색을 그대로 두고 거의 검정 글자를 얹는다(6.65:1). */
+  --cta-bg:#B93B3B; --cta-ink:#FFFFFF;
+  /* 플로팅 버튼의 들뜸. 그림자는 자기가 떠 있는 페이지 위에서 읽혀야 하므로
+     여기 다른 색들과 마찬가지로 테마별 토큰으로 둔다. 라이트는 옅게, 옅은
+     그림자가 아예 안 보이는 다크는 훨씬 진하게. */
+  --float-shadow:0 6px 20px rgba(0,0,0,.22);
 }
 @media (prefers-color-scheme: dark){
   :root:not([data-theme="light"]){
@@ -26,6 +36,8 @@
     --crit:#FF6B5E; --crit-soft:rgba(255,107,94,.16);
     --ok:#3FBF95; --ok-soft:rgba(63,191,149,.16);
     --amber:#D9A254; --amber-soft:rgba(217,162,84,.16);
+    --cta-bg:#FF6B5E; --cta-ink:#12161B;
+    --float-shadow:0 8px 24px rgba(0,0,0,.55);
   }
 }
 :root[data-theme="dark"]{
@@ -34,6 +46,8 @@
   --crit:#FF6B5E; --crit-soft:rgba(255,107,94,.16);
   --ok:#3FBF95; --ok-soft:rgba(63,191,149,.16);
   --amber:#D9A254; --amber-soft:rgba(217,162,84,.16);
+  --cta-bg:#FF6B5E; --cta-ink:#12161B;
+  --float-shadow:0 8px 24px rgba(0,0,0,.55);
 }
 *{box-sizing:border-box}
 body{
@@ -42,7 +56,10 @@ body{
   font-size:15px; line-height:1.6;
 }
 .mono{font-family:ui-monospace,'Cascadia Mono',Consolas,monospace}
-.wrap{max-width:960px; margin:0 auto; padding:24px 20px 64px}
+/* 아래쪽 여백은 장식이 아니라 플로팅 버튼이 내려앉을 자리다. 이게 없으면
+   페이지 끝까지 내렸을 때 버튼이 푸터 위에 걸터앉고, 독자가 도달한 마지막
+   줄이 하필 못 읽는 줄이 된다. */
+.wrap{max-width:960px; margin:0 auto; padding:24px 20px 104px}
 .topbar{display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:22px}
 .badge{font-size:.72rem; letter-spacing:.04em; color:var(--amber); border:1px solid var(--amber); border-radius:99px; padding:2px 10px; white-space:nowrap}
 .lang{font-size:.82rem; color:var(--muted)}
@@ -58,8 +75,26 @@ header .sub .mono{font-size:.82rem}
 .kpi .note{font-size:.78rem; color:var(--muted); margin-top:4px}
 .kpi.crit .val{color:var(--crit)}
 .kpi.live .val{color:var(--ok)}
-.cta{display:inline-block; margin-top:16px; padding:10px 18px; border-radius:8px; background:var(--crit); color:#fff; text-decoration:none; font-weight:700; font-size:.95rem}
+.cta{display:inline-block; margin-top:16px; padding:10px 18px; border-radius:8px; background:var(--cta-bg); color:var(--cta-ink); text-decoration:none; font-weight:700; font-size:.95rem}
 .cta:hover{filter:brightness(1.08)}
+.cta:focus-visible{outline:2px solid var(--ink); outline-offset:2px}
+/* 진단 플로팅 버튼. 상단 CTA는 첫 화면을 지나면 사라지는데, 그 아래에 있는
+   경위·미리보기·fleet 데이터·방법론이 바로 사람을 움직이게 하는 재료다.
+   그게 먹히는 순간에 행동 경로가 화면에 남아 있어야 한다.
+   페이지 최상단에서 상단 CTA와 같이 보이는 것도 그대로 둔다. 둘이 겹쳐
+   쌓이는 게 아니라 자리가 다르고(하나는 읽는 단 안, 하나는 화면 모서리),
+   스크롤 연동 페이드를 넣으면 읽기에 득도 없이 동기화할 스크롤 상태만
+   하나 더 생긴다.
+   층위: z-index 50. check.html의 건별 상세 팝오버가 쓰는 60보다 일부러
+   아래에 둔다. 그 층에 뜨는 패널은 버튼 아래가 아니라 위에 그려져야 한다.
+   이 페이지의 상세 패널은 이제 문서 흐름 안에 있어서 층을 다투지 않는다.
+   transition·transform·animation을 쓰지 않으므로 prefers-reduced-motion이
+   되돌릴 것도 없다(전역 처리는 이 스타일시트 끝에 있다). */
+.cta-float{position:fixed; right:20px; bottom:20px; z-index:50; margin-top:0;
+  box-shadow:var(--float-shadow)}
+@media (max-width:480px){
+  .cta-float{right:12px; bottom:12px; padding:9px 14px; font-size:.88rem}
+}
 section{margin-top:36px}
 section h2{font-size:1.02rem; font-weight:700; margin:0 0 2px}
 section .desc{color:var(--muted); font-size:.85rem; margin:0 0 14px}
@@ -78,8 +113,13 @@ canvas{display:block; width:100%}
 .demo .kpis{grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); margin:0 0 12px}
 .demo .card + .card{margin-top:12px}
 .demo-note{font-size:.82rem; color:var(--muted); margin:0 0 12px}
-.demo-foot{font-size:.85rem; margin:12px 0 0}
-.demo-foot a{font-weight:700}
+/* 미리보기를 다 본 지점이 곧 결정 지점이라, 나가는 길을 문장 속 링크가 아니라
+   버튼으로 둔다. 헤더와 같은 .cta를 그대로 쓰고 버튼 언어를 새로 만들지
+   않는다. 상단 CTA와는 문안으로 구분하고, 안심 문구는 버튼을 감싸지 않도록
+   버튼 아래 줄로 내린다. */
+.demo-foot{margin:14px 0 0}
+.demo-foot .cta{margin-top:0}
+.demo-foot-note{display:block; margin-top:8px; font-size:.82rem; color:var(--muted)}
 .hm-scroll{overflow-x:auto}
 table.hm{border-collapse:separate; border-spacing:2px; font-family:ui-monospace,'Cascadia Mono',Consolas,monospace; font-variant-numeric:tabular-nums; font-size:.72rem; min-width:760px}
 table.hm th{font-weight:500; color:var(--muted); padding:2px 2px; text-align:center; font-size:.66rem}
@@ -91,24 +131,33 @@ table.hm td{width:27px; height:26px; text-align:center; border-radius:4px; backg
    값을 못 심었을 때의 보호막이다. 선택 테두리도 같은 색을 쓴다. */
 table.hm td.hit{color:var(--hm-fg,var(--ink)); font-weight:600; cursor:pointer}
 table.hm td.hit.sel{outline:2px solid var(--hm-fg,var(--ink)); outline-offset:-1px}
-/* 건별 상세 팝오버. check.html과 동작을 맞춘다: position:fixed로 두고 스크립트에서
-   클릭한 셀 기준으로 배치하며 뷰포트 안으로 clamp한다. 그래야 첫 행 셀을 눌러도
-   패널이 화면 밖으로 나가지 않는다. */
-.evt-panel{display:none; position:fixed; left:0; top:0; z-index:60;
-  max-width:min(92vw,430px); max-height:min(60vh,420px); overflow:auto;
-  border:1px solid var(--line); border-radius:8px; padding:10px 14px;
-  background:var(--surface); box-shadow:0 10px 30px rgba(0,0,0,.24)}
-.evt-panel.on{display:block}
+/* 건별 상세. 팝오버가 아니라 히트맵 바로 아래 붙는 인라인 카드다.
+   M9 전까지 이 표는 셀을 클릭해야만 뜨는 팝오버로만 있었다. 그래서 스크롤만
+   하고 지나간 방문자는 진단이 실제로 뽑아 주는 가장 구체적인 화면을 한 번도
+   못 봤다. 섹션은 "이런 걸 본다"고 약속해 놓고 정작 그 물건을 인터랙션 뒤에
+   숨겨 둔 셈이다. 이제 로드 시점에 예시에서 유실이 가장 몰린 시간대로 채워
+   두고, 붉은 셀을 누르면 같은 카드가 그 시간대로 다시 그려진다.
+   표시 면은 하나뿐이다. 인라인 카드와 떠 있는 팝오버를 같이 두면 같은 표가
+   몇 픽셀 간격으로 두 번 찍힌다. 닫기 4경로(×·ESC·바깥 클릭·셀 다시 클릭)는
+   "선택을 풀고 기본 시간대로 돌아간다"로 살아 있고, 각 경로가 여전히
+   clearHeatmapSelection을 부르므로 td.hit.sel이 남아 다음 토글을 어긋내지
+   않는다. */
+.evt-panel{border:1px solid var(--line); border-radius:8px; padding:12px 14px;
+  background:var(--surface); margin-top:12px; overflow-x:auto}
+.evt-panel:focus-visible{outline:2px solid var(--ink); outline-offset:2px}
 .evt-panel .evt-head{display:flex; align-items:flex-start; gap:10px; justify-content:space-between}
 .evt-panel .evt-head h3{font-size:.85rem; margin:0 0 8px; font-weight:700}
-.evt-panel .evt-close{flex:0 0 auto; font:inherit; font-size:.95rem; line-height:1;
-  padding:3px 9px; border-radius:6px; border:1px solid var(--line);
-  background:var(--bg); color:var(--ink); cursor:pointer}
+.evt-panel .evt-hint{font-weight:400; color:var(--muted)}
+.evt-panel .evt-close{flex:0 0 auto; font:inherit; font-size:.78rem; line-height:1.3;
+  padding:4px 10px; border-radius:6px; border:1px solid var(--line);
+  background:var(--bg); color:var(--ink); cursor:pointer; white-space:nowrap}
 .evt-panel .evt-close:hover{border-color:var(--muted)}
 .evt-panel table{border-collapse:collapse; font-family:ui-monospace,'Cascadia Mono',Consolas,monospace; font-variant-numeric:tabular-nums; font-size:.78rem}
 .evt-panel td,.evt-panel th{padding:2px 18px 2px 0; text-align:right; border:0}
 .evt-panel th{color:var(--muted); font-weight:500; font-size:.68rem; letter-spacing:.05em}
 .evt-panel td:first-child,.evt-panel th:first-child{text-align:left}
+.evt-panel td:last-child,.evt-panel th:last-child{padding-right:0}
+.evt-panel td,.evt-panel th{white-space:nowrap}
 .tbl-scroll{overflow-x:auto}
 table.subs{width:100%; border-collapse:collapse; font-size:.82rem}
 table.subs th{font-size:.7rem; letter-spacing:.04em; color:var(--muted); font-weight:500; text-align:right; padding:4px 8px; border-bottom:1px solid var(--line); white-space:nowrap}
@@ -219,12 +268,18 @@ a{color:inherit}
       <div class="legend">
         <span><i class="chip" style="background:var(--grid)"></i>미사용(요청 0)</span>
         <span><i class="chip" id="dLgUse"></i>회색 음영 = 그 시간대 요청량(진할수록 많음)</span>
-        <span><i class="chip" style="background:var(--crit)"></i>적색 = 유실 건수(셀 안 숫자, <b>클릭</b>하면 건별 상세)</span>
+        <span><i class="chip" style="background:var(--crit)"></i>적색 = 유실 건수(셀 안 숫자, <b>클릭</b>하면 아래 표가 그 시간대로 바뀐다)</span>
       </div>
     </div>
-    <!-- 팝오버(position:fixed). 가로 스크롤 컨테이너 밖에 두어 잘림을 막는다. -->
-    <div class="evt-panel" id="demoEvtPanel"></div>
-    <p class="demo-foot"><a href="check.html">내 로그로 직접 돌려보기 →</a> 파싱은 브라우저 안에서 일어난다. 로그 파일은 기기를 떠나지 않고, 공유 버튼을 누르기 전에는 아무것도 제출되지 않는다.</p>
+    <!-- 건별 상세. 로드 시점에 예시에서 유실이 가장 몰린 시간대로 채워 두어
+         클릭하지 않아도 표가 보인다. 히트맵의 가로 스크롤 박스 밖에 두어
+         좁은 화면에서는 이 카드가 자기 스크롤을 갖게 한다. -->
+    <div class="evt-panel" id="demoEvtPanel" role="region" tabindex="0"
+         aria-live="polite" aria-label="건별 상세(예시 데이터)"></div>
+    <p class="demo-foot">
+      <a class="cta" href="check.html">내 로그로 직접 돌려보기 →</a>
+      <span class="demo-foot-note">파싱은 브라우저 안에서 일어난다. 로그 파일은 기기를 떠나지 않고, 공유 버튼을 누르기 전에는 아무것도 제출되지 않는다.</span>
+    </p>
   </div>
 </section>
 
@@ -328,6 +383,12 @@ a{color:inherit}
 <footer>
   커뮤니티 운영 관측소, Anthropic과 무관합니다. 판정 규칙 v2.1 (브라우저 <code>assets/parse.js</code> · CLI <code>scripts/check_cache_loss.py</code>, 같은 규칙, 상호 대조 검증 가능). 운영: <a href="https://github.com/garaz1983-rgb">garaz1983-rgb</a>
 </footer>
+
+<!-- 플로팅 버튼. 탭 순서 맨 끝에 두는 건 의도다. 같은 행동이 이미 페이지에서
+     처음 포커스되는 요소(상단 CTA)라 키보드 사용자는 어차피 초반에 만나고,
+     앞쪽에 하나 더 두면 같은 링크가 연달아 두 번 잡힌다. -->
+<a class="cta cta-float" href="check.html"
+   aria-label="내 데이터 진단하기, 진단 페이지 열기">내 데이터 진단하기 →</a>
 
 </div>
 <script src="../assets/charts.js"></script>
@@ -636,101 +697,114 @@ function drawDemo(){
     cellTitle: function(row, hour, rq, v){
       return "예시 데이터 · " + row.key + " " + hh(hour) + "시 · 요청 " + rq + " · 유실 " + v;
     },
-    onSelect: function(row, hour, td){ showDemoEvents(row.key, hour, td); },
-    onClear: function(){ hideDemoEvents(); },
+    onSelect: function(row, hour){ selectDemoCell(row.key, hour); },
+    onClear: function(){ clearDemoSelection(); },
     usageLegendEl: document.getElementById("dLgUse")
   });
+
+  // 다시 그리면(리사이즈·테마 전환) 셀이 전부 새로 만들어지므로 표가 칠해 둔
+  // .sel 하이라이트도 사라진다. 선택도 같이 버린다. 표는 더 이상 표시하지 않는
+  // 시간대를 상세 카드만 붙들고 있는 상태를 남기지 않기 위해서다.
+  DEMO_SEL = null;
+  renderDemoDetail();
 }
 
-var DEMO_TD = null;   // 팝오버가 붙어 있는 셀
-var DEMO_AT = null;   // 열릴 때 그 셀의 뷰포트 좌표
+/* --- 건별 상세 카드 -------------------------------------------------------
+   히트맵 아래 카드는 언제나 한 시간대의 건별 내역을 보여 준다. 선택이 없으면
+   demo 데이터에서 골라낸 기본 시간대를, 붉은 셀을 누르면 그 시간대를 보여
+   준다. 두 상태 모두 renderDemoDetail 하나를 거치므로, 스크롤만 한 사람이 본
+   표와 클릭한 사람이 본 표가 같은 코드로 만든 같은 표다. 이게 핵심이다.
+   기본 노출분과 클릭 결과가 다른 화면처럼 보이면 미리보기가 거짓말이 된다. */
+var DEMO_SEL = null;       // 방문자가 고른 {date, hour}, 없으면 null
+var DEMO_DEFAULT = null;   // 데이터에서 골라낸 {date, hour}, 한 번만 계산
 
-function demoPanelOpen(){
-  return document.getElementById("demoEvtPanel").classList.contains("on");
+/* 선택이 없을 때 띄울 시간대. 하드코딩하지 않는다. 유실이 여러 건 몰린 셀이라야
+   표가 스스로를 설명한다(한 줄이면 열 이름만 보이고, 네 줄이면 몰림·메인과
+   서브에이전트 구분·5분 미만 간격까지 보인다. 위 KPI가 세고 있는 게 그것이다).
+   유실 건수 최다가 이기고, 같으면 재과금 토큰이 큰 쪽, 그다음은 이른 시각 순.
+   모든 방문자가 같은 셀을 보도록 결정적으로 고른다. */
+function demoDefaultCell(){
+  var best = null;
+  window.ObservatoryDemo.events.forEach(function(list, key){
+    var p = key.split("#");
+    var c = {
+      date: p[0], hour: parseInt(p[1], 10), n: list.length,
+      tokens: list.reduce(function(a, e){ return a + e.tokens; }, 0)
+    };
+    if(!best || betterDemoCell(c, best)) best = c;
+  });
+  return best;
+}
+function betterDemoCell(c, b){
+  if(c.n !== b.n) return c.n > b.n;
+  if(c.tokens !== b.tokens) return c.tokens > b.tokens;
+  if(c.date !== b.date) return c.date < b.date;
+  return c.hour < b.hour;
 }
 
-/* 클릭한 셀에 팝오버를 붙이되 뷰포트 안으로 clamp한다. 히트맵이
-   min-width:760px 가로 스크롤러라, 오른쪽 열이나 첫 행을 누르면 그대로는
-   패널이 화면 밖으로 밀려난다. check.html과 같은 배치 로직이다. */
-function placeDemoPanel(p, td){
-  if(!td || !td.getBoundingClientRect) return;
-  var margin = 8;
-  p.style.left = "0px";
-  p.style.top = "0px";
-  var r = td.getBoundingClientRect();
-  var pw = p.offsetWidth, ph = p.offsetHeight;
-  var vw = document.documentElement.clientWidth;
-  var vh = document.documentElement.clientHeight;
-  var top = r.bottom + 6;
-  if(top + ph > vh - margin){
-    var above = r.top - 6 - ph;
-    top = above >= margin ? above : Math.max(margin, vh - margin - ph);
-  }
-  var left = r.left + r.width / 2 - pw / 2;
-  var maxLeft = Math.max(margin, vw - margin - pw);
-  if(left > maxLeft) left = maxLeft;
-  if(left < margin) left = margin;
-  p.style.left = Math.round(left) + "px";
-  p.style.top = Math.round(Math.max(margin, top)) + "px";
-}
-
-function showDemoEvents(date, hour, td){
+function renderDemoDetail(){
+  var D = window.ObservatoryDemo;
   var p = document.getElementById("demoEvtPanel");
-  var rows = window.ObservatoryDemo.events.get(date + "#" + hour) || [];
-  if(!rows.length){ hideDemoEvents(); return; }
+  if(!D || !p) return;
+  if(!DEMO_DEFAULT) DEMO_DEFAULT = demoDefaultCell();
+  var cell = DEMO_SEL || DEMO_DEFAULT;
+  var rows = cell ? (D.events.get(cell.date + "#" + cell.hour) || []) : [];
+  if(!rows.length){ p.innerHTML = ""; return; }
+
+  var picked = !!DEMO_SEL;
   var tot = rows.reduce(function(a, e){ return a + e.tokens; }, 0);
-  var html = "<div class='evt-head'><h3>" + date + " " + hh(hour) + "시 · 유실 " + rows.length +
-    "건 · 재과금 " + (tot / 1e6).toFixed(2) + "M 토큰 " +
-    "<span style='font-weight:400;color:var(--muted)'>(예시 데이터 · 닫기: ×, ESC, 바깥 클릭, 셀 다시 클릭)</span></h3>" +
-    "<button type='button' class='evt-close' aria-label='상세 닫기'>×</button></div>";
+  // 예시 데이터 표기는 히트맵 툴팁과 같은 방식으로 이 카드 헤더에도 실린다.
+  // 이 카드만 따로 캡처해 가도 그게 뭔지 그 안에 적혀 있어야 한다.
+  var hint = picked
+    ? "(예시 데이터 · 선택한 시간대. 선택 해제: ×, ESC, 바깥 클릭, 셀 다시 클릭)"
+    : "(예시 데이터 · 예시에서 유실이 가장 몰린 시간대를 기본으로 띄웠다. 위 붉은 셀을 누르면 그 시간대가 여기 뜬다)";
+  var html = "<div class='evt-head'><h3>" + cell.date + " " + hh(cell.hour) + "시 · 유실 " +
+    rows.length + "건 · 재과금 " + (tot / 1e6).toFixed(2) + "M 토큰 " +
+    "<span class='evt-hint'>" + hint + "</span></h3>" +
+    (picked ? "<button type='button' class='evt-close' aria-label='선택한 시간대 해제'>× 선택 해제</button>" : "") +
+    "</div>";
   html += "<table><tr><th>시각</th><th>직전 요청과의 간격</th><th>재과금 토큰</th><th>세션</th></tr>";
   rows.forEach(function(e){
     html += "<tr><td>" + e.time + "</td><td>" + e.gapMin.toFixed(1) + "분</td><td>" +
       e.tokens.toLocaleString("ko-KR") + "</td><td>" + (e.sub ? "서브에이전트" : "메인") + "</td></tr>";
   });
   html += "</table>";
-  p.className = "evt-panel on";
   p.innerHTML = html;
-  var closeBtn = p.querySelector(".evt-close");
-  if(closeBtn) closeBtn.addEventListener("click", hideDemoEvents);
-  placeDemoPanel(p, td);
-  DEMO_TD = td || null;
-  DEMO_AT = (td && td.getBoundingClientRect) ? td.getBoundingClientRect() : null;
+  var clearBtn = p.querySelector(".evt-close");
+  if(clearBtn) clearBtn.addEventListener("click", clearDemoSelection);
 }
 
-function hideDemoEvents(){
-  var p = document.getElementById("demoEvtPanel");
-  p.className = "evt-panel";
-  p.innerHTML = "";
-  DEMO_TD = null;
-  DEMO_AT = null;
-  // 표를 거치지 않는 닫기 경로(×·ESC·바깥 클릭·스크롤)에서 선택 하이라이트가
-  // 남으면 다음 클릭 토글이 어긋난다.
+function selectDemoCell(date, hour){
+  var rows = window.ObservatoryDemo.events.get(date + "#" + hour);
+  if(!rows || !rows.length){ clearDemoSelection(); return; }
+  DEMO_SEL = { date: date, hour: hour };
+  renderDemoDetail();
+}
+
+function clearDemoSelection(){
+  DEMO_SEL = null;
+  renderDemoDetail();
+  // 표를 거치지 않는 해제 경로(×·ESC·바깥 클릭)에서 선택 하이라이트가 남으면
+  // 다음 클릭 토글이 어긋난다.
   if(window.ObservatoryCharts && ObservatoryCharts.clearHeatmapSelection){
     ObservatoryCharts.clearHeatmapSelection(document.getElementById("demoHeatmap"));
   }
 }
 
 document.addEventListener("keydown", function(ev){
-  if(ev.key === "Escape" && demoPanelOpen()) hideDemoEvents();
+  if(ev.key === "Escape" && DEMO_SEL) clearDemoSelection();
 });
 document.addEventListener("mousedown", function(ev){
-  if(!demoPanelOpen()) return;
+  if(!DEMO_SEL) return;
   var t = ev.target;
   if(document.getElementById("demoEvtPanel").contains(t)) return;
-  // 히트맵 셀 클릭은 표 자체의 토글이다. 여기서 닫으면 토글이 어긋난다.
+  // 히트맵 셀 클릭은 표 자체의 토글이다. 여기서 해제하면 토글이 어긋난다.
   if(t && t.closest && t.closest("#demoHeatmap")) return;
-  hideDemoEvents();
+  clearDemoSelection();
 });
-/* 스크롤하면 팝오버가 셀에서 떨어진다(capture: 히트맵 자체의 가로 스크롤러도
-   포함). 단 셀이 실제로 움직였을 때만 닫는다. 안 그러면 스크롤 직후 셀을
-   클릭했을 때 뒤늦게 도착한 스크롤 이벤트가 방금 연 팝오버를 닫아 버린다. */
-window.addEventListener("scroll", function(){
-  if(!demoPanelOpen()) return;
-  if(!DEMO_TD || !DEMO_AT){ hideDemoEvents(); return; }
-  var r = DEMO_TD.getBoundingClientRect();
-  if(Math.abs(r.top - DEMO_AT.top) > 1 || Math.abs(r.left - DEMO_AT.left) > 1) hideDemoEvents();
-}, true);
+/* 스크롤 핸들러는 없앴다. 떠 있는 팝오버를 셀에 붙여 두려던 장치였는데,
+   카드가 문서 흐름 안으로 들어오면서 셀과 같이 움직인다. 그대로 뒀다면
+   스크롤할 때마다 읽던 카드가 기본 시간대로 되돌아갔을 것이다. */
 
 fetch("../data/submissions.json")
   .then(function(r){
@@ -758,7 +832,7 @@ drawDemo();
 
 var rt;
 window.addEventListener("resize", function(){
-  hideDemoEvents();
+  clearDemoSelection();
   clearTimeout(rt);
   rt = setTimeout(drawAll, 150);
 });
