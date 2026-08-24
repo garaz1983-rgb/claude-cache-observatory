@@ -989,7 +989,11 @@ function renderEnv(){
   }).join("");
 
   document.querySelector("#envRaw tbody").innerHTML = SUBS.map(function(s){
-    var rate = s.totals.requests > 0 ? 100 * s.totals.in_ttl_losses / s.totals.requests : 0;
+    // Same rule as the submissions table above: a rate with no requests under it
+    // cannot be computed, so it is withheld rather than printed as 0.00%. This
+    // line said ": 0" until M11.2, which left the two tables disagreeing about
+    // the same submission - and this is the table a reader opens to check.
+    var rate = s.totals.requests > 0 ? 100 * s.totals.in_ttl_losses / s.totals.requests : null;
     return "<tr>" +
       "<td class='nick'>" + esc(s.nickname || "anonymous") + "</td>" +
       "<td>" + esc(s.client || "unknown") + "</td>" +
@@ -997,7 +1001,8 @@ function renderEnv(){
       "<td>" + esc(s.concurrent_sessions || "unknown") + "</td>" +
       "<td>" + fmtInt(s.totals.requests) + "</td>" +
       "<td class='crit'>" + fmtInt(s.totals.in_ttl_losses) + "</td>" +
-      "<td>" + fmtPct(rate) + "</td>" +
+      (rate === null ? "<td class='na'>not enough data</td>"
+                     : "<td>" + fmtPct(rate) + "</td>") +
       "</tr>";
   }).join("");
   // Below the floor the raw rows are the only thing the reader can act on, so
@@ -1265,6 +1270,9 @@ function syncPaneFocus(){
     p.removeAttribute("tabindex");
     p.removeAttribute("role");
     p.removeAttribute("aria-label");
+    // The pane stopped being the scroller, so the one-shot focus is spent: if
+    // the viewport crosses back, the keys need somewhere to land again.
+    PANE_FOCUSED = false;
   }
 }
 
@@ -1354,6 +1362,12 @@ function initScrollMemory(){
 // A Back that comes out of the bfcache never re-runs the fetch, so the restore
 // has to be hung on pageshow as well as on the render path below.
 window.addEventListener("pageshow", function(ev){ if(ev.persisted) restoreScroll(); });
+// A Back that stays in the same document - the return leg of a #hash jump -
+// fires neither. scrollRestoration = "manual" turned the browser's own
+// same-document restore off, so without this the reader lands wherever the
+// hash left them. Today the page has no in-page anchors to reach it from, but
+// the first one added would otherwise break every Back at every width.
+window.addEventListener("popstate", restoreScroll);
 
 // The preview is local and static, so it renders immediately and independently
 // of the fleet fetch: a failed submissions.json must not blank the example.
@@ -1367,11 +1381,19 @@ var rt;
 window.addEventListener("resize", function(){
   clearDemoSelection();
   clearTimeout(rt);
-  // syncPaneFocus on resize also crosses 1520px in both directions, which is
-  // where the pane stops and starts being the scroller. The remembered offset
-  // follows whichever element that is, because scrollHost() re-decides on
-  // every read rather than caching one at load.
-  rt = setTimeout(function(){ drawAll(); syncPaneFocus(); }, 150);
+  // A resize can cross 1520px in either direction, which is where the pane
+  // stops and starts being the scroller - by dragging the window, but also by
+  // page zoom, which is how a keyboard user is most likely to arrive here.
+  // syncPaneFocus alone only moves the attributes; focusPane is what gives the
+  // keys somewhere to land, and without it PageDown stayed dead after the
+  // crossing. It is still a one-shot and still yields to a focus the reader
+  // placed themselves.
+  // KNOWN, NOT HANDLED: the scroll offset is not carried across the crossing -
+  // the new scroller starts at 0. restoreScroll() is deliberately not called
+  // here, because the old host's scrollTop is already gone by the time resize
+  // fires and the remembered value can be clobbered by a 0 first. Same
+  // behaviour as M11; fixing it needs the save path to know the host changed.
+  rt = setTimeout(function(){ drawAll(); syncPaneFocus(); focusPane(); }, 150);
 });
 if(window.matchMedia){
   window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", drawAll);
