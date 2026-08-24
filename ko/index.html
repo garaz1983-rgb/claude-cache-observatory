@@ -69,6 +69,42 @@ canvas{display:block; width:100%}
 .legend span{display:inline-flex; align-items:center; gap:6px}
 .chip{width:12px; height:12px; border-radius:3px; display:inline-block}
 .chip.line{height:3px; border-radius:2px; width:18px}
+/* 예시 데이터 미리보기. 합성 샘플(assets/demo.js)이고 관측 데이터가 아니다.
+   점선 앰버 테두리와 제목 옆 배지가 진짜 fleet 섹션과 구분하는 유일한 장치이므로,
+   이 블록을 다시 스타일링하더라도 둘 다 유지할 것. */
+.h2-badge{margin-left:8px; vertical-align:2px}
+.badge.real{color:var(--ok); border-color:var(--ok)}
+.demo{border:1px dashed var(--amber); border-radius:10px; background:var(--amber-soft); padding:14px}
+.demo .kpis{grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); margin:0 0 12px}
+.demo .card + .card{margin-top:12px}
+.demo-note{font-size:.82rem; color:var(--muted); margin:0 0 12px}
+.demo-foot{font-size:.85rem; margin:12px 0 0}
+.demo-foot a{font-weight:700}
+.hm-scroll{overflow-x:auto}
+table.hm{border-collapse:separate; border-spacing:2px; font-family:ui-monospace,'Cascadia Mono',Consolas,monospace; font-variant-numeric:tabular-nums; font-size:.72rem; min-width:760px}
+table.hm th{font-weight:500; color:var(--muted); padding:2px 2px; text-align:center; font-size:.66rem}
+table.hm th.day{text-align:right; padding-right:6px; font-size:.72rem}
+table.hm td{width:27px; height:26px; text-align:center; border-radius:4px; background:var(--grid); color:var(--muted)}
+table.hm td.hit{color:#fff; font-weight:600; cursor:pointer}
+table.hm td.hit.sel{outline:2px solid var(--ink); outline-offset:-1px}
+/* 건별 상세 팝오버. check.html과 동작을 맞춘다: position:fixed로 두고 스크립트에서
+   클릭한 셀 기준으로 배치하며 뷰포트 안으로 clamp한다. 그래야 첫 행 셀을 눌러도
+   패널이 화면 밖으로 나가지 않는다. */
+.evt-panel{display:none; position:fixed; left:0; top:0; z-index:60;
+  max-width:min(92vw,430px); max-height:min(60vh,420px); overflow:auto;
+  border:1px solid var(--line); border-radius:8px; padding:10px 14px;
+  background:var(--surface); box-shadow:0 10px 30px rgba(0,0,0,.24)}
+.evt-panel.on{display:block}
+.evt-panel .evt-head{display:flex; align-items:flex-start; gap:10px; justify-content:space-between}
+.evt-panel .evt-head h3{font-size:.85rem; margin:0 0 8px; font-weight:700}
+.evt-panel .evt-close{flex:0 0 auto; font:inherit; font-size:.95rem; line-height:1;
+  padding:3px 9px; border-radius:6px; border:1px solid var(--line);
+  background:var(--bg); color:var(--ink); cursor:pointer}
+.evt-panel .evt-close:hover{border-color:var(--muted)}
+.evt-panel table{border-collapse:collapse; font-family:ui-monospace,'Cascadia Mono',Consolas,monospace; font-variant-numeric:tabular-nums; font-size:.78rem}
+.evt-panel td,.evt-panel th{padding:2px 18px 2px 0; text-align:right; border:0}
+.evt-panel th{color:var(--muted); font-weight:500; font-size:.68rem; letter-spacing:.05em}
+.evt-panel td:first-child,.evt-panel th:first-child{text-align:left}
 .tbl-scroll{overflow-x:auto}
 table.subs{width:100%; border-collapse:collapse; font-size:.82rem}
 table.subs th{font-size:.7rem; letter-spacing:.04em; color:var(--muted); font-weight:500; text-align:right; padding:4px 8px; border-bottom:1px solid var(--line); white-space:nowrap}
@@ -135,8 +171,42 @@ a{color:inherit}
   </div>
 </section>
 
+<section id="secPreview">
+  <h2>진단하면 이런 걸 본다 <span class="badge h2-badge">예시 데이터</span></h2>
+  <p class="desc">내 로그로 진단을 돌리면 돌아오는 화면이 이 모양이다. 아래 테두리 안의 숫자는 전부 <span class="mono">assets/demo.js</span>가 만든 <b>합성 예시</b>다. 관측 데이터도, 누군가의 제출 데이터도, 운영자 기계의 실측도 아니다.</p>
+  <div class="demo">
+    <p class="demo-note"><b>왜 합성 예시여야 하나:</b> 제출 스키마에는 일별 집계만 있고 시간대별 항목이 아예 없다. 제출만으로 언제 일하는지가 드러나지 않도록 일부러 뺐다. 그래서 실제 제출로는 시간 단위 히트맵을 그릴 수 없고, 여기서도 쓰지 않는다.</p>
+    <div class="kpis">
+      <div class="kpi"><div class="label">스캔한 요청</div><div class="val" id="dRequests">–</div></div>
+      <div class="kpi crit"><div class="label">in-TTL 유실</div><div class="val" id="dLosses">–</div><div class="note">30분(메인) / 5분(서브에이전트) 안쪽</div></div>
+      <div class="kpi crit"><div class="label">iron 유실</div><div class="val" id="dIron">–</div><div class="note">유휴 간격 5분 미만</div></div>
+      <div class="kpi crit"><div class="label">재과금 토큰</div><div class="val" id="dTokens">–</div><div class="note">다시 과금된 캐시 생성 토큰</div></div>
+      <div class="kpi"><div class="label">유실률</div><div class="val" id="dRate">–</div><div class="note">in-TTL 유실 / 요청</div></div>
+    </div>
+    <div class="card">
+      <canvas id="demoDaily" height="230"></canvas>
+      <div class="legend">
+        <span><i class="chip" style="background:var(--crit)"></i>유실 건수 (좌축)</span>
+        <span><i class="chip line" style="background:var(--amber)"></i>유실률 % (우축)</span>
+        <span><i class="chip" style="background:var(--ok-soft);border:1px solid var(--ok)"></i>무결한 날</span>
+      </div>
+    </div>
+    <div class="card hm-scroll">
+      <table class="hm" id="demoHeatmap"></table>
+      <div class="legend">
+        <span><i class="chip" style="background:var(--grid)"></i>미사용(요청 0)</span>
+        <span><i class="chip" id="dLgUse"></i>회색 음영 = 그 시간대 요청량(진할수록 많음)</span>
+        <span><i class="chip" style="background:var(--crit)"></i>적색 = 유실 건수(셀 안 숫자, <b>클릭</b>하면 건별 상세)</span>
+      </div>
+    </div>
+    <!-- 팝오버(position:fixed). 가로 스크롤 컨테이너 밖에 두어 잘림을 막는다. -->
+    <div class="evt-panel" id="demoEvtPanel"></div>
+    <p class="demo-foot"><a href="check.html">내 로그로 직접 돌려보기 →</a> 파싱은 브라우저 안에서 일어난다. 로그 파일은 기기를 떠나지 않고, 공유 버튼을 누르기 전에는 아무것도 제출되지 않는다.</p>
+  </div>
+</section>
+
 <section id="secFleet">
-  <h2>Fleet 일별 유실률 추이</h2>
+  <h2>Fleet 일별 유실률 추이 <span class="badge real h2-badge">실제 제출 데이터</span></h2>
   <p class="desc">그날 요청 대비 in-TTL 유실 비율, 제출자별 한 선. 계정을 가로질러 수직으로 정렬된 급등은 서버측 이벤트를, 계정 전체에서 유지되는 하락 계단은 수정 배포 시점을 가리킨다.</p>
   <div class="card">
     <canvas id="fleet" height="260"></canvas>
@@ -145,7 +215,7 @@ a{color:inherit}
 </section>
 
 <section id="secSubs">
-  <h2>제출 목록</h2>
+  <h2>제출 목록 <span class="badge real h2-badge">실제 제출 데이터</span></h2>
   <p class="desc">제출별 집계 합계. 시각·세션 ID·파일 경로는 없다. 스키마 차원에서 담을 수 없다.</p>
   <div class="card tbl-scroll">
     <table class="subs" id="subsTable">
@@ -199,6 +269,7 @@ a{color:inherit}
 
 </div>
 <script src="../assets/charts.js"></script>
+<script src="../assets/demo.js"></script>
 <script>
 "use strict";
 var FLEET_MODEL = null;
@@ -218,6 +289,7 @@ function fmtTok(n){
 }
 function fmtPct(v){ return v.toFixed(2) + "%"; }
 function mdLabel(iso){ return (+iso.slice(5,7)) + "/" + (+iso.slice(8,10)); }
+function hh(h){ return String(h).padStart(2, "0"); }
 
 function buildFleetModel(subs){
   var dateSet = new Set();
@@ -285,7 +357,140 @@ function drawAll(){
       rateFormat: function(v){ return (v % 1 === 0 ? v : v.toFixed(1)) + "%"; }
     });
   }
+  drawDemo();
 }
+
+/* ===== 예시 데이터 미리보기 =============================================
+   window.ObservatoryDemo(assets/demo.js의 합성 샘플)를 렌더한다. 위 fleet
+   데이터와 공유하는 것이 하나도 없다: fetch도, submissions.json도, 관측도
+   쓰지 않는다. 시간 단위 예시를 실제 제출로 만들 수 없는 이유는 demo.js
+   상단 주석에 적어 뒀다. */
+
+function renderDemoKpis(){
+  var t = window.ObservatoryDemo.totals;
+  document.getElementById("dRequests").textContent = fmtInt(t.requests);
+  document.getElementById("dLosses").textContent = fmtInt(t.losses);
+  document.getElementById("dIron").textContent = fmtInt(t.iron);
+  document.getElementById("dTokens").textContent = fmtTok(t.tokens);
+  document.getElementById("dRate").textContent = fmtPct(t.rate);
+}
+
+function drawDemo(){
+  var D = window.ObservatoryDemo;
+  if(!D) return;
+  var days = D.days.map(function(d){
+    return { label: mdLabel(d.date), count: d.losses, pct: d.requests > 0 ? 100 * d.losses / d.requests : 0 };
+  });
+  ObservatoryCharts.renderDailyBars(document.getElementById("demoDaily"), days);
+
+  var zeros = new Array(24).fill(0);
+  var rows = D.days.map(function(d){
+    var losses = zeros.slice();
+    for(var h = 0; h < 24; h++){
+      var l = D.events.get(d.date + "#" + h);
+      if(l) losses[h] = l.length;
+    }
+    return { key: d.date, label: mdLabel(d.date), usage: D.census.get(d.date) || zeros, losses: losses };
+  });
+  ObservatoryCharts.renderUsageHeatmap(document.getElementById("demoHeatmap"), rows, {
+    cellTitle: function(row, hour, rq, v){
+      return "예시 데이터 · " + row.key + " " + hh(hour) + "시 · 요청 " + rq + " · 유실 " + v;
+    },
+    onSelect: function(row, hour, td){ showDemoEvents(row.key, hour, td); },
+    onClear: function(){ hideDemoEvents(); },
+    usageLegendEl: document.getElementById("dLgUse")
+  });
+}
+
+var DEMO_TD = null;   // 팝오버가 붙어 있는 셀
+var DEMO_AT = null;   // 열릴 때 그 셀의 뷰포트 좌표
+
+function demoPanelOpen(){
+  return document.getElementById("demoEvtPanel").classList.contains("on");
+}
+
+/* 클릭한 셀에 팝오버를 붙이되 뷰포트 안으로 clamp한다. 히트맵이
+   min-width:760px 가로 스크롤러라, 오른쪽 열이나 첫 행을 누르면 그대로는
+   패널이 화면 밖으로 밀려난다. check.html과 같은 배치 로직이다. */
+function placeDemoPanel(p, td){
+  if(!td || !td.getBoundingClientRect) return;
+  var margin = 8;
+  p.style.left = "0px";
+  p.style.top = "0px";
+  var r = td.getBoundingClientRect();
+  var pw = p.offsetWidth, ph = p.offsetHeight;
+  var vw = document.documentElement.clientWidth;
+  var vh = document.documentElement.clientHeight;
+  var top = r.bottom + 6;
+  if(top + ph > vh - margin){
+    var above = r.top - 6 - ph;
+    top = above >= margin ? above : Math.max(margin, vh - margin - ph);
+  }
+  var left = r.left + r.width / 2 - pw / 2;
+  var maxLeft = Math.max(margin, vw - margin - pw);
+  if(left > maxLeft) left = maxLeft;
+  if(left < margin) left = margin;
+  p.style.left = Math.round(left) + "px";
+  p.style.top = Math.round(Math.max(margin, top)) + "px";
+}
+
+function showDemoEvents(date, hour, td){
+  var p = document.getElementById("demoEvtPanel");
+  var rows = window.ObservatoryDemo.events.get(date + "#" + hour) || [];
+  if(!rows.length){ hideDemoEvents(); return; }
+  var tot = rows.reduce(function(a, e){ return a + e.tokens; }, 0);
+  var html = "<div class='evt-head'><h3>" + date + " " + hh(hour) + "시 · 유실 " + rows.length +
+    "건 · 재과금 " + (tot / 1e6).toFixed(2) + "M 토큰 " +
+    "<span style='font-weight:400;color:var(--muted)'>(예시 데이터 · 닫기: ×, ESC, 바깥 클릭, 셀 다시 클릭)</span></h3>" +
+    "<button type='button' class='evt-close' aria-label='상세 닫기'>×</button></div>";
+  html += "<table><tr><th>시각</th><th>직전 요청과의 간격</th><th>재과금 토큰</th><th>세션</th></tr>";
+  rows.forEach(function(e){
+    html += "<tr><td>" + e.time + "</td><td>" + e.gapMin.toFixed(1) + "분</td><td>" +
+      e.tokens.toLocaleString("ko-KR") + "</td><td>" + (e.sub ? "서브에이전트" : "메인") + "</td></tr>";
+  });
+  html += "</table>";
+  p.className = "evt-panel on";
+  p.innerHTML = html;
+  var closeBtn = p.querySelector(".evt-close");
+  if(closeBtn) closeBtn.addEventListener("click", hideDemoEvents);
+  placeDemoPanel(p, td);
+  DEMO_TD = td || null;
+  DEMO_AT = (td && td.getBoundingClientRect) ? td.getBoundingClientRect() : null;
+}
+
+function hideDemoEvents(){
+  var p = document.getElementById("demoEvtPanel");
+  p.className = "evt-panel";
+  p.innerHTML = "";
+  DEMO_TD = null;
+  DEMO_AT = null;
+  // 표를 거치지 않는 닫기 경로(×·ESC·바깥 클릭·스크롤)에서 선택 하이라이트가
+  // 남으면 다음 클릭 토글이 어긋난다.
+  if(window.ObservatoryCharts && ObservatoryCharts.clearHeatmapSelection){
+    ObservatoryCharts.clearHeatmapSelection(document.getElementById("demoHeatmap"));
+  }
+}
+
+document.addEventListener("keydown", function(ev){
+  if(ev.key === "Escape" && demoPanelOpen()) hideDemoEvents();
+});
+document.addEventListener("mousedown", function(ev){
+  if(!demoPanelOpen()) return;
+  var t = ev.target;
+  if(document.getElementById("demoEvtPanel").contains(t)) return;
+  // 히트맵 셀 클릭은 표 자체의 토글이다. 여기서 닫으면 토글이 어긋난다.
+  if(t && t.closest && t.closest("#demoHeatmap")) return;
+  hideDemoEvents();
+});
+/* 스크롤하면 팝오버가 셀에서 떨어진다(capture: 히트맵 자체의 가로 스크롤러도
+   포함). 단 셀이 실제로 움직였을 때만 닫는다. 안 그러면 스크롤 직후 셀을
+   클릭했을 때 뒤늦게 도착한 스크롤 이벤트가 방금 연 팝오버를 닫아 버린다. */
+window.addEventListener("scroll", function(){
+  if(!demoPanelOpen()) return;
+  if(!DEMO_TD || !DEMO_AT){ hideDemoEvents(); return; }
+  var r = DEMO_TD.getBoundingClientRect();
+  if(Math.abs(r.top - DEMO_AT.top) > 1 || Math.abs(r.left - DEMO_AT.left) > 1) hideDemoEvents();
+}, true);
 
 fetch("../data/submissions.json")
   .then(function(r){
@@ -304,8 +509,17 @@ fetch("../data/submissions.json")
     document.getElementById("loadErr").hidden = false;
   });
 
+// 미리보기는 로컬 정적 데이터라 fleet fetch와 무관하게 바로 렌더한다.
+// submissions.json이 실패해도 예시가 비어 보이면 안 된다.
+renderDemoKpis();
+drawDemo();
+
 var rt;
-window.addEventListener("resize", function(){ clearTimeout(rt); rt = setTimeout(drawAll, 150); });
+window.addEventListener("resize", function(){
+  hideDemoEvents();
+  clearTimeout(rt);
+  rt = setTimeout(drawAll, 150);
+});
 if(window.matchMedia){
   window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", drawAll);
 }
