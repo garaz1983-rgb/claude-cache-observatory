@@ -1,0 +1,114 @@
+{
+  "schema_version": 1,
+  "submissions": [
+    {
+      "id": "seed-0001",
+      "submitted_at": "2026-08-24",
+      "nickname": "garaz1983-rgb (maintainer)",
+      "plan": "max20x",
+      "client": "mixed",
+      "concurrent_sessions": "multi",
+      "period_start": "2026-08-10",
+      "period_end": "2026-08-24",
+      "totals": {
+        "requests": 34551,
+        "in_ttl_losses": 115,
+        "iron_losses": 70,
+        "wasted_tokens": 27053702
+      },
+      "daily": [
+        {
+          "date": "2026-08-10",
+          "requests": 1945,
+          "losses": 4,
+          "wasted_tokens": 681017
+        },
+        {
+          "date": "2026-08-11",
+          "requests": 3320,
+          "losses": 1,
+          "wasted_tokens": 558264
+        },
+        {
+          "date": "2026-08-12",
+          "requests": 1729,
+          "losses": 0,
+          "wasted_tokens": 0
+        },
+        {
+          "date": "2026-08-13",
+          "requests": 2376,
+          "losses": 2,
+          "wasted_tokens": 161586
+        },
+        {
+          "date": "2026-08-14",
+          "requests": 4777,
+          "losses": 6,
+          "wasted_tokens": 1438872
+        },
+        {
+          "date": "2026-08-15",
+          "requests": 811,
+          "losses": 4,
+          "wasted_tokens": 1084704
+        },
+        {
+          "date": "2026-08-16",
+          "requests": 1939,
+          "losses": 8,
+          "wasted_tokens": 1487290
+        },
+        {
+          "date": "2026-08-17",
+          "requests": 3232,
+          "losses": 6,
+          "wasted_tokens": 1959489
+        },
+        {
+          "date": "2026-08-18",
+          "requests": 972,
+          "losses": 1,
+          "wasted_tokens": 65461
+        },
+        {
+          "date": "2026-08-19",
+          "requests": 1735,
+          "losses": 0,
+          "wasted_tokens": 0
+        },
+        {
+          "date": "2026-08-20",
+          "requests": 1897,
+          "losses": 14,
+          "wasted_tokens": 2415121
+        },
+        {
+          "date": "2026-08-21",
+          "requests": 2286,
+          "losses": 26,
+          "wasted_tokens": 5836563
+        },
+        {
+          "date": "2026-08-22",
+          "requests": 2107,
+          "losses": 13,
+          "wasted_tokens": 3241143
+        },
+        {
+          "date": "2026-08-23",
+          "requests": 4161,
+          "losses": 24,
+          "wasted_tokens": 6936989
+        },
+        {
+          "date": "2026-08-24",
+          "requests": 1264,
+          "losses": 6,
+          "wasted_tokens": 1187203
+        }
+      ],
+      "script_version": "cli-2.1"
+    }
+  ]
+}

@@ -1,0 +1,460 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Check Your Data — Cache Eviction Observatory</title>
+<meta name="description" content="Diagnose Claude Code prompt-cache losses from your own local logs — parsed entirely in your browser, nothing uploaded.">
+<style>
+:root{
+  --bg:#F4F6F8; --surface:#FFFFFF; --ink:#1C2530; --muted:#5B6B7A;
+  --line:#DDE4EA; --grid:#E7EDF2;
+  --crit:#D64545; --crit-soft:rgba(214,69,69,.12);
+  --ok:#2E9E7B; --ok-soft:rgba(46,158,123,.12);
+  --amber:#B07A2A; --amber-soft:rgba(176,122,42,.12);
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#12161B; --surface:#1A2027; --ink:#E6ECF2; --muted:#8A98A6;
+    --line:#2A333D; --grid:#232B34;
+    --crit:#FF6B5E; --crit-soft:rgba(255,107,94,.16);
+    --ok:#3FBF95; --ok-soft:rgba(63,191,149,.16);
+    --amber:#D9A254; --amber-soft:rgba(217,162,84,.16);
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#12161B; --surface:#1A2027; --ink:#E6ECF2; --muted:#8A98A6;
+  --line:#2A333D; --grid:#232B34;
+  --crit:#FF6B5E; --crit-soft:rgba(255,107,94,.16);
+  --ok:#3FBF95; --ok-soft:rgba(63,191,149,.16);
+  --amber:#D9A254; --amber-soft:rgba(217,162,84,.16);
+}
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--bg); color:var(--ink);
+  font-family:system-ui,-apple-system,'Segoe UI','Malgun Gothic',sans-serif;
+  font-size:15px; line-height:1.6;
+}
+.mono{font-family:ui-monospace,'Cascadia Mono',Consolas,monospace}
+.wrap{max-width:960px; margin:0 auto; padding:24px 20px 64px}
+.topbar{display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:22px}
+.badge{font-size:.72rem; letter-spacing:.04em; text-transform:uppercase; color:var(--amber); border:1px solid var(--amber); border-radius:99px; padding:2px 10px; white-space:nowrap}
+.lang{font-size:.82rem; color:var(--muted)}
+.lang a{color:inherit}
+.lang b{color:var(--ink)}
+.back{font-size:.82rem; color:var(--muted); margin-bottom:8px}
+header h1{font-size:1.5rem; font-weight:700; margin:0 0 4px; letter-spacing:-.01em; text-wrap:balance}
+header .sub{color:var(--muted); font-size:.86rem; margin:0}
+header .sub .mono{font-size:.82rem}
+.notice{font-size:.85rem; margin:18px 0 0; padding:10px 14px; border-left:3px solid var(--amber); background:var(--amber-soft); border-radius:0 6px 6px 0}
+section{margin-top:28px}
+section h2{font-size:1.02rem; font-weight:700; margin:0 0 2px}
+section .desc{color:var(--muted); font-size:.85rem; margin:0 0 14px}
+.card{background:var(--surface); border:1px solid var(--line); border-radius:8px; padding:18px}
+.steps{margin:0 0 16px; padding-left:22px; font-size:.9rem}
+.steps li{margin:6px 0}
+.steps .mono{font-size:.82rem}
+.dropzone{border:2px dashed var(--line); border-radius:10px; padding:28px 20px; text-align:center; color:var(--muted); transition:border-color .15s, background .15s}
+.dropzone.drag{border-color:var(--ok); background:var(--ok-soft)}
+.dropzone p{margin:4px 0}
+.dropzone .or{font-size:.72rem; text-transform:uppercase; letter-spacing:.08em}
+.dropzone button{font:inherit; font-weight:600; padding:8px 16px; border-radius:8px; border:1px solid var(--line); background:var(--surface); color:var(--ink); cursor:pointer}
+.dropzone button:hover{border-color:var(--muted)}
+.progress{margin-top:12px; font-family:ui-monospace,'Cascadia Mono',Consolas,monospace; font-variant-numeric:tabular-nums; font-size:.82rem; color:var(--muted)}
+.err{font-size:.85rem; margin-top:12px; padding:12px 14px; border-left:3px solid var(--crit); background:var(--crit-soft); border-radius:0 6px 6px 0}
+.kpis{display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:12px; margin:0 0 8px}
+.kpi{background:var(--surface); border:1px solid var(--line); border-radius:8px; padding:14px 16px}
+.kpi .label{font-size:.72rem; text-transform:uppercase; letter-spacing:.08em; color:var(--muted); margin-bottom:6px}
+.kpi .val{font-family:ui-monospace,'Cascadia Mono',Consolas,monospace; font-variant-numeric:tabular-nums; font-size:1.45rem; font-weight:600; line-height:1.2}
+.kpi .note{font-size:.78rem; color:var(--muted); margin-top:4px}
+.kpi.crit .val{color:var(--crit)}
+canvas{display:block; width:100%}
+.legend{display:flex; gap:18px; flex-wrap:wrap; margin-top:10px; font-size:.78rem; color:var(--muted)}
+.legend span{display:inline-flex; align-items:center; gap:6px}
+.chip{width:12px; height:12px; border-radius:3px; display:inline-block}
+.chip.line{height:3px; border-radius:2px; width:18px}
+.hm-scroll{overflow-x:auto}
+table.hm{border-collapse:separate; border-spacing:2px; font-family:ui-monospace,'Cascadia Mono',Consolas,monospace; font-variant-numeric:tabular-nums; font-size:.72rem; min-width:760px}
+table.hm th{font-weight:500; color:var(--muted); padding:2px 2px; text-align:center; font-size:.66rem}
+table.hm th.day{text-align:right; padding-right:6px; font-size:.72rem}
+table.hm td{width:27px; height:26px; text-align:center; border-radius:4px; background:var(--grid); color:var(--muted)}
+table.hm td.hit{color:#fff; font-weight:600; cursor:pointer}
+table.hm td.hit.sel{outline:2px solid var(--ink); outline-offset:-1px}
+.evt-panel{display:none; margin-top:12px; border:1px solid var(--line); border-radius:6px; padding:10px 14px; background:var(--bg)}
+.evt-panel.on{display:block}
+.evt-panel h3{font-size:.85rem; margin:0 0 8px; font-weight:700}
+.evt-panel table{border-collapse:collapse; font-family:ui-monospace,'Cascadia Mono',Consolas,monospace; font-variant-numeric:tabular-nums; font-size:.78rem}
+.evt-panel td,.evt-panel th{padding:2px 18px 2px 0; text-align:right; border:0}
+.evt-panel th{color:var(--muted); font-weight:500; font-size:.68rem; text-transform:uppercase; letter-spacing:.05em}
+.evt-panel td:first-child,.evt-panel th:first-child{text-align:left}
+details.criteria{border:1px solid var(--line); border-radius:8px; background:var(--surface); margin-top:18px}
+details.criteria summary{cursor:pointer; padding:12px 16px; font-weight:700; font-size:.9rem}
+details.criteria .body{padding:0 16px 14px; font-size:.85rem}
+details.criteria .body ul{margin:0; padding-left:20px}
+details.criteria .body li{margin:5px 0}
+.placeholder{margin-top:18px; padding:12px 16px; border:1px dashed var(--line); border-radius:8px; color:var(--muted); font-size:.85rem}
+footer{margin-top:44px; padding-top:16px; border-top:1px solid var(--line); color:var(--muted); font-size:.78rem}
+footer code{font-family:ui-monospace,'Cascadia Mono',Consolas,monospace; font-size:.75rem}
+a{color:inherit}
+[hidden]{display:none!important}
+@media (prefers-reduced-motion: reduce){ *{transition:none!important; animation:none!important} }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<div class="topbar">
+  <span class="badge">Community tool — not affiliated with Anthropic</span>
+  <nav class="lang"><b>EN</b> · <a href="ko/check.html">한국어</a></nav>
+</div>
+
+<p class="back"><a href="index.html">← Back to the observatory</a></p>
+
+<header>
+  <h1>Check your own data</h1>
+  <p class="sub">Everything runs <b>locally in your browser</b> — your log files never leave this machine. Nothing is uploaded, and there is nothing to sign up for.</p>
+</header>
+
+<div class="notice"><b>Desktop browser required.</b> The logs live on the machine where Claude Code runs (<span class="mono">~/.claude/projects</span>); mobile browsers cannot access them.</div>
+
+<section>
+  <h2>1 · Load your session logs</h2>
+  <p class="desc">Three steps, no install.</p>
+  <div class="card">
+    <ol class="steps">
+      <li>Find your Claude Code log folder: <span class="mono">~/.claude/projects</span> (Windows: <span class="mono">C:\Users\&lt;you&gt;\.claude\projects</span>).</li>
+      <li>Drop that folder below — or pick it with the button. Multiple <span class="mono">.jsonl</span> files work too.</li>
+      <li>Read the results. Parsing happens in this tab only; close it and everything is gone.</li>
+    </ol>
+    <div class="dropzone" id="dropzone">
+      <p><b>Drag &amp; drop</b> the folder (or <span class="mono">.jsonl</span> files) here</p>
+      <p class="or">or</p>
+      <p><button id="pickBtn" type="button">Choose folder…</button></p>
+    </div>
+    <div class="progress" id="progress" hidden></div>
+    <div class="err" id="parseErr" hidden></div>
+  </div>
+</section>
+
+<section id="results" hidden>
+  <h2>2 · Your results</h2>
+  <p class="desc">TTL-strict judgment v2.1 — only losses inside the cache TTL are counted; legitimate expiries are excluded.</p>
+
+  <div class="kpis">
+    <div class="kpi"><div class="label">Requests scanned</div><div class="val" id="kRequests">–</div></div>
+    <div class="kpi crit"><div class="label">In-TTL losses</div><div class="val" id="kLosses">–</div><div class="note">inside 30 min (main) / 5 min (subagent)</div></div>
+    <div class="kpi crit"><div class="label">Iron losses</div><div class="val" id="kIron">–</div><div class="note">idle gap under 5 minutes</div></div>
+    <div class="kpi crit"><div class="label">Re-billed tokens</div><div class="val" id="kTokens">–</div><div class="note">cache writes charged again</div></div>
+    <div class="kpi"><div class="label">Loss rate</div><div class="val" id="kRate">–</div><div class="note">in-TTL losses / requests</div></div>
+  </div>
+
+  <div class="card" style="margin-top:14px">
+    <canvas id="daily" height="260"></canvas>
+    <div class="legend">
+      <span><i class="chip" style="background:var(--crit)"></i>losses (left axis)</span>
+      <span><i class="chip line" style="background:var(--amber)"></i>loss rate % (right axis)</span>
+      <span><i class="chip" style="background:var(--ok-soft);border:1px solid var(--ok)"></i>clean day</span>
+    </div>
+  </div>
+
+  <section>
+    <h2>Day × hour heatmap — losses against actual usage</h2>
+    <p class="desc">Background blue-grey = request volume that hour (darker = heavier use). Red with a number = in-TTL losses. This separates "zero because idle" from "zero despite heavy use". <b>Click a red cell</b> for per-event detail (time, idle gap, tokens) — it stays in your browser.</p>
+    <div class="card hm-scroll">
+      <table class="hm" id="heatmap"></table>
+      <div class="evt-panel" id="evtPanel"></div>
+      <div class="legend">
+        <span><i class="chip" style="background:var(--grid)"></i>idle</span>
+        <span><i class="chip" id="lg-use"></i>usage (darker = more)</span>
+        <span><i class="chip" style="background:var(--crit)"></i>loss (number = count)</span>
+      </div>
+    </div>
+  </section>
+
+  <details class="criteria">
+    <summary>How losses are judged (TTL-strict, v2.1)</summary>
+    <div class="body">
+      <ul>
+        <li><b>Candidate</b> — a record the server itself stamped with <span class="mono">message.diagnostics.cache_miss_reason = previous_message_not_found</span>. Nothing is inferred.</li>
+        <li><b>In-TTL loss</b> — the idle gap to the previous request in the same session file is under <b>30 minutes</b> (main session) or <b>5 minutes</b> (subagent). Longer gaps are legitimate TTL expiries and are <b>not</b> counted.</li>
+        <li><b>Iron loss</b> — idle gap under <b>5 minutes</b>: no published TTL could have expired the cache.</li>
+        <li><b>Dedup</b> — one event per <span class="mono">requestId</span>; a later record of the same request may only back-fill a missing reason.</li>
+        <li><b>Cost</b> — the re-billed cost of a loss is that request's <span class="mono">cache_creation_input_tokens</span>.</li>
+      </ul>
+    </div>
+  </details>
+
+  <div class="placeholder" id="submitPlaceholder">Sharing your aggregate to the observatory is <b>coming soon</b> — for now, results stay in your browser only.</div>
+</section>
+
+<footer>
+  Community-run tool — not affiliated with Anthropic. Engine: <code>assets/parse.js</code> (judgment rules v2.1, identical to <code>scripts/check_cache_loss.py</code>). Evidence thread: <a href="https://github.com/anthropics/claude-code/issues/87966">anthropics/claude-code#87966</a>
+</footer>
+
+</div>
+<script src="assets/parse.js"></script>
+<script src="assets/charts.js"></script>
+<script>
+"use strict";
+
+var LAST = null;     // {result, census}
+var EVT_MAP = null;  // "date#hour" -> [events]
+
+function fmtInt(n){ return n.toLocaleString("en-US"); }
+function fmtTok(n){
+  if(n >= 1e9) return (n/1e9).toFixed(2) + "B";
+  if(n >= 1e6) return (n/1e6).toFixed(2) + "M";
+  if(n >= 1e3) return (n/1e3).toFixed(0) + "k";
+  return String(n);
+}
+function mdLabel(iso){ return (+iso.slice(5,7)) + "/" + (+iso.slice(8,10)); }
+function hh(h){ return String(h).padStart(2, "0"); }
+
+/* Timestamp handling mirrors assets/parse.js (record's own UTC offset;
+   offset-less timestamps anchored to UTC). Counting only — no judgment. */
+function tsParse(ts){
+  if(typeof ts !== "string" || ts === "") return null;
+  var offsetMinutes = 0, hasOffset = false;
+  var m = /(?:Z|([+-])(\d{2}):?(\d{2}))$/.exec(ts);
+  if(m){
+    hasOffset = true;
+    if(m[1]){
+      offsetMinutes = (m[1] === "-" ? -1 : 1) *
+        (parseInt(m[2], 10) * 60 + parseInt(m[3], 10));
+    }
+  }
+  var epochMs = Date.parse(hasOffset ? ts : ts + "Z");
+  if(isNaN(epochMs)) return null;
+  return { epochMs: epochMs, offsetMinutes: offsetMinutes };
+}
+function tsDateHour(ts){
+  var p = tsParse(ts);
+  if(!p) return null;
+  var local = new Date(p.epochMs + p.offsetMinutes * 60000);
+  return { date: local.toISOString().slice(0, 10), hour: local.getUTCHours(), timeStr: local.toISOString().slice(11, 19) };
+}
+function isObj(v){ return v !== null && typeof v === "object" && !Array.isArray(v); }
+
+/* Hourly request census for the heatmap background. Mirrors parse.js request
+   counting (usage-bearing lines, requestId dedup, first record wins) — this
+   is volume counting for the shading only, never loss judgment. */
+function usageCensus(files){
+  var seen = new Set();
+  var byDate = new Map();
+  files.forEach(function(f){
+    var lines = f.text.split("\n");
+    for(var i = 0; i < lines.length; i++){
+      var line = lines[i];
+      if(line.indexOf('"usage"') === -1) continue;
+      var o;
+      try{ o = JSON.parse(line); }catch(e){ continue; }
+      if(!isObj(o)) continue;
+      var msg = isObj(o.message) ? o.message : {};
+      if(!isObj(msg.usage)) continue;
+      var rid = o.requestId || msg.id || null;
+      if(seen.has(rid)) continue;
+      seen.add(rid);
+      var dh = tsDateHour(typeof o.timestamp === "string" ? o.timestamp : "");
+      if(!dh) continue;
+      var arr = byDate.get(dh.date);
+      if(!arr){ arr = new Array(24).fill(0); byDate.set(dh.date, arr); }
+      arr[dh.hour] += 1;
+    }
+  });
+  return byDate;
+}
+
+/* ---------- input: folder picker ---------- */
+var pickBtn = document.getElementById("pickBtn");
+if(!window.showDirectoryPicker){
+  pickBtn.hidden = true;
+} else {
+  pickBtn.addEventListener("click", async function(){
+    var dir;
+    try{ dir = await window.showDirectoryPicker(); }
+    catch(e){ return; } // user cancelled
+    var out = [];
+    setProgress("Scanning folder…");
+    try{ await walkDir(dir, dir.name + "/", out); }
+    catch(e){ showError("Could not read the folder: " + e.message); return; }
+    processList(out);
+  });
+}
+async function walkDir(handle, prefix, out){
+  for await (var entry of handle.values()){
+    if(entry.kind === "directory"){
+      await walkDir(entry, prefix + entry.name + "/", out);
+    } else if(entry.name.endsWith(".jsonl")){
+      out.push({ name: prefix + entry.name, file: await entry.getFile() });
+    }
+  }
+}
+
+/* ---------- input: drag & drop (folders via webkitGetAsEntry) ---------- */
+var dz = document.getElementById("dropzone");
+dz.addEventListener("dragover", function(e){ e.preventDefault(); dz.classList.add("drag"); });
+dz.addEventListener("dragleave", function(){ dz.classList.remove("drag"); });
+dz.addEventListener("drop", async function(e){
+  e.preventDefault();
+  dz.classList.remove("drag");
+  var items = Array.prototype.slice.call(e.dataTransfer.items || []);
+  var entries = items.map(function(it){
+    return it.webkitGetAsEntry ? it.webkitGetAsEntry() : null;
+  }).filter(Boolean);
+  var out = [];
+  setProgress("Scanning drop…");
+  try{
+    if(entries.length){
+      for(var i = 0; i < entries.length; i++) await walkEntry(entries[i], out);
+    } else {
+      Array.prototype.slice.call(e.dataTransfer.files || []).forEach(function(f){
+        if(f.name.endsWith(".jsonl")) out.push({ name: f.name, file: f });
+      });
+    }
+  } catch(err){ showError("Could not read the dropped items: " + err.message); return; }
+  processList(out);
+});
+function entryFile(entry){ return new Promise(function(res, rej){ entry.file(res, rej); }); }
+function readBatch(reader){ return new Promise(function(res, rej){ reader.readEntries(res, rej); }); }
+async function walkEntry(entry, out){
+  if(entry.isFile){
+    if(entry.name.endsWith(".jsonl")){
+      out.push({ name: entry.fullPath || entry.name, file: await entryFile(entry) });
+    }
+  } else if(entry.isDirectory){
+    var reader = entry.createReader();
+    var batch;
+    do{
+      batch = await readBatch(reader);
+      for(var i = 0; i < batch.length; i++) await walkEntry(batch[i], out);
+    } while(batch.length > 0);
+  }
+}
+
+/* ---------- pipeline ---------- */
+function setProgress(msg){
+  var p = document.getElementById("progress");
+  p.hidden = false;
+  p.textContent = msg;
+}
+function showError(msg){
+  var e = document.getElementById("parseErr");
+  e.hidden = false;
+  e.textContent = msg;
+  document.getElementById("progress").hidden = true;
+}
+async function processList(list){
+  document.getElementById("parseErr").hidden = true;
+  if(!list.length){
+    showError("No .jsonl files found — drop the ~/.claude/projects folder (or .jsonl files from it).");
+    return;
+  }
+  var files = [];
+  for(var i = 0; i < list.length; i++){
+    setProgress("Reading files… " + (i + 1) + "/" + list.length);
+    try{
+      files.push({ name: list[i].name, text: await list[i].file.text() });
+    }catch(e){ /* unreadable file: skip */ }
+    if(i % 20 === 0) await new Promise(function(r){ setTimeout(r, 0); });
+  }
+  setProgress("Parsing " + files.length + " files locally…");
+  await new Promise(function(r){ setTimeout(r, 30); });
+  var result, census;
+  try{
+    result = CacheObservatory.parseFiles(files);
+    census = usageCensus(files);
+  }catch(e){
+    showError("Parsing failed: " + e.message);
+    return;
+  }
+  setProgress("Done — " + files.length + " files · " + fmtInt(result.totals.requests) + " requests scanned.");
+  LAST = { result: result, census: census };
+  buildEvtMap(result.events);
+  renderResults();
+  document.getElementById("results").hidden = false;
+  document.getElementById("results").scrollIntoView({ behavior: "smooth" });
+}
+
+function buildEvtMap(events){
+  EVT_MAP = new Map();
+  events.forEach(function(e){
+    if(e.classification !== "in_ttl" && e.classification !== "iron") return;
+    var dh = tsDateHour(e.timestamp);
+    if(!dh) return;
+    var key = dh.date + "#" + dh.hour;
+    if(!EVT_MAP.has(key)) EVT_MAP.set(key, []);
+    EVT_MAP.get(key).push({ time: dh.timeStr, gapMin: e.gap_seconds / 60, tokens: e.cache_creation_tokens, sub: e.is_subagent });
+  });
+  EVT_MAP.forEach(function(list){ list.sort(function(a, b){ return a.time < b.time ? -1 : 1; }); });
+}
+
+function renderResults(){
+  if(!LAST) return;
+  var t = LAST.result.totals;
+  document.getElementById("kRequests").textContent = fmtInt(t.requests);
+  document.getElementById("kLosses").textContent = fmtInt(t.in_ttl_losses);
+  document.getElementById("kIron").textContent = fmtInt(t.iron_losses);
+  document.getElementById("kTokens").textContent = fmtTok(t.wasted_tokens);
+  document.getElementById("kRate").textContent = t.requests > 0 ? (100 * t.in_ttl_losses / t.requests).toFixed(2) + "%" : "–";
+  drawCharts();
+}
+
+function drawCharts(){
+  if(!LAST) return;
+  var days = LAST.result.daily.map(function(d){
+    return { label: mdLabel(d.date), count: d.losses, pct: d.requests > 0 ? 100 * d.losses / d.requests : 0 };
+  });
+  if(days.length){
+    ObservatoryCharts.renderDailyBars(document.getElementById("daily"), days);
+  }
+  var zeros = new Array(24).fill(0);
+  var dates = Array.from(LAST.census.keys()).sort();
+  var rows = dates.map(function(date){
+    var losses = zeros.slice();
+    for(var h = 0; h < 24; h++){
+      var l = EVT_MAP.get(date + "#" + h);
+      if(l) losses[h] = l.length;
+    }
+    return { key: date, label: mdLabel(date), usage: LAST.census.get(date) || zeros, losses: losses };
+  });
+  ObservatoryCharts.renderUsageHeatmap(document.getElementById("heatmap"), rows, {
+    cellTitle: function(row, hour, rq, v){
+      return row.key + " " + hh(hour) + ":00 · " + rq + " requests · " + v + " losses";
+    },
+    onSelect: function(row, hour){ showEvents(row.key, hour); },
+    onClear: function(){ hideEvents(); },
+    usageLegendEl: document.getElementById("lg-use")
+  });
+}
+
+function showEvents(date, hour){
+  var p = document.getElementById("evtPanel");
+  var rows = EVT_MAP.get(date + "#" + hour) || [];
+  if(!rows.length){ hideEvents(); return; }
+  var tot = rows.reduce(function(a, e){ return a + e.tokens; }, 0);
+  var html = "<h3>" + date + " " + hh(hour) + ":00 — " + rows.length +
+    " losses · " + (tot / 1e6).toFixed(2) + "M tokens re-billed " +
+    "<span style='font-weight:400;color:var(--muted)'>(click the cell again to close)</span></h3>";
+  html += "<table><tr><th>Time</th><th>Idle gap</th><th>Tokens re-billed</th><th>Session</th></tr>";
+  rows.forEach(function(e){
+    html += "<tr><td>" + e.time + "</td><td>" + e.gapMin.toFixed(1) + " min</td><td>" +
+      e.tokens.toLocaleString("en-US") + "</td><td>" + (e.sub ? "subagent" : "main") + "</td></tr>";
+  });
+  html += "</table>";
+  p.className = "evt-panel on";
+  p.innerHTML = html;
+}
+function hideEvents(){
+  var p = document.getElementById("evtPanel");
+  p.className = "evt-panel";
+  p.innerHTML = "";
+}
+
+var rt;
+window.addEventListener("resize", function(){ clearTimeout(rt); rt = setTimeout(drawCharts, 150); });
+if(window.matchMedia){
+  window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", drawCharts);
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,272 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>캐시 유실 관측소</title>
+<meta name="description" content="Claude Code in-TTL 프롬프트 캐시 유실을 추적하는 커뮤니티 관측소 — 자발적 제출자의 브라우저 로컬 파싱 집계만 수집.">
+<style>
+:root{
+  --bg:#F4F6F8; --surface:#FFFFFF; --ink:#1C2530; --muted:#5B6B7A;
+  --line:#DDE4EA; --grid:#E7EDF2;
+  --crit:#D64545; --crit-soft:rgba(214,69,69,.12);
+  --ok:#2E9E7B; --ok-soft:rgba(46,158,123,.12);
+  --amber:#B07A2A; --amber-soft:rgba(176,122,42,.12);
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#12161B; --surface:#1A2027; --ink:#E6ECF2; --muted:#8A98A6;
+    --line:#2A333D; --grid:#232B34;
+    --crit:#FF6B5E; --crit-soft:rgba(255,107,94,.16);
+    --ok:#3FBF95; --ok-soft:rgba(63,191,149,.16);
+    --amber:#D9A254; --amber-soft:rgba(217,162,84,.16);
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#12161B; --surface:#1A2027; --ink:#E6ECF2; --muted:#8A98A6;
+  --line:#2A333D; --grid:#232B34;
+  --crit:#FF6B5E; --crit-soft:rgba(255,107,94,.16);
+  --ok:#3FBF95; --ok-soft:rgba(63,191,149,.16);
+  --amber:#D9A254; --amber-soft:rgba(217,162,84,.16);
+}
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--bg); color:var(--ink);
+  font-family:system-ui,-apple-system,'Segoe UI','Malgun Gothic',sans-serif;
+  font-size:15px; line-height:1.6;
+}
+.mono{font-family:ui-monospace,'Cascadia Mono',Consolas,monospace}
+.wrap{max-width:960px; margin:0 auto; padding:24px 20px 64px}
+.topbar{display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:22px}
+.badge{font-size:.72rem; letter-spacing:.04em; color:var(--amber); border:1px solid var(--amber); border-radius:99px; padding:2px 10px; white-space:nowrap}
+.lang{font-size:.82rem; color:var(--muted)}
+.lang a{color:inherit}
+.lang b{color:var(--ink)}
+header h1{font-size:1.5rem; font-weight:700; margin:0 0 4px; letter-spacing:-.01em; text-wrap:balance}
+header .sub{color:var(--muted); font-size:.86rem; margin:0}
+header .sub .mono{font-size:.82rem}
+.kpis{display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:12px; margin:24px 0 8px}
+.kpi{background:var(--surface); border:1px solid var(--line); border-radius:8px; padding:14px 16px}
+.kpi .label{font-size:.72rem; letter-spacing:.05em; color:var(--muted); margin-bottom:6px}
+.kpi .val{font-family:ui-monospace,'Cascadia Mono',Consolas,monospace; font-variant-numeric:tabular-nums; font-size:1.45rem; font-weight:600; line-height:1.2}
+.kpi .note{font-size:.78rem; color:var(--muted); margin-top:4px}
+.kpi.crit .val{color:var(--crit)}
+.kpi.live .val{color:var(--ok)}
+.cta{display:inline-block; margin-top:16px; padding:10px 18px; border-radius:8px; background:var(--crit); color:#fff; text-decoration:none; font-weight:700; font-size:.95rem}
+.cta:hover{filter:brightness(1.08)}
+section{margin-top:36px}
+section h2{font-size:1.02rem; font-weight:700; margin:0 0 2px}
+section .desc{color:var(--muted); font-size:.85rem; margin:0 0 14px}
+.card{background:var(--surface); border:1px solid var(--line); border-radius:8px; padding:18px}
+canvas{display:block; width:100%}
+.legend{display:flex; gap:18px; flex-wrap:wrap; margin-top:10px; font-size:.78rem; color:var(--muted)}
+.legend span{display:inline-flex; align-items:center; gap:6px}
+.chip{width:12px; height:12px; border-radius:3px; display:inline-block}
+.chip.line{height:3px; border-radius:2px; width:18px}
+.tbl-scroll{overflow-x:auto}
+table.subs{width:100%; border-collapse:collapse; font-size:.82rem}
+table.subs th{font-size:.7rem; letter-spacing:.04em; color:var(--muted); font-weight:500; text-align:right; padding:4px 8px; border-bottom:1px solid var(--line); white-space:nowrap}
+table.subs th:first-child{text-align:left}
+table.subs td{padding:6px 8px; border-bottom:1px solid var(--grid); font-family:ui-monospace,'Cascadia Mono',Consolas,monospace; font-variant-numeric:tabular-nums; white-space:nowrap; text-align:right}
+table.subs td.nick{font-family:inherit; text-align:left}
+table.subs td.crit{color:var(--crit); font-weight:600}
+.rules{margin:0 0 14px; padding-left:20px; font-size:.88rem}
+.rules li{margin:5px 0}
+.trust-note{font-size:.85rem; margin-top:14px; padding:12px 14px; border-left:3px solid var(--ok); background:var(--ok-soft); border-radius:0 6px 6px 0}
+.trust-note b{font-weight:700}
+.links{margin-top:14px; font-size:.85rem}
+.links a{color:inherit}
+.err{font-size:.85rem; padding:12px 14px; border-left:3px solid var(--crit); background:var(--crit-soft); border-radius:0 6px 6px 0}
+footer{margin-top:44px; padding-top:16px; border-top:1px solid var(--line); color:var(--muted); font-size:.78rem}
+footer code{font-family:ui-monospace,'Cascadia Mono',Consolas,monospace; font-size:.75rem}
+a{color:inherit}
+[hidden]{display:none!important}
+@media (prefers-reduced-motion: reduce){ *{transition:none!important; animation:none!important} }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<div class="topbar">
+  <span class="badge">커뮤니티 도구 — Anthropic 공식 아님</span>
+  <nav class="lang"><a href="../index.html">EN</a> · <b>한국어</b></nav>
+</div>
+
+<header>
+  <h1>캐시 유실 관측소</h1>
+  <p class="sub">Claude Code in-TTL <span class="mono">previous_message_not_found</span> 프롬프트 캐시 유실을 계정 단위로 추적한다 — 아래 모든 수치는 자발적 제출자의 <b>브라우저에서 로컬로 파싱</b>되어, 본인이 승인한 집계 숫자만 제출된 것이다.</p>
+</header>
+
+<div class="kpis">
+  <div class="kpi"><div class="label">제출 계정 수</div><div class="val" id="kpiAccounts">–</div><div class="note">제출 1건 = 1행</div></div>
+  <div class="kpi crit"><div class="label">총 관측 유실</div><div class="val" id="kpiLosses">–</div><div class="note">정당한 TTL 만료는 제외</div></div>
+  <div class="kpi crit"><div class="label">재과금 토큰</div><div class="val" id="kpiTokens">–</div><div class="note">유실 후 다시 과금된 캐시 생성 토큰</div></div>
+  <div class="kpi"><div class="label">관측 기간</div><div class="val" id="kpiPeriod" style="font-size:1.05rem">–</div><div class="note">제출된 가장 이른 날 ~ 가장 늦은 날</div></div>
+</div>
+
+<a class="cta" href="check.html">내 데이터 진단하기 →</a>
+
+<div class="err" id="loadErr" hidden><span class="mono">data/submissions.json</span>을 불러오지 못했다 — 관측소 데이터 파일이 없거나 읽을 수 없다.</div>
+
+<section id="secFleet">
+  <h2>Fleet 일별 유실률 추이</h2>
+  <p class="desc">그날 요청 대비 in-TTL 유실 비율, 제출자별 한 선. 계정을 가로질러 수직으로 정렬된 급등은 서버측 이벤트를, 계정 전체에서 유지되는 하락 계단은 수정 배포 시점을 가리킨다.</p>
+  <div class="card">
+    <canvas id="fleet" height="260"></canvas>
+    <div class="legend" id="fleetLegend"></div>
+  </div>
+</section>
+
+<section id="secSubs">
+  <h2>제출 목록</h2>
+  <p class="desc">제출별 집계 합계. 시각·세션 ID·파일 경로는 없다 — 스키마 차원에서 담을 수 없다.</p>
+  <div class="card tbl-scroll">
+    <table class="subs" id="subsTable">
+      <thead><tr>
+        <th>닉네임</th><th>기간</th><th>총 요청</th><th>in-TTL</th><th>iron</th>
+        <th>재과금 토큰</th><th>유실률</th><th>플랜</th><th>클라이언트</th>
+      </tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+</section>
+
+<section id="secMethod">
+  <h2>방법론 · 신뢰</h2>
+  <p class="desc">무엇을 유실로 판정하는지, 그리고 왜 모든 단계를 직접 검증할 수 있는지.</p>
+  <div class="card">
+    <ul class="rules">
+      <li><b>근거 데이터</b> — 로컬 세션 로그(<span class="mono">~/.claude/projects/**/*.jsonl</span>)에 서버가 직접 찍은 진단 필드 <span class="mono">message.diagnostics.cache_miss_reason = previous_message_not_found</span>. 추정이 아니라 서버가 표시한 레코드만 후보다.</li>
+      <li><b>TTL-strict 판정</b> — 같은 세션 파일에서 직전 요청과의 유휴 간격이 <b>30분 미만</b>(메인 세션) / <b>5분 미만</b>(서브에이전트)일 때만 유실로 집계. 그보다 길면 정당한 TTL 만료로 보고 <b>제외</b>한다.</li>
+      <li><b>iron 유실</b> — 유휴 간격 <b>5분 미만</b>인 부분집합: 공표된 어떤 TTL로도 만료됐을 수 없는 구간.</li>
+      <li><b>중복 제거 · 비용</b> — <span class="mono">requestId</span> 기준으로 중복을 제거하고, 유실 1건의 재과금 비용은 그 요청의 <span class="mono">cache_creation_input_tokens</span>다.</li>
+    </ul>
+    <div class="trust-note">
+      <b>신뢰 모델:</b> 파싱은 <b>당신의 브라우저에서 로컬로</b> 실행된다 — 로그 파일은 기기를 떠나지 않는다. 전송되는 것은 본인이 명시적으로 승인한 집계 숫자(일별 건수·합계)뿐이다. 이 사이트는 <b>빌드 스텝이 없어서</b> 실행되는 코드가 repo에 있는 코드 그대로다 — 실행 전에 한 줄씩 읽어볼 수 있다.
+    </div>
+    <div class="links">
+      증거 스레드: <a href="https://github.com/anthropics/claude-code/issues/87966">anthropics/claude-code#87966</a> ·
+      소스 · 데이터: <a href="https://github.com/garaz1983-rgb/claude-cache-observatory">garaz1983-rgb/claude-cache-observatory</a>
+    </div>
+  </div>
+</section>
+
+<footer>
+  커뮤니티 운영 관측소 — Anthropic과 무관합니다. 판정 규칙 v2.1 (브라우저 <code>assets/parse.js</code> · CLI <code>scripts/check_cache_loss.py</code> — 같은 규칙, 상호 대조 검증 가능). 운영: <a href="https://github.com/garaz1983-rgb">garaz1983-rgb</a>
+</footer>
+
+</div>
+<script src="../assets/charts.js"></script>
+<script>
+"use strict";
+var FLEET_MODEL = null;
+var SUBS = null;
+
+function esc(s){
+  return String(s).replace(/[&<>"']/g, function(c){
+    return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];
+  });
+}
+function fmtInt(n){ return n.toLocaleString("ko-KR"); }
+function fmtTok(n){
+  if(n >= 1e9) return (n/1e9).toFixed(2) + "B";
+  if(n >= 1e6) return (n/1e6).toFixed(2) + "M";
+  if(n >= 1e3) return (n/1e3).toFixed(0) + "k";
+  return String(n);
+}
+function fmtPct(v){ return v.toFixed(2) + "%"; }
+function mdLabel(iso){ return (+iso.slice(5,7)) + "/" + (+iso.slice(8,10)); }
+
+function buildFleetModel(subs){
+  var dateSet = new Set();
+  subs.forEach(function(s){ s.daily.forEach(function(d){ dateSet.add(d.date); }); });
+  var dates = Array.from(dateSet).sort();
+  var series = subs.map(function(s, i){
+    var byDate = new Map();
+    s.daily.forEach(function(d){ byDate.set(d.date, d); });
+    return {
+      color: ObservatoryCharts.PALETTE[i % ObservatoryCharts.PALETTE.length],
+      values: dates.map(function(dt){
+        var d = byDate.get(dt);
+        if(!d || d.requests <= 0) return null;
+        return 100 * d.losses / d.requests;
+      })
+    };
+  });
+  return { dates: dates, series: series };
+}
+
+function renderKpis(subs){
+  var losses = 0, tokens = 0, minD = null, maxD = null;
+  subs.forEach(function(s){
+    losses += s.totals.in_ttl_losses;
+    tokens += s.totals.wasted_tokens;
+    if(minD === null || s.period_start < minD) minD = s.period_start;
+    if(maxD === null || s.period_end > maxD) maxD = s.period_end;
+  });
+  document.getElementById("kpiAccounts").textContent = String(subs.length);
+  document.getElementById("kpiLosses").textContent = fmtInt(losses);
+  document.getElementById("kpiTokens").textContent = fmtTok(tokens);
+  document.getElementById("kpiPeriod").textContent = minD && maxD ? minD + " ~ " + maxD : "–";
+}
+
+function renderLegend(subs){
+  var el = document.getElementById("fleetLegend");
+  el.innerHTML = subs.map(function(s, i){
+    var color = ObservatoryCharts.PALETTE[i % ObservatoryCharts.PALETTE.length];
+    return "<span><i class='chip line' style='background:" + color + "'></i>" + esc(s.nickname || "anonymous") + "</span>";
+  }).join("");
+}
+
+function renderTable(subs){
+  var tb = document.querySelector("#subsTable tbody");
+  tb.innerHTML = subs.map(function(s){
+    var rate = s.totals.requests > 0 ? 100 * s.totals.in_ttl_losses / s.totals.requests : 0;
+    return "<tr>" +
+      "<td class='nick'>" + esc(s.nickname || "anonymous") + "</td>" +
+      "<td>" + esc(s.period_start) + " ~ " + esc(s.period_end) + "</td>" +
+      "<td>" + fmtInt(s.totals.requests) + "</td>" +
+      "<td class='crit'>" + fmtInt(s.totals.in_ttl_losses) + "</td>" +
+      "<td>" + fmtInt(s.totals.iron_losses) + "</td>" +
+      "<td class='crit'>" + fmtInt(s.totals.wasted_tokens) + "</td>" +
+      "<td>" + fmtPct(rate) + "</td>" +
+      "<td>" + esc(s.plan) + "</td>" +
+      "<td>" + esc(s.client) + "</td>" +
+      "</tr>";
+  }).join("");
+}
+
+function drawAll(){
+  if(FLEET_MODEL){
+    ObservatoryCharts.renderFleetTrend(document.getElementById("fleet"), FLEET_MODEL, {
+      dateFormat: mdLabel,
+      rateFormat: function(v){ return (v % 1 === 0 ? v : v.toFixed(1)) + "%"; }
+    });
+  }
+}
+
+fetch("../data/submissions.json")
+  .then(function(r){
+    if(!r.ok) throw new Error("HTTP " + r.status);
+    return r.json();
+  })
+  .then(function(doc){
+    SUBS = doc.submissions || [];
+    renderKpis(SUBS);
+    renderLegend(SUBS);
+    renderTable(SUBS);
+    FLEET_MODEL = buildFleetModel(SUBS);
+    drawAll();
+  })
+  .catch(function(){
+    document.getElementById("loadErr").hidden = false;
+  });
+
+var rt;
+window.addEventListener("resize", function(){ clearTimeout(rt); rt = setTimeout(drawAll, 150); });
+if(window.matchMedia){
+  window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", drawAll);
+}
+</script>
+</body>
+</html>

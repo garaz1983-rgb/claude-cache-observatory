@@ -1,0 +1,272 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cache Eviction Observatory</title>
+<meta name="description" content="Community observatory tracking Claude Code in-TTL prompt-cache losses from volunteer-submitted, locally-parsed aggregates.">
+<style>
+:root{
+  --bg:#F4F6F8; --surface:#FFFFFF; --ink:#1C2530; --muted:#5B6B7A;
+  --line:#DDE4EA; --grid:#E7EDF2;
+  --crit:#D64545; --crit-soft:rgba(214,69,69,.12);
+  --ok:#2E9E7B; --ok-soft:rgba(46,158,123,.12);
+  --amber:#B07A2A; --amber-soft:rgba(176,122,42,.12);
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#12161B; --surface:#1A2027; --ink:#E6ECF2; --muted:#8A98A6;
+    --line:#2A333D; --grid:#232B34;
+    --crit:#FF6B5E; --crit-soft:rgba(255,107,94,.16);
+    --ok:#3FBF95; --ok-soft:rgba(63,191,149,.16);
+    --amber:#D9A254; --amber-soft:rgba(217,162,84,.16);
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#12161B; --surface:#1A2027; --ink:#E6ECF2; --muted:#8A98A6;
+  --line:#2A333D; --grid:#232B34;
+  --crit:#FF6B5E; --crit-soft:rgba(255,107,94,.16);
+  --ok:#3FBF95; --ok-soft:rgba(63,191,149,.16);
+  --amber:#D9A254; --amber-soft:rgba(217,162,84,.16);
+}
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--bg); color:var(--ink);
+  font-family:system-ui,-apple-system,'Segoe UI','Malgun Gothic',sans-serif;
+  font-size:15px; line-height:1.6;
+}
+.mono{font-family:ui-monospace,'Cascadia Mono',Consolas,monospace}
+.wrap{max-width:960px; margin:0 auto; padding:24px 20px 64px}
+.topbar{display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:22px}
+.badge{font-size:.72rem; letter-spacing:.04em; text-transform:uppercase; color:var(--amber); border:1px solid var(--amber); border-radius:99px; padding:2px 10px; white-space:nowrap}
+.lang{font-size:.82rem; color:var(--muted)}
+.lang a{color:inherit}
+.lang b{color:var(--ink)}
+header h1{font-size:1.5rem; font-weight:700; margin:0 0 4px; letter-spacing:-.01em; text-wrap:balance}
+header .sub{color:var(--muted); font-size:.86rem; margin:0}
+header .sub .mono{font-size:.82rem}
+.kpis{display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:12px; margin:24px 0 8px}
+.kpi{background:var(--surface); border:1px solid var(--line); border-radius:8px; padding:14px 16px}
+.kpi .label{font-size:.72rem; text-transform:uppercase; letter-spacing:.08em; color:var(--muted); margin-bottom:6px}
+.kpi .val{font-family:ui-monospace,'Cascadia Mono',Consolas,monospace; font-variant-numeric:tabular-nums; font-size:1.45rem; font-weight:600; line-height:1.2}
+.kpi .note{font-size:.78rem; color:var(--muted); margin-top:4px}
+.kpi.crit .val{color:var(--crit)}
+.kpi.live .val{color:var(--ok)}
+.cta{display:inline-block; margin-top:16px; padding:10px 18px; border-radius:8px; background:var(--crit); color:#fff; text-decoration:none; font-weight:700; font-size:.95rem}
+.cta:hover{filter:brightness(1.08)}
+section{margin-top:36px}
+section h2{font-size:1.02rem; font-weight:700; margin:0 0 2px}
+section .desc{color:var(--muted); font-size:.85rem; margin:0 0 14px}
+.card{background:var(--surface); border:1px solid var(--line); border-radius:8px; padding:18px}
+canvas{display:block; width:100%}
+.legend{display:flex; gap:18px; flex-wrap:wrap; margin-top:10px; font-size:.78rem; color:var(--muted)}
+.legend span{display:inline-flex; align-items:center; gap:6px}
+.chip{width:12px; height:12px; border-radius:3px; display:inline-block}
+.chip.line{height:3px; border-radius:2px; width:18px}
+.tbl-scroll{overflow-x:auto}
+table.subs{width:100%; border-collapse:collapse; font-size:.82rem}
+table.subs th{font-size:.7rem; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); font-weight:500; text-align:right; padding:4px 8px; border-bottom:1px solid var(--line); white-space:nowrap}
+table.subs th:first-child{text-align:left}
+table.subs td{padding:6px 8px; border-bottom:1px solid var(--grid); font-family:ui-monospace,'Cascadia Mono',Consolas,monospace; font-variant-numeric:tabular-nums; white-space:nowrap; text-align:right}
+table.subs td.nick{font-family:inherit; text-align:left}
+table.subs td.crit{color:var(--crit); font-weight:600}
+.rules{margin:0 0 14px; padding-left:20px; font-size:.88rem}
+.rules li{margin:5px 0}
+.trust-note{font-size:.85rem; margin-top:14px; padding:12px 14px; border-left:3px solid var(--ok); background:var(--ok-soft); border-radius:0 6px 6px 0}
+.trust-note b{font-weight:700}
+.links{margin-top:14px; font-size:.85rem}
+.links a{color:inherit}
+.err{font-size:.85rem; padding:12px 14px; border-left:3px solid var(--crit); background:var(--crit-soft); border-radius:0 6px 6px 0}
+footer{margin-top:44px; padding-top:16px; border-top:1px solid var(--line); color:var(--muted); font-size:.78rem}
+footer code{font-family:ui-monospace,'Cascadia Mono',Consolas,monospace; font-size:.75rem}
+a{color:inherit}
+[hidden]{display:none!important}
+@media (prefers-reduced-motion: reduce){ *{transition:none!important; animation:none!important} }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<div class="topbar">
+  <span class="badge">Community tool — not affiliated with Anthropic</span>
+  <nav class="lang"><b>EN</b> · <a href="ko/index.html">한국어</a></nav>
+</div>
+
+<header>
+  <h1>Cache Eviction Observatory</h1>
+  <p class="sub">Tracking Claude Code in-TTL <span class="mono">previous_message_not_found</span> prompt-cache losses across accounts — every data point below was parsed locally in a volunteer's browser and submitted as approved aggregate numbers only.</p>
+</header>
+
+<div class="kpis">
+  <div class="kpi"><div class="label">Accounts submitted</div><div class="val" id="kpiAccounts">–</div><div class="note">one row per submission</div></div>
+  <div class="kpi crit"><div class="label">Observed in-TTL losses</div><div class="val" id="kpiLosses">–</div><div class="note">legitimate TTL expiries excluded</div></div>
+  <div class="kpi crit"><div class="label">Re-billed tokens</div><div class="val" id="kpiTokens">–</div><div class="note">cache writes charged again after a loss</div></div>
+  <div class="kpi"><div class="label">Observation period</div><div class="val" id="kpiPeriod" style="font-size:1.05rem">–</div><div class="note">earliest to latest submitted day</div></div>
+</div>
+
+<a class="cta" href="check.html">Check your own data →</a>
+
+<div class="err" id="loadErr" hidden>Could not load <span class="mono">data/submissions.json</span> — the observatory data file is missing or unreadable.</div>
+
+<section id="secFleet">
+  <h2>Fleet daily loss rate</h2>
+  <p class="desc">In-TTL losses as a share of that day's requests, one line per submission. Vertical alignment across accounts points at server-side events; a step down that holds across accounts points at a fix being deployed.</p>
+  <div class="card">
+    <canvas id="fleet" height="260"></canvas>
+    <div class="legend" id="fleetLegend"></div>
+  </div>
+</section>
+
+<section id="secSubs">
+  <h2>Submissions</h2>
+  <p class="desc">Aggregate totals per submission. No timestamps, no session IDs, no file paths — the schema cannot carry them.</p>
+  <div class="card tbl-scroll">
+    <table class="subs" id="subsTable">
+      <thead><tr>
+        <th>Nickname</th><th>Period</th><th>Requests</th><th>In-TTL</th><th>Iron</th>
+        <th>Re-billed tokens</th><th>Loss rate</th><th>Plan</th><th>Client</th>
+      </tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+</section>
+
+<section id="secMethod">
+  <h2>Methodology &amp; trust</h2>
+  <p class="desc">What counts as a loss, and why you can verify every step yourself.</p>
+  <div class="card">
+    <ul class="rules">
+      <li><b>Source of truth</b> — the server-stamped diagnostic <span class="mono">message.diagnostics.cache_miss_reason = previous_message_not_found</span> in your local session logs (<span class="mono">~/.claude/projects/**/*.jsonl</span>). Nothing is inferred; only records the server itself marked are candidates.</li>
+      <li><b>TTL-strict judgment</b> — a candidate counts as a loss only if the idle gap to the previous request in the same session file is <b>under 30 minutes</b> (main session) or <b>under 5 minutes</b> (subagent). Anything longer is a legitimate TTL expiry and is <b>excluded</b>.</li>
+      <li><b>Iron losses</b> — the subset with an idle gap <b>under 5 minutes</b>: the cache could not have expired under any published TTL.</li>
+      <li><b>Dedup &amp; cost</b> — events are deduplicated by <span class="mono">requestId</span>; the re-billed cost of a loss is that request's <span class="mono">cache_creation_input_tokens</span>.</li>
+    </ul>
+    <div class="trust-note">
+      <b>Trust model:</b> parsing runs in <b>your browser, locally</b> — log files never leave your machine. What gets transmitted is only the aggregate numbers you explicitly approve (daily counts and totals). And because this site has <b>no build step</b>, the code that runs is exactly the code in the repo — read it line by line before you run it.
+    </div>
+    <div class="links">
+      Evidence thread: <a href="https://github.com/anthropics/claude-code/issues/87966">anthropics/claude-code#87966</a> ·
+      Source &amp; data: <a href="https://github.com/garaz1983-rgb/claude-cache-observatory">garaz1983-rgb/claude-cache-observatory</a>
+    </div>
+  </div>
+</section>
+
+<footer>
+  Community-run observatory — not affiliated with Anthropic. Judgment rules v2.1 (<code>assets/parse.js</code> in the browser, <code>scripts/check_cache_loss.py</code> on the CLI — same rules, verifiable against each other). Maintainer: <a href="https://github.com/garaz1983-rgb">garaz1983-rgb</a>
+</footer>
+
+</div>
+<script src="assets/charts.js"></script>
+<script>
+"use strict";
+var FLEET_MODEL = null;
+var SUBS = null;
+
+function esc(s){
+  return String(s).replace(/[&<>"']/g, function(c){
+    return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];
+  });
+}
+function fmtInt(n){ return n.toLocaleString("en-US"); }
+function fmtTok(n){
+  if(n >= 1e9) return (n/1e9).toFixed(2) + "B";
+  if(n >= 1e6) return (n/1e6).toFixed(2) + "M";
+  if(n >= 1e3) return (n/1e3).toFixed(0) + "k";
+  return String(n);
+}
+function fmtPct(v){ return v.toFixed(2) + "%"; }
+function mdLabel(iso){ return (+iso.slice(5,7)) + "/" + (+iso.slice(8,10)); }
+
+function buildFleetModel(subs){
+  var dateSet = new Set();
+  subs.forEach(function(s){ s.daily.forEach(function(d){ dateSet.add(d.date); }); });
+  var dates = Array.from(dateSet).sort();
+  var series = subs.map(function(s, i){
+    var byDate = new Map();
+    s.daily.forEach(function(d){ byDate.set(d.date, d); });
+    return {
+      color: ObservatoryCharts.PALETTE[i % ObservatoryCharts.PALETTE.length],
+      values: dates.map(function(dt){
+        var d = byDate.get(dt);
+        if(!d || d.requests <= 0) return null;
+        return 100 * d.losses / d.requests;
+      })
+    };
+  });
+  return { dates: dates, series: series };
+}
+
+function renderKpis(subs){
+  var losses = 0, tokens = 0, minD = null, maxD = null;
+  subs.forEach(function(s){
+    losses += s.totals.in_ttl_losses;
+    tokens += s.totals.wasted_tokens;
+    if(minD === null || s.period_start < minD) minD = s.period_start;
+    if(maxD === null || s.period_end > maxD) maxD = s.period_end;
+  });
+  document.getElementById("kpiAccounts").textContent = String(subs.length);
+  document.getElementById("kpiLosses").textContent = fmtInt(losses);
+  document.getElementById("kpiTokens").textContent = fmtTok(tokens);
+  document.getElementById("kpiPeriod").textContent = minD && maxD ? minD + " → " + maxD : "–";
+}
+
+function renderLegend(subs){
+  var el = document.getElementById("fleetLegend");
+  el.innerHTML = subs.map(function(s, i){
+    var color = ObservatoryCharts.PALETTE[i % ObservatoryCharts.PALETTE.length];
+    return "<span><i class='chip line' style='background:" + color + "'></i>" + esc(s.nickname || "anonymous") + "</span>";
+  }).join("");
+}
+
+function renderTable(subs){
+  var tb = document.querySelector("#subsTable tbody");
+  tb.innerHTML = subs.map(function(s){
+    var rate = s.totals.requests > 0 ? 100 * s.totals.in_ttl_losses / s.totals.requests : 0;
+    return "<tr>" +
+      "<td class='nick'>" + esc(s.nickname || "anonymous") + "</td>" +
+      "<td>" + esc(s.period_start) + " → " + esc(s.period_end) + "</td>" +
+      "<td>" + fmtInt(s.totals.requests) + "</td>" +
+      "<td class='crit'>" + fmtInt(s.totals.in_ttl_losses) + "</td>" +
+      "<td>" + fmtInt(s.totals.iron_losses) + "</td>" +
+      "<td class='crit'>" + fmtInt(s.totals.wasted_tokens) + "</td>" +
+      "<td>" + fmtPct(rate) + "</td>" +
+      "<td>" + esc(s.plan) + "</td>" +
+      "<td>" + esc(s.client) + "</td>" +
+      "</tr>";
+  }).join("");
+}
+
+function drawAll(){
+  if(FLEET_MODEL){
+    ObservatoryCharts.renderFleetTrend(document.getElementById("fleet"), FLEET_MODEL, {
+      dateFormat: mdLabel,
+      rateFormat: function(v){ return (v % 1 === 0 ? v : v.toFixed(1)) + "%"; }
+    });
+  }
+}
+
+fetch("data/submissions.json")
+  .then(function(r){
+    if(!r.ok) throw new Error("HTTP " + r.status);
+    return r.json();
+  })
+  .then(function(doc){
+    SUBS = doc.submissions || [];
+    renderKpis(SUBS);
+    renderLegend(SUBS);
+    renderTable(SUBS);
+    FLEET_MODEL = buildFleetModel(SUBS);
+    drawAll();
+  })
+  .catch(function(){
+    document.getElementById("loadErr").hidden = false;
+  });
+
+var rt;
+window.addEventListener("resize", function(){ clearTimeout(rt); rt = setTimeout(drawAll, 150); });
+if(window.matchMedia){
+  window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", drawAll);
+}
+</script>
+</body>
+</html>
