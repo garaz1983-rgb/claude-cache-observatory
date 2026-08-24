@@ -93,6 +93,21 @@ details.criteria .body{padding:0 16px 14px; font-size:.85rem}
 details.criteria .body ul{margin:0; padding-left:20px}
 details.criteria .body li{margin:5px 0}
 .placeholder{margin-top:18px; padding:12px 16px; border:1px dashed var(--line); border-radius:8px; color:var(--muted); font-size:.85rem}
+.submit-form{display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:12px; margin:0 0 14px}
+.submit-form label{display:block; font-size:.7rem; text-transform:uppercase; letter-spacing:.07em; color:var(--muted); margin-bottom:4px}
+.submit-form input,.submit-form select{width:100%; font:inherit; font-size:.88rem; padding:7px 10px; border:1px solid var(--line); border-radius:6px; background:var(--bg); color:var(--ink)}
+details.preview{border:1px solid var(--line); border-radius:6px; background:var(--bg); margin:0 0 14px}
+details.preview summary{cursor:pointer; padding:9px 12px; font-size:.82rem; font-weight:600}
+details.preview pre{margin:0; padding:2px 12px 12px; font-family:ui-monospace,'Cascadia Mono',Consolas,monospace; font-size:.74rem; line-height:1.5; overflow-x:auto}
+.submit-actions{display:flex; align-items:center; gap:14px; flex-wrap:wrap}
+.submit-actions .note{font-size:.76rem; color:var(--muted)}
+.btn-primary{font:inherit; font-weight:600; padding:9px 18px; border-radius:8px; border:1px solid var(--ok); background:var(--ok); color:#fff; cursor:pointer}
+.btn-primary:hover{filter:brightness(1.06)}
+.btn-primary:disabled{opacity:.55; cursor:not-allowed}
+.submit-msg{font-size:.85rem; margin-top:12px; padding:11px 14px; border-radius:0 6px 6px 0}
+.submit-msg.ok{border-left:3px solid var(--ok); background:var(--ok-soft)}
+.submit-msg.bad{border-left:3px solid var(--crit); background:var(--crit-soft)}
+.submit-msg .detail{display:block; margin-top:6px; font-family:ui-monospace,'Cascadia Mono',Consolas,monospace; font-size:.74rem; color:var(--muted); white-space:pre-wrap}
 footer{margin-top:44px; padding-top:16px; border-top:1px solid var(--line); color:var(--muted); font-size:.78rem}
 footer code{font-family:ui-monospace,'Cascadia Mono',Consolas,monospace; font-size:.75rem}
 a{color:inherit}
@@ -184,7 +199,57 @@ a{color:inherit}
     </div>
   </details>
 
-  <div class="placeholder" id="submitPlaceholder">관측소에 내 집계를 공유하는 제출 기능은 <b>준비 중</b> — 지금은 결과가 브라우저 안에만 남는다.</div>
+  <section id="submitSection">
+    <h2>3 · 관측소에 집계 공유하기 (선택)</h2>
+    <p class="desc">전송되는 것은 아래 JSON <b>전문 그대로</b>다 — 기간·총계·일별 카운트뿐. 로그·파일 경로·세션 내용·건별 상세는 절대 전송되지 않는다.</p>
+    <div class="card">
+      <div class="submit-form">
+        <div>
+          <label for="subNickname">닉네임 (선택, 최대 20자)</label>
+          <input id="subNickname" maxlength="20" autocomplete="off" placeholder="anonymous">
+        </div>
+        <div>
+          <label for="subPlan">플랜</label>
+          <select id="subPlan">
+            <option value="unknown" selected>밝히지 않음</option>
+            <option value="max20x">Max 20x</option>
+            <option value="max5x">Max 5x</option>
+            <option value="pro">Pro</option>
+            <option value="team">Team</option>
+            <option value="api">API (종량제)</option>
+          </select>
+        </div>
+        <div>
+          <label for="subClient">클라이언트</label>
+          <select id="subClient">
+            <option value="unknown" selected>밝히지 않음</option>
+            <option value="cli">CLI (터미널)</option>
+            <option value="ide">IDE 확장</option>
+            <option value="desktop">데스크톱 앱</option>
+            <option value="web">웹</option>
+            <option value="mixed">혼용</option>
+          </select>
+        </div>
+        <div>
+          <label for="subSessions">동시 세션</label>
+          <select id="subSessions">
+            <option value="unknown" selected>밝히지 않음</option>
+            <option value="single">주로 1개</option>
+            <option value="multi">여러 개 병렬</option>
+          </select>
+        </div>
+      </div>
+      <details class="preview">
+        <summary>전송될 JSON 전문 보기</summary>
+        <pre id="subPreview"></pre>
+      </details>
+      <div class="submit-actions">
+        <button class="btn-primary" id="subBtn" type="button">내 결과 공유</button>
+        <span class="note">POST <span class="mono">/api/submit</span> · 공개 데이터셋에 봇 커밋으로 추가 · 시간당 최대 3회</span>
+      </div>
+      <div class="submit-msg" id="subMsg" hidden></div>
+    </div>
+  </section>
 </section>
 
 <footer>
@@ -397,7 +462,122 @@ function renderResults(){
   document.getElementById("kTokens").textContent = fmtTok(t.wasted_tokens);
   document.getElementById("kRate").textContent = t.requests > 0 ? (100 * t.in_ttl_losses / t.requests).toFixed(2) + "%" : "–";
   drawCharts();
+  updateSubmitCard();
 }
+
+/* ---------- CHK-3: 집계 공유 (opt-in) ---------- */
+var SUBMIT_BUSY = false;
+var SUBMIT_DONE = false;
+
+/* 집계 + 일별만 — 건별 상세(LAST.result.events)는 이 payload에 절대 넣지 않는다. */
+function buildSubmitPayload(){
+  if(!LAST || !LAST.result.daily.length) return null;
+  var r = LAST.result;
+  var payload = {};
+  var nick = document.getElementById("subNickname").value.trim().slice(0, 20);
+  if(nick) payload.nickname = nick;
+  payload.plan = document.getElementById("subPlan").value;
+  payload.client = document.getElementById("subClient").value;
+  payload.concurrent_sessions = document.getElementById("subSessions").value;
+  payload.period_start = r.daily[0].date;
+  payload.period_end = r.daily[r.daily.length - 1].date;
+  payload.totals = {
+    requests: r.totals.requests,
+    in_ttl_losses: r.totals.in_ttl_losses,
+    iron_losses: r.totals.iron_losses,
+    wasted_tokens: r.totals.wasted_tokens
+  };
+  payload.daily = r.daily.map(function(d){
+    return { date: d.date, requests: d.requests, losses: d.losses, wasted_tokens: d.wasted_tokens };
+  });
+  payload.script_version = CacheObservatory.SCRIPT_VERSION;
+  return payload;
+}
+
+function submitMsg(kind, text, links){
+  var el = document.getElementById("subMsg");
+  el.hidden = false;
+  el.className = "submit-msg " + kind;
+  el.textContent = text;
+  (links || []).forEach(function(l){
+    el.appendChild(document.createTextNode(" "));
+    var a = document.createElement("a");
+    a.href = l.href; a.textContent = l.label;
+    if(/^https?:/.test(l.href)) { a.target = "_blank"; a.rel = "noopener"; }
+    el.appendChild(a);
+  });
+  return el;
+}
+
+function updateSubmitCard(){
+  var payload = buildSubmitPayload();
+  var pre = document.getElementById("subPreview");
+  var btn = document.getElementById("subBtn");
+  if(!payload){
+    pre.textContent = "(아직 파싱된 결과 없음)";
+    btn.disabled = true;
+    return;
+  }
+  pre.textContent = JSON.stringify(payload, null, 2);
+  if(payload.daily.length > 92){
+    btn.disabled = true;
+    submitMsg("bad", "스캔 기간이 92일을 넘는다 — 관측소는 최대 92일까지 받는다. 더 짧은 범위로 다시 돌려서 공유할 것.");
+    return;
+  }
+  btn.disabled = SUBMIT_BUSY || SUBMIT_DONE;
+}
+
+["subNickname", "subPlan", "subClient", "subSessions"].forEach(function(id){
+  document.getElementById(id).addEventListener("input", updateSubmitCard);
+  document.getElementById(id).addEventListener("change", updateSubmitCard);
+});
+
+document.getElementById("subBtn").addEventListener("click", async function(){
+  var payload = buildSubmitPayload();
+  if(!payload || SUBMIT_BUSY || SUBMIT_DONE) return;
+  SUBMIT_BUSY = true;
+  updateSubmitCard();
+  submitMsg("ok", "전송 중…");
+  var res = null, data = null;
+  try{
+    res = await fetch("/api/submit", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+    try{ data = await res.json(); }catch(e){ data = null; }
+  }catch(e){
+    SUBMIT_BUSY = false;
+    updateSubmitCard();
+    submitMsg("bad", "네트워크 오류 — 제출이 전달되지 않았다. 다시 시도할 것.");
+    return;
+  }
+  SUBMIT_BUSY = false;
+  if(res.ok && data && data.ok){
+    SUBMIT_DONE = true;
+    updateSubmitCard();
+    submitMsg("ok", "제출 완료 — 관측소 반영까지 1~2분(봇 커밋이 재배포를 트리거한다).", [
+      { href: data.commit_url || "https://github.com", label: "봇 커밋 보기" },
+      { href: "index.html", label: "관측소 열기" }
+    ]);
+  } else if(res.status === 400){
+    updateSubmitCard();
+    var el = submitMsg("bad", "데이터 정합 오류 — 관측소가 이 payload를 거부했다.");
+    if(data && data.detail){
+      var d = document.createElement("span");
+      d.className = "detail";
+      d.textContent = Array.isArray(data.detail) ? data.detail.join("\n") : String(data.detail);
+      el.appendChild(d);
+    }
+  } else if(res.status === 429){
+    updateSubmitCard();
+    var mins = Math.max(1, Math.ceil(((data && data.retry_after) || 3600) / 60));
+    submitMsg("bad", "이 연결에서 제출이 너무 잦다 — 약 " + mins + "분 뒤 다시 시도할 것.");
+  } else {
+    updateSubmitCard();
+    submitMsg("bad", "저장소가 일시적으로 응답하지 않는다 — 잠시 후 재시도. (관측소 조회에는 영향 없음)");
+  }
+});
 
 function drawCharts(){
   if(!LAST) return;

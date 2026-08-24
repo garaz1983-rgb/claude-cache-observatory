@@ -93,6 +93,21 @@ details.criteria .body{padding:0 16px 14px; font-size:.85rem}
 details.criteria .body ul{margin:0; padding-left:20px}
 details.criteria .body li{margin:5px 0}
 .placeholder{margin-top:18px; padding:12px 16px; border:1px dashed var(--line); border-radius:8px; color:var(--muted); font-size:.85rem}
+.submit-form{display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:12px; margin:0 0 14px}
+.submit-form label{display:block; font-size:.7rem; text-transform:uppercase; letter-spacing:.07em; color:var(--muted); margin-bottom:4px}
+.submit-form input,.submit-form select{width:100%; font:inherit; font-size:.88rem; padding:7px 10px; border:1px solid var(--line); border-radius:6px; background:var(--bg); color:var(--ink)}
+details.preview{border:1px solid var(--line); border-radius:6px; background:var(--bg); margin:0 0 14px}
+details.preview summary{cursor:pointer; padding:9px 12px; font-size:.82rem; font-weight:600}
+details.preview pre{margin:0; padding:2px 12px 12px; font-family:ui-monospace,'Cascadia Mono',Consolas,monospace; font-size:.74rem; line-height:1.5; overflow-x:auto}
+.submit-actions{display:flex; align-items:center; gap:14px; flex-wrap:wrap}
+.submit-actions .note{font-size:.76rem; color:var(--muted)}
+.btn-primary{font:inherit; font-weight:600; padding:9px 18px; border-radius:8px; border:1px solid var(--ok); background:var(--ok); color:#fff; cursor:pointer}
+.btn-primary:hover{filter:brightness(1.06)}
+.btn-primary:disabled{opacity:.55; cursor:not-allowed}
+.submit-msg{font-size:.85rem; margin-top:12px; padding:11px 14px; border-radius:0 6px 6px 0}
+.submit-msg.ok{border-left:3px solid var(--ok); background:var(--ok-soft)}
+.submit-msg.bad{border-left:3px solid var(--crit); background:var(--crit-soft)}
+.submit-msg .detail{display:block; margin-top:6px; font-family:ui-monospace,'Cascadia Mono',Consolas,monospace; font-size:.74rem; color:var(--muted); white-space:pre-wrap}
 footer{margin-top:44px; padding-top:16px; border-top:1px solid var(--line); color:var(--muted); font-size:.78rem}
 footer code{font-family:ui-monospace,'Cascadia Mono',Consolas,monospace; font-size:.75rem}
 a{color:inherit}
@@ -184,7 +199,57 @@ a{color:inherit}
     </div>
   </details>
 
-  <div class="placeholder" id="submitPlaceholder">Sharing your aggregate to the observatory is <b>coming soon</b> — for now, results stay in your browser only.</div>
+  <section id="submitSection">
+    <h2>3 · Share your aggregate (optional)</h2>
+    <p class="desc">Exactly the JSON shown below is sent — period, totals and daily counts only. Never your logs, file paths, session contents or per-event details.</p>
+    <div class="card">
+      <div class="submit-form">
+        <div>
+          <label for="subNickname">Nickname (optional, max 20 chars)</label>
+          <input id="subNickname" maxlength="20" autocomplete="off" placeholder="anonymous">
+        </div>
+        <div>
+          <label for="subPlan">Plan</label>
+          <select id="subPlan">
+            <option value="unknown" selected>Prefer not to say</option>
+            <option value="max20x">Max 20x</option>
+            <option value="max5x">Max 5x</option>
+            <option value="pro">Pro</option>
+            <option value="team">Team</option>
+            <option value="api">API (pay-as-you-go)</option>
+          </select>
+        </div>
+        <div>
+          <label for="subClient">Client</label>
+          <select id="subClient">
+            <option value="unknown" selected>Prefer not to say</option>
+            <option value="cli">CLI (terminal)</option>
+            <option value="ide">IDE extension</option>
+            <option value="desktop">Desktop app</option>
+            <option value="web">Web</option>
+            <option value="mixed">Mixed</option>
+          </select>
+        </div>
+        <div>
+          <label for="subSessions">Concurrent sessions</label>
+          <select id="subSessions">
+            <option value="unknown" selected>Prefer not to say</option>
+            <option value="single">Usually one</option>
+            <option value="multi">Several in parallel</option>
+          </select>
+        </div>
+      </div>
+      <details class="preview">
+        <summary>Exact JSON that will be sent</summary>
+        <pre id="subPreview"></pre>
+      </details>
+      <div class="submit-actions">
+        <button class="btn-primary" id="subBtn" type="button">Share my result</button>
+        <span class="note">POST <span class="mono">/api/submit</span> · appended to the public dataset as a bot commit · max 3 submissions per hour</span>
+      </div>
+      <div class="submit-msg" id="subMsg" hidden></div>
+    </div>
+  </section>
 </section>
 
 <footer>
@@ -397,7 +462,123 @@ function renderResults(){
   document.getElementById("kTokens").textContent = fmtTok(t.wasted_tokens);
   document.getElementById("kRate").textContent = t.requests > 0 ? (100 * t.in_ttl_losses / t.requests).toFixed(2) + "%" : "–";
   drawCharts();
+  updateSubmitCard();
 }
+
+/* ---------- CHK-3: share the aggregate (opt-in) ---------- */
+var SUBMIT_BUSY = false;
+var SUBMIT_DONE = false;
+
+/* Aggregates + daily only — per-event detail (LAST.result.events) must never
+   enter this payload. */
+function buildSubmitPayload(){
+  if(!LAST || !LAST.result.daily.length) return null;
+  var r = LAST.result;
+  var payload = {};
+  var nick = document.getElementById("subNickname").value.trim().slice(0, 20);
+  if(nick) payload.nickname = nick;
+  payload.plan = document.getElementById("subPlan").value;
+  payload.client = document.getElementById("subClient").value;
+  payload.concurrent_sessions = document.getElementById("subSessions").value;
+  payload.period_start = r.daily[0].date;
+  payload.period_end = r.daily[r.daily.length - 1].date;
+  payload.totals = {
+    requests: r.totals.requests,
+    in_ttl_losses: r.totals.in_ttl_losses,
+    iron_losses: r.totals.iron_losses,
+    wasted_tokens: r.totals.wasted_tokens
+  };
+  payload.daily = r.daily.map(function(d){
+    return { date: d.date, requests: d.requests, losses: d.losses, wasted_tokens: d.wasted_tokens };
+  });
+  payload.script_version = CacheObservatory.SCRIPT_VERSION;
+  return payload;
+}
+
+function submitMsg(kind, text, links){
+  var el = document.getElementById("subMsg");
+  el.hidden = false;
+  el.className = "submit-msg " + kind;
+  el.textContent = text;
+  (links || []).forEach(function(l){
+    el.appendChild(document.createTextNode(" "));
+    var a = document.createElement("a");
+    a.href = l.href; a.textContent = l.label;
+    if(/^https?:/.test(l.href)) { a.target = "_blank"; a.rel = "noopener"; }
+    el.appendChild(a);
+  });
+  return el;
+}
+
+function updateSubmitCard(){
+  var payload = buildSubmitPayload();
+  var pre = document.getElementById("subPreview");
+  var btn = document.getElementById("subBtn");
+  if(!payload){
+    pre.textContent = "(no parsed results yet)";
+    btn.disabled = true;
+    return;
+  }
+  pre.textContent = JSON.stringify(payload, null, 2);
+  if(payload.daily.length > 92){
+    btn.disabled = true;
+    submitMsg("bad", "This scan covers more than 92 days — the observatory accepts at most 92. Re-run on a shorter window to share.");
+    return;
+  }
+  btn.disabled = SUBMIT_BUSY || SUBMIT_DONE;
+}
+
+["subNickname", "subPlan", "subClient", "subSessions"].forEach(function(id){
+  document.getElementById(id).addEventListener("input", updateSubmitCard);
+  document.getElementById(id).addEventListener("change", updateSubmitCard);
+});
+
+document.getElementById("subBtn").addEventListener("click", async function(){
+  var payload = buildSubmitPayload();
+  if(!payload || SUBMIT_BUSY || SUBMIT_DONE) return;
+  SUBMIT_BUSY = true;
+  updateSubmitCard();
+  submitMsg("ok", "Sending…");
+  var res = null, data = null;
+  try{
+    res = await fetch("/api/submit", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+    try{ data = await res.json(); }catch(e){ data = null; }
+  }catch(e){
+    SUBMIT_BUSY = false;
+    updateSubmitCard();
+    submitMsg("bad", "Network error — the submission did not go through. Please try again.");
+    return;
+  }
+  SUBMIT_BUSY = false;
+  if(res.ok && data && data.ok){
+    SUBMIT_DONE = true;
+    updateSubmitCard();
+    submitMsg("ok", "Submitted — your row will appear on the observatory in about 1–2 minutes (the bot commit triggers a redeploy).", [
+      { href: data.commit_url || "https://github.com", label: "bot commit" },
+      { href: "index.html", label: "open the observatory" }
+    ]);
+  } else if(res.status === 400){
+    updateSubmitCard();
+    var el = submitMsg("bad", "Data validation error — the observatory rejected this payload.");
+    if(data && data.detail){
+      var d = document.createElement("span");
+      d.className = "detail";
+      d.textContent = Array.isArray(data.detail) ? data.detail.join("\n") : String(data.detail);
+      el.appendChild(d);
+    }
+  } else if(res.status === 429){
+    updateSubmitCard();
+    var mins = Math.max(1, Math.ceil(((data && data.retry_after) || 3600) / 60));
+    submitMsg("bad", "Too many submissions from this connection — try again in about " + mins + " min.");
+  } else {
+    updateSubmitCard();
+    submitMsg("bad", "Storage is temporarily unavailable — please try again in a moment. (Browsing the observatory is unaffected.)");
+  }
+});
 
 function drawCharts(){
   if(!LAST) return;
