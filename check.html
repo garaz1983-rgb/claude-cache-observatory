@@ -242,7 +242,7 @@ a{color:inherit}
       <li><span class="mono">assets/parse.js</span> — the scoring engine. Every number on this page comes from it. It follows the same rules as the CLI <span class="mono">scripts/check_cache_loss.py</span>, and an automated test compares the two outputs.</li>
       <li><span class="mono">assets/charts.js</span> — drawing only (charts and heatmap). It does no scoring.</li>
       <li><span class="mono">assets/store.js</span> — the optional local save. It touches only this browser's own storage on this computer, never the network, and only after you press the save button and confirm. The single exception is the link token described in step 3, which is stored only when a submission could not be fingerprinted.</li>
-      <li><span class="mono">assets/identity.js</span> — the fingerprint. It reads request IDs out of the logs you loaded, samples 16 of them and hashes them here. It has no network access and writes nothing.</li>
+      <li><span class="mono">assets/identity.js</span> — the fingerprint. It reads request IDs out of the logs you loaded, samples at most 16 of them (fewer on a short scan, where the picks overlap and collapse) and hashes them here. It has no network access and writes nothing.</li>
       <li><span class="mono">functions/api/submit.js</span> — the only code that runs on a server. It is called only when you press submit, validates the schema, and commits to the public repo.</li>
       <li><span class="mono">data/submissions.json</span> — the public dataset. One submission is one commit, so the whole history is auditable by anyone.</li>
       <li><span class="mono">wrangler.toml</span> — even the server configuration lives in the repo: there is no hidden backend.</li>
@@ -1136,6 +1136,22 @@ function updateIdentityNote(payload){
   }
   var parts = [];
   var anchors = payload.anchors ? payload.anchors.length : 0;
+  /* Why this submission has no fingerprint. Three different sources land here and
+     they are not interchangeable: saying "a pasted CLI aggregate" to someone who
+     just dropped their own folder is a false statement about their own data, on
+     the one card whose whole job is telling them what is about to be sent. */
+  function whyNoFingerprint(){
+    var sv = (LAST && LAST.source_version) || null;
+    if(sv === null){
+      return "This folder scan produced no fingerprint: SHA-256 is unavailable outside " +
+        "a secure context, so this browser cannot compute the hashes at all.";
+    }
+    if(/^web-/.test(sv)){
+      return "This is an earlier diagnosis of your own, read back from this browser. It was " +
+        "saved before fingerprints existed, so it carries none.";
+    }
+    return "A pasted CLI aggregate carries no request IDs, so it cannot be fingerprinted.";
+  }
   if(anchors){
     parts.push("One machine is one row. This submission carries " + anchors +
       " one-way hashes taken from" +
@@ -1152,16 +1168,13 @@ function updateIdentityNote(payload){
         "sent as well, so a row created that way is adopted rather than left behind.");
     }
   } else if(payload.token){
-    parts.push("A pasted CLI aggregate carries no request IDs, so it cannot be fingerprinted. " +
-      "This browser holds the link token the observatory issued for your earlier paste " +
-      "submission, and sending it updates that same row.");
+    parts.push(whyNoFingerprint() + " This browser holds the link token the observatory " +
+      "issued for an earlier submission of that kind, and sending it updates that same row.");
   } else {
-    parts.push("A pasted CLI aggregate carries no request IDs, so there is nothing to " +
-      "fingerprint and this creates a new row.");
-    if(LAST && LAST.source_version === null &&
-       !(window.CacheObservatoryIdentity && CacheObservatoryIdentity.available())){
-      parts.push("This browser also cannot compute the hashes at all (SHA-256 is unavailable " +
-        "outside a secure context), which is why a folder scan produced none either.");
+    parts.push(whyNoFingerprint() + " With nothing to match on, this creates a new row.");
+    if(LAST && /^web-/.test(LAST.source_version || "")){
+      parts.push("Re-running the scan on the folder itself would produce one, which is the " +
+        "surer way to keep this machine on a single row.");
     }
     if(STORE_OK){
       parts.push("So that a later paste updates this row instead of adding another, the " +

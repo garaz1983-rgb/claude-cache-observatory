@@ -238,7 +238,7 @@ a{color:inherit}
       <li><span class="mono">assets/parse.js</span>: 유실 판정 엔진. 이 페이지의 모든 숫자가 여기서 나온다. CLI <span class="mono">scripts/check_cache_loss.py</span>와 같은 규칙이며, 두 결과가 같은지 자동 테스트로 대조한다.</li>
       <li><span class="mono">assets/charts.js</span>: 그래프·히트맵 그리기 전용. 판정 계산은 하지 않는다.</li>
       <li><span class="mono">assets/store.js</span>: 선택적 로컬 저장. 이 컴퓨터의 브라우저 저장 공간만 건드리고 네트워크는 쓰지 않으며, 저장 버튼을 누르고 확인했을 때만 동작한다. 예외는 3번 카드에서 설명하는 연결 토큰 하나뿐이고, 지문을 만들 수 없었던 제출에서만 저장된다.</li>
-      <li><span class="mono">assets/identity.js</span>: 기계 지문. 불러온 로그에서 request ID를 읽어 16개를 골라 이 자리에서 해시한다. 네트워크를 쓰지 않고 아무것도 저장하지 않는다.</li>
+      <li><span class="mono">assets/identity.js</span>: 기계 지문. 불러온 로그에서 request ID를 읽어 최대 16개를 골라 이 자리에서 해시한다. 스캔이 짧으면 고른 자리가 겹쳐 그보다 적다. 네트워크를 쓰지 않고 아무것도 저장하지 않는다.</li>
       <li><span class="mono">functions/api/submit.js</span>: 서버에서 도는 유일한 코드. 제출 버튼을 눌렀을 때만 호출되고, 스키마 검증 후 공개 repo에 커밋한다.</li>
       <li><span class="mono">data/submissions.json</span>: 공개 집계 데이터. 제출 1건이 커밋 1건으로 남아 이력 전체를 누구나 감사할 수 있다.</li>
       <li><span class="mono">wrangler.toml</span>: 서버 설정도 repo에 공개. 숨겨진 백엔드가 없다는 뜻이다.</li>
@@ -1111,6 +1111,21 @@ function updateIdentityNote(payload){
   }
   var parts = [];
   var anchors = payload.anchors ? payload.anchors.length : 0;
+  /* 지문이 없는 이유. 서로 다른 출처 세 가지가 여기로 오는데 바꿔 쓸 수 없다.
+     방금 자기 폴더를 끌어다 놓은 사람에게 "붙여넣은 CLI 집계"라고 말하는 건
+     자기 데이터에 대한 거짓말이고, 하필 무엇이 나갈지 알려주는 카드에서다. */
+  function whyNoFingerprint(){
+    var sv = (LAST && LAST.source_version) || null;
+    if(sv === null){
+      return "이 폴더 스캔에서는 지문이 나오지 않았다. 보안 컨텍스트가 아니면 SHA-256을 " +
+        "쓸 수 없어서 이 브라우저가 해시 자체를 계산하지 못한다.";
+    }
+    if(/^web-/.test(sv)){
+      return "이건 본인이 전에 진단한 결과를 이 브라우저에서 다시 불러온 것이다. 지문이 " +
+        "생기기 전에 저장된 것이라 지문을 갖고 있지 않다.";
+    }
+    return "붙여넣은 CLI 집계에는 request ID가 없어서 지문을 만들 수 없다.";
+  }
   if(anchors){
     parts.push("기계 1대 = 행 1개. 이 제출은 본인 로그의 request ID" +
       (LAST && LAST.id_count ? " " + fmtInt(LAST.id_count) + "개" : "") +
@@ -1126,16 +1141,13 @@ function updateIdentityNote(payload){
         "만들어진 행이 있으면 버려두지 않고 그 행을 이어받는다.");
     }
   } else if(payload.token){
-    parts.push("붙여넣은 CLI 집계에는 request ID가 없어서 지문을 만들 수 없다. 대신 이전 " +
-      "붙여넣기 제출에 관측소가 발급한 연결 토큰을 이 브라우저가 들고 있고, 그것을 보내면 " +
-      "같은 행이 갱신된다.");
+    parts.push(whyNoFingerprint() + " 대신 그런 제출에 관측소가 발급한 연결 토큰을 이 " +
+      "브라우저가 들고 있고, 그것을 보내면 같은 행이 갱신된다.");
   } else {
-    parts.push("붙여넣은 CLI 집계에는 request ID가 없다. 지문으로 삼을 것이 없으므로 새 행이 " +
-      "만들어진다.");
-    if(LAST && LAST.source_version === null &&
-       !(window.CacheObservatoryIdentity && CacheObservatoryIdentity.available())){
-      parts.push("이 브라우저는 해시 자체를 계산할 수 없는 상태이기도 하다(보안 컨텍스트가 " +
-        "아니면 SHA-256을 쓸 수 없다). 폴더 스캔에서도 해시가 나오지 않은 이유가 이것이다.");
+    parts.push(whyNoFingerprint() + " 맞춰 볼 것이 없으므로 새 행이 만들어진다.");
+    if(LAST && /^web-/.test(LAST.source_version || "")){
+      parts.push("폴더를 다시 스캔하면 지문이 나온다. 이 기계를 한 행으로 유지하는 데는 " +
+        "그쪽이 확실하다.");
     }
     if(STORE_OK){
       parts.push("다음 붙여넣기 제출이 또 다른 행을 만들지 않고 이 행을 갱신하도록, 관측소가 " +
