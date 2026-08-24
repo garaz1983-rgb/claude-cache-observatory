@@ -70,17 +70,13 @@
  * GitHub's documented behaviour; it was never reproduced against the live API,
  * because the fix is to leave that endpoint rather than to walk up to it.)
  *
- * The dataset is now three kinds of file:
+ * The dataset became three kinds of file (a fourth arrives in M14.1 below):
  *
  *   data/submissions.json  the INDEX. Same path, so existing links and the
  *                          "one submission is one commit" story survive, but
  *                          the row carries no `daily` array any more — only
  *                          `daily_days` (how many rows its detail file holds)
- *                          and `detail` (where that file is). Measured: 508
- *                          bytes for a row with no fingerprint, 1,901 with one
- *                          — about two thirds of that is identity.anchor_hashes,
- *                          16 digests at 64 hex characters, which makes the
- *                          identity block the index's dominant growth term.
+ *                          and `detail` (where that file is).
  *   data/daily.json        the FLEET series: one row per calendar DATE, summed
  *                          across every submission, plus how many machines
  *                          reported that date. Bounded by the calendar, not by
@@ -97,20 +93,56 @@
  *
  *   - the blob endpoint has no 1 MB inline cap, so the wall is gone rather
  *     than pushed further away;
- *   - a submission writes THREE files and they must land TOGETHER. Three
- *     sequential Contents-API PUTs would be three commits with no atomicity,
- *     and a failure between them leaves the fleet series counting a submission
- *     the index does not list, or a detail file nothing points at. One tree,
- *     one commit, one ref update.
+ *   - a submission writes SEVERAL files and they must land TOGETHER. Sequential
+ *     Contents-API PUTs would be one commit each with no atomicity, and a
+ *     failure between them leaves the fleet series counting a submission the
+ *     index does not list, or a detail file nothing points at. One tree, one
+ *     commit, one ref update.
+ *
+ * ---------- M14.1: the digests leave the index ----------
+ *
+ * M14 measured what an index row actually costs and the answer was not the one
+ * the plan assumed. Measured on the row committed in data/, by giving it a
+ * fingerprint and taking the marginal growth of the serialised file:
+ *
+ *     no identity at all .................  544 bytes
+ *     token_hash only (paste path) .......  662 bytes
+ *     16 anchor digests (folder path) .... 1857 bytes   <- 1313 B of it, 70.7%,
+ *     16 anchor digests, merged .......... 1891 bytes      is the digest block
+ *
+ * Sixteen 64-character digests are 1,024 characters before any JSON overhead,
+ * and the index is the ONE file every visitor downloads. So the row that every
+ * reader pays for was two thirds material no reader ever looks at: the digests
+ * exist only so this API can recognise a returning submitter.
+ *
+ * They now live in data/identity.json, keyed by submission id:
+ *
+ *   data/identity.json     anchor_hashes + token_hash per submission id.
+ *                          Read and written by this function on every
+ *                          submission. Fetched by NO page — index.html and
+ *                          ko/index.html still download exactly two data files.
+ *
+ * 🔴 This is a SIZE AND BANDWIDTH change, not a privacy one. data/identity.json
+ * is in the same public repository as everything else and anyone may open it;
+ * nothing about it is hidden, restricted or less exposed than it was inside the
+ * index. The only thing that changed is that a visitor no longer downloads it.
+ * The replay boundary is exactly where it was and rests on the same property it
+ * always did — what is stored is a SECOND hash, so a value copied out of the
+ * new file matches nothing, just as it matched nothing in the old one.
+ *
+ * An index row with no identity entry is a legitimate state, not a broken one:
+ * the row committed before M13 has no identity to move, and a row can only ever
+ * be merged into by the machine that owns it, never by the absence of a key.
  *
  * The single retry is unchanged in spirit: a ref that moved under us (422 on
  * the ref update, the equivalent of the old 409) earns one re-read, and the
- * match, the merge and the fleet delta all re-run against the FRESH content.
- * Nothing is merged against a stale read.
+ * match, the merge, the identity resolution and the fleet delta all re-run
+ * against the FRESH content. Nothing is merged against a stale read.
  *
- * 🔴 Whatever a file claims must add up inside itself, and the three must
- * agree with each other: the index row's totals equal the sum of its own
- * detail file, and data/daily.json equals the sum across all detail files.
+ * 🔴 Whatever a file claims must add up inside itself, and they must agree with
+ * each other: the index row's totals equal the sum of its own detail file,
+ * data/daily.json equals the sum across all detail files, and every entry in
+ * data/identity.json belongs to a row the index lists.
  * tests/dataset_validate.py is the single definition of that, and the contract
  * test runs it after every accepted submission.
  */
@@ -155,10 +187,15 @@ const TOKEN_BYTES = 16;
    hand-edit. */
 const INDEX_PATH = "data/submissions.json";
 const FLEET_PATH = "data/daily.json";
+const IDENTITY_PATH = "data/identity.json";
 const SUBS_PREFIX = "data/subs/";
 const INDEX_SCHEMA_VERSION = 2;
 const FLEET_SCHEMA_VERSION = 1;
 const DETAIL_SCHEMA_VERSION = 1;
+/* M14.1. Version 1 because the file is new: there has never been an
+   data/identity.json with a different shape, and the values inside it are
+   byte-for-byte the ones index rows carried under `identity` in M13/M14. */
+const IDENTITY_SCHEMA_VERSION = 1;
 const SUB_ID_RE = /^sub-[0-9]{14}-[0-9a-f]{4}$/;
 const DEFAULT_BRANCH = "master";
 const BLOB_MODE = "100644";
@@ -521,8 +558,14 @@ function buildIncoming(body) {
 
    M14: `daily` is gone from here and `daily_days` + `detail` take its place.
    The day count is not decoration — it is what lets a reader check that the
-   detail file at that path is complete without the index having to carry it. */
-function composeRecord(id, submittedAt, updatedAt, fields, identity) {
+   detail file at that path is complete without the index having to carry it.
+
+   M14.1: `identity` is gone from here too, to data/identity.json. Every field
+   left in this record is one the page renders or a reader reads; the row no
+   longer carries 1,313 bytes of digests that only this file ever looks at.
+   The row's id is what joins it to its identity entry, exactly as it is what
+   joins it to its detail file. */
+function composeRecord(id, submittedAt, updatedAt, fields) {
   const rec = { id: id, submitted_at: submittedAt };
   if (updatedAt) rec.updated_at = updatedAt;
   rec.nickname = fields.nickname;
@@ -535,7 +578,6 @@ function composeRecord(id, submittedAt, updatedAt, fields, identity) {
   rec.daily_days = fields.daily.length;
   rec.detail = detailPath(id);
   rec.script_version = fields.script_version;
-  if (identity) rec.identity = identity;
   return rec;
 }
 
@@ -618,6 +660,34 @@ function serializeFleet(fleet) {
   ], "days", fleet.days, FLEET_ROW_KEYS);
 }
 
+/* data/identity.json: one LINE per submission id, for the same reason the two
+   row files are written that way. `git log -p data/identity.json` then reads as
+   "this submitter's fingerprint changed" instead of a twenty-line block moving
+   under a diff, which matters because a fingerprint refreshes on every merge.
+
+   Ids are sorted rather than left in index order, so the file has one canonical
+   form: an id is a timestamp followed by four hex characters, so sorting them
+   is also chronological order. Without this a submission that merely reordered
+   the index would rewrite this whole file as a spurious diff. */
+function serializeIdentity(doc) {
+  const ids = Object.keys(doc.identities).sort();
+  const out = ["{", "  \"schema_version\": " +
+    JSON.stringify(doc.schema_version) + ","];
+  if (!ids.length) {
+    out.push("  \"identities\": {}");
+  } else {
+    out.push("  \"identities\": {");
+    for (let i = 0; i < ids.length; i++) {
+      out.push("    " + JSON.stringify(ids[i]) + ": " +
+        JSON.stringify(doc.identities[ids[i]]) +
+        (i === ids.length - 1 ? "" : ","));
+    }
+    out.push("  }");
+  }
+  out.push("}");
+  return out.join("\n") + "\n";
+}
+
 function commitMessage(submission, merged) {
   return "data: " + (merged ? "update" : "submission") + " " + submission.id +
     " — " + submission.nickname +
@@ -641,18 +711,34 @@ async function identityOf(body) {
   return { anchorHashes: anchorHashes, tokenHash: tokenHash };
 }
 
-function storedAnchors(record) {
-  const id = record && isPlainObject(record.identity) ? record.identity : null;
-  if (!id || !Array.isArray(id.anchor_hashes)) return [];
-  return id.anchor_hashes.filter(function (h) {
+/* M14.1: one submission's identity entry, looked up by id in the map read out
+   of data/identity.json. `null` means the row has no identity, which is a
+   legitimate state — the row committed before M13 has none — and is treated
+   the same way an empty identity block was: it matches nothing.
+
+   hasOwnProperty rather than a plain `identities[id]`: the ids come out of a
+   PUBLIC file a repo admin can hand-edit, and a row whose id was "__proto__"
+   or "constructor" would otherwise resolve to something off Object.prototype
+   instead of to an entry. isPlainObject() would reject the result either way,
+   but the lookup should not reach the prototype chain in the first place. */
+function identityEntry(identities, id) {
+  if (!isPlainObject(identities) || typeof id !== "string" || !id) return null;
+  if (!Object.prototype.hasOwnProperty.call(identities, id)) return null;
+  const entry = identities[id];
+  return isPlainObject(entry) ? entry : null;
+}
+
+function storedAnchors(entry) {
+  if (!entry || !Array.isArray(entry.anchor_hashes)) return [];
+  return entry.anchor_hashes.filter(function (h) {
     return typeof h === "string" && HEX64_RE.test(h);
   });
 }
 
-function storedTokenHash(record) {
-  const id = record && isPlainObject(record.identity) ? record.identity : null;
-  if (!id || typeof id.token_hash !== "string" || !HEX64_RE.test(id.token_hash)) return "";
-  return id.token_hash;
+function storedTokenHash(entry) {
+  if (!entry || typeof entry.token_hash !== "string" ||
+      !HEX64_RE.test(entry.token_hash)) return "";
+  return entry.token_hash;
 }
 
 /* Which row this submission belongs to, or -1.
@@ -660,13 +746,19 @@ function storedTokenHash(record) {
    machine whose logs are being reported, the token only to a browser. ANY
    single anchor overlap is the same machine — the sample drifts as logs are
    written and rotated, so requiring more than one would lose the link on a
-   normal week of use. */
-function matchIndex(subs, anchorHashes, tokenHash) {
+   normal week of use.
+
+   M14.1: the walk is still over the INDEX, in index order, and the identity
+   map is only ever consulted by the id of the row being examined. That is what
+   keeps the answer an index position — a match found by scanning the identity
+   file directly could name an id the index does not list, and there would be no
+   row to merge into. */
+function matchIndex(subs, identities, anchorHashes, tokenHash) {
   if (!Array.isArray(subs)) return -1;
   if (anchorHashes.length) {
     const want = new Set(anchorHashes);
     for (let i = 0; i < subs.length; i++) {
-      const have = storedAnchors(subs[i]);
+      const have = storedAnchors(identityEntry(identities, subs[i] && subs[i].id));
       for (let j = 0; j < have.length; j++) {
         if (want.has(have[j])) return i;
       }
@@ -674,7 +766,7 @@ function matchIndex(subs, anchorHashes, tokenHash) {
   }
   if (tokenHash) {
     for (let i = 0; i < subs.length; i++) {
-      if (storedTokenHash(subs[i]) === tokenHash) return i;
+      if (storedTokenHash(identityEntry(identities, subs[i] && subs[i].id)) === tokenHash) return i;
     }
   }
   return -1;
@@ -922,10 +1014,12 @@ async function readJsonBlob(api, token, sha) {
 }
 
 /* Read the whole write-relevant state of the repository at HEAD:
-   ref -> commit -> root tree -> data/ tree -> the two blobs the page reads.
+   ref -> commit -> root tree -> data/ tree -> the blobs this write needs.
    Returns null on any failure. A file that is simply absent is not a failure:
-   an empty index and an empty fleet series are what a repository looks like
-   before its first submission. */
+   an empty index, an empty fleet series and NO data/identity.json at all are
+   what a repository looks like before its first submission. That last one is
+   not hypothetical — it is the state of this repository at the M14.1 commit,
+   so the first submission after it takes exactly that path. */
 async function readState(api, token, branch) {
   const ref = await ghJson(api + "/git/ref/heads/" + branch, token);
   if (ref.status !== 200 || !ref.body || !isPlainObject(ref.body.object)) return null;
@@ -942,16 +1036,18 @@ async function readState(api, token, branch) {
   const root = await ghJson(api + "/git/trees/" + rootTreeSha, token);
   if (root.status !== 200) return null;
 
-  let indexSha = "", fleetSha = "", subsSha = "";
+  let indexSha = "", fleetSha = "", identitySha = "", subsSha = "";
   const dataDir = treeEntry(root.body, "data", "tree");
   if (dataDir) {
     const dataTree = await ghJson(api + "/git/trees/" + dataDir.sha, token);
     if (dataTree.status !== 200) return null;
     const i = treeEntry(dataTree.body, "submissions.json", "blob");
     const f = treeEntry(dataTree.body, "daily.json", "blob");
+    const n = treeEntry(dataTree.body, "identity.json", "blob");
     const s = treeEntry(dataTree.body, "subs", "tree");
     if (i) indexSha = i.sha;
     if (f) fleetSha = f.sha;
+    if (n) identitySha = n.sha;
     if (s) subsSha = s.sha;
   }
 
@@ -965,12 +1061,24 @@ async function readState(api, token, branch) {
     fleet = await readJsonBlob(api, token, fleetSha);
     if (!isPlainObject(fleet) || !Array.isArray(fleet.days)) return null;
   }
+  /* Absent => nobody has an identity yet, which is a valid dataset and the one
+     this repository is in at the M14.1 commit. PRESENT BUT UNREADABLE is a hard
+     failure, exactly as it is for the other two: continuing there would resolve
+     every submission as a stranger, append a second row for a machine that
+     already has one, and then overwrite the file that would have said so. */
+  let identities = {};
+  if (identitySha) {
+    const doc = await readJsonBlob(api, token, identitySha);
+    if (!isPlainObject(doc) || !isPlainObject(doc.identities)) return null;
+    identities = doc.identities;
+  }
   return {
     headSha: headSha,
     rootTreeSha: rootTreeSha,
     subsSha: subsSha,
     index: index,
-    fleet: fleet
+    fleet: fleet,
+    identities: identities
   };
 }
 
@@ -993,8 +1101,9 @@ async function readDetailDaily(api, token, subsSha, id) {
   return detail.daily;
 }
 
-/* blobs -> tree -> commit -> ref, in that order, which is what makes the three
-   files ONE commit. `base_tree` is the tree the read came from, so every path
+/* blobs -> tree -> commit -> ref, in that order, which is what makes every file
+   this submission touches ONE commit — four of them since M14.1 put the
+   identity map in its own file. `base_tree` is the tree the read came from, so every path
    this commit does not mention is carried over unchanged and GitHub resolves
    the nested directories for us.
    Returns {url} on success, {moved:true} when the ref moved under us (the
@@ -1052,11 +1161,13 @@ async function writeCommit(api, token, branch, state, files, message) {
   return null;
 }
 
-/* The read, the match, the merge, the fleet delta and the write are all inside
-   the retry loop on purpose: a moved ref means somebody else's commit landed in
-   between, and after the re-read the answer to "does this machine already have
-   a row" — and what that row contains — may both have changed. Nothing computed
-   before the conflict is carried across it. */
+/* The read, the match, the merge, the identity map, the fleet delta and the
+   write are all inside the retry loop on purpose: a moved ref means somebody
+   else's commit landed in between, and after the re-read the answer to "does
+   this machine already have a row" — and what that row contains, and which
+   identity entries exist — may all have changed. Nothing computed before the
+   conflict is carried across it; readState() re-reads all four files and every
+   line below re-resolves against that fresh read. */
 async function commitSubmission(env, incoming, ident, issued, now) {
   const token = env.GITHUB_TOKEN;
   const repo = env.GITHUB_REPO;
@@ -1072,11 +1183,12 @@ async function commitSubmission(env, incoming, ident, issued, now) {
     if (!state) return { ok: false };
     const doc = state.index;
 
-    const idx = matchIndex(doc.submissions, ident.anchorHashes, ident.tokenHash);
+    const idx = matchIndex(doc.submissions, state.identities,
+      ident.anchorHashes, ident.tokenHash);
     const merged = idx !== -1;
     const previous = merged ? doc.submissions[idx] : null;
-    const prevIdentity = previous && isPlainObject(previous.identity)
-      ? previous.identity : null;
+    const prevIdentity = previous
+      ? identityEntry(state.identities, previous.id) : null;
     // A token is issued only where a fingerprint is impossible, and only when
     // the row does not already carry one. "Impossible" is decided in exactly
     // one place — the mint in onRequestPost, which leaves issued.tokenHash
@@ -1111,7 +1223,7 @@ async function commitSubmission(env, incoming, ident, issued, now) {
       updatedAt = "";
     }
 
-    const record = composeRecord(id, submittedAt, updatedAt, fields, identity);
+    const record = composeRecord(id, submittedAt, updatedAt, fields);
     if (merged) {
       doc.submissions[idx] = record;   // in place: the row keeps its slot and its id
     } else {
@@ -1119,8 +1231,34 @@ async function commitSubmission(env, incoming, ident, issued, now) {
     }
     doc.schema_version = INDEX_SCHEMA_VERSION;
 
+    /* M14.1: the identity map, rebuilt from the index that was just written.
+       Driving it off the index rather than off the file read from disk is what
+       keeps the two in step by construction — an entry is written only for a
+       row the index actually lists, so the "entry with no row" the validator
+       rejects cannot be produced here at all.
+
+       A null-prototype map because the keys are ids out of a PUBLIC file: on a
+       plain {} an id of "__proto__" would hit a setter instead of adding a key.
+
+       An id whose identity resolves to null gets NO entry rather than an empty
+       one. That is the same "explicitly none" state the pre-M13 row is in, and
+       writing `{}` instead would make a row that has no fingerprint look like a
+       row whose fingerprint was lost. */
+    const identities = Object.create(null);
+    for (let i = 0; i < doc.submissions.length; i++) {
+      const row = doc.submissions[i];
+      const rowId = row && typeof row.id === "string" ? row.id : "";
+      if (!rowId || rowId === id) continue;
+      const carried = identityEntry(state.identities, rowId);
+      if (carried) identities[rowId] = carried;
+    }
+    if (identity) identities[id] = identity;
+
     const files = [
       { path: INDEX_PATH, text: serializeIndex(doc) },
+      { path: IDENTITY_PATH,
+        text: serializeIdentity({ schema_version: IDENTITY_SCHEMA_VERSION,
+                                  identities: identities }) },
       { path: FLEET_PATH,
         text: serializeFleet(applyFleetDelta(state.fleet, previousDaily, fields.daily)) },
       { path: detailPath(id), text: serializeDetail(buildDetail(id, fields)) }

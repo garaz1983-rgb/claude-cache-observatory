@@ -53,8 +53,9 @@ M13 (one submitter, one row) adds:
 M14 (three files, one commit) adds:
 
   case20 atomicity               -> every accepted submission lands the index,
-                                    the fleet series and its own detail file in
-                                    exactly ONE commit, and touches nothing else
+                                    the identity map, the fleet series and its
+                                    own detail file in exactly ONE commit, and
+                                    touches nothing else
   case21 fleet series            -> data/daily.json is the sum across detail
                                     files date by date, `machines` is how many
                                     cover each date, and a merge moves it by the
@@ -63,10 +64,29 @@ M14 (three files, one commit) adds:
                                     NOT merged into: 502, and the public files
                                     are left exactly as they were
 
+M14.1 (the digests leave the index) adds:
+
+  case23 no identity file yet    -> the first submission over a repository that
+                                    has no data/identity.json at all creates it.
+                                    Not hypothetical: it is the state of the
+                                    live repo at the M14.1 commit, and it is the
+                                    state _reset_repo() leaves behind, so every
+                                    stage's first submission takes this path
+  case24 a row with no identity  -> an index row that carries no fingerprint is
+                                    a valid dataset, not a violation, and the
+                                    ref-moved retry re-resolves the identity map
+                                    against the fresh read without inventing an
+                                    entry for it
+  (validator)                    -> the other half of that relation — an entry
+                                    keyed by an id the index does not list — is
+                                    an error, proven by handing the validator
+                                    one, because the write path cannot make one
+
 🔴 After every accepted submission the whole dataset is re-checked with
 tests/dataset_validate.py — the same validator that runs against the committed
 files in data/. An index row's totals must equal the sum of its own detail
-file, and data/daily.json must equal the sum across all of them.
+file, data/daily.json must equal the sum across all of them, and every entry in
+data/identity.json must belong to a row the index lists.
 
 All pass -> prints CONTRACT_OK as the last line, exit 0.
 Contract violation -> exit 1. Setup/infra failure -> exit 2 (the mutation
@@ -217,6 +237,7 @@ def guarded_delete_scratch(path):
 
 INDEX_PATH = "data/submissions.json"
 FLEET_PATH = "data/daily.json"
+IDENTITY_PATH = "data/identity.json"
 EMPTY_INDEX = {"schema_version": 2, "submissions": []}
 EMPTY_FLEET = {"schema_version": 1, "days": []}
 MOCK_BRANCH = "master"
@@ -242,7 +263,15 @@ class MockState(object):
         self.ref_patches = 0          # PATCH /git/refs
         self.commit_count = 0         # commits that actually moved the branch
         self.commit_messages = []
-        self.commit_log = []          # [{message, paths}] per landed commit
+        # [{message, paths, written}] per landed commit. `paths` is what the
+        # commit CHANGED; `written` is what it explicitly wrote. The two differ
+        # when a write re-states a file whose content is unchanged, which is
+        # routine for data/identity.json — a merge that re-sends the same
+        # fingerprint rewrites the same bytes. "Four files in one commit" is a
+        # claim about `written`, so the mock has to record it separately or the
+        # assertion silently weakens into "four files, unless one didn't move".
+        self.commit_log = []
+        self.tree_written = {}        # tree sha -> [paths the POST named]
         self.errors = []              # protocol violations noticed by the mock
 
 
@@ -287,18 +316,27 @@ def _land(files, message, paths):
     MOCK.files = dict(files)
     MOCK.commit_count += 1
     MOCK.commit_messages.append(message)
-    MOCK.commit_log.append({"message": message, "paths": sorted(paths)})
+    MOCK.commit_log.append({"message": message, "paths": sorted(paths),
+                            "written": sorted(paths)})
     return sha
 
 
 def _reset_repo():
     """A repository with the dataset present and empty — what the site looks
     like before its first submission, plus a file the data path never touches
-    so `base_tree` carry-over is actually observable."""
+    so `base_tree` carry-over is actually observable.
+
+    🔴 data/identity.json is deliberately NOT seeded. That is the true state of
+    the repository at the M14.1 commit — nothing has been fingerprinted yet, so
+    the file does not exist — and it makes "no identity file present" the path
+    the FIRST submission of every stage takes, rather than a special case some
+    test has to remember to construct. Every submission after the first then
+    exercises the read-back path."""
     MOCK.files = {}
     MOCK.blobs = {}
     MOCK.trees = {}
     MOCK.tree_files = {}
+    MOCK.tree_written = {}
     MOCK.commits = {}
     MOCK.head = None
     MOCK.commit_count = 0
@@ -484,7 +522,10 @@ class MockHandler(BaseHTTPRequestHandler):
                         self._send(422, {"message": "unknown blob"})
                         return
                     files[e["path"]] = text
-                self._send(201, {"sha": _build_trees(files)})
+                sha = _build_trees(files)
+                MOCK.tree_written[sha] = sorted(e["path"] for e in body.get("tree", [])
+                                                if isinstance(e.get("path"), str))
+                self._send(201, {"sha": sha})
                 return
             if rel == "/git/commits":
                 tree = body.get("tree")
@@ -535,7 +576,8 @@ class MockHandler(BaseHTTPRequestHandler):
             MOCK.commit_count += 1
             MOCK.commit_messages.append(commit["message"])
             MOCK.commit_log.append({"message": commit["message"],
-                                    "paths": sorted(paths)})
+                                    "paths": sorted(paths),
+                                    "written": MOCK.tree_written.get(commit["tree"], [])})
             self._send(200, {"ref": "refs/heads/" + MOCK_BRANCH,
                              "object": {"sha": sha}})
 
@@ -729,6 +771,23 @@ def fleet_doc(files=None):
     return _parse(files or repo_files(), FLEET_PATH)
 
 
+def identity_doc(files=None):
+    """None when the file is not there, which is a valid dataset and the state
+    every stage starts in — not a failure to be papered over with an empty
+    document."""
+    files = files or repo_files()
+    return None if IDENTITY_PATH not in files else _parse(files, IDENTITY_PATH)
+
+
+def identity_entries(files=None):
+    doc = identity_doc(files)
+    return {} if doc is None else doc.get("identities", {})
+
+
+def identity_of(sub_id, files=None):
+    return identity_entries(files).get(sub_id)
+
+
 def detail_docs(files=None):
     files = files or repo_files()
     out = {}
@@ -759,7 +818,8 @@ def check_file_arithmetic(tag):
     files = repo_files()
     try:
         errors = dataset_validate.validate(index_doc(files), fleet_doc(files),
-                                           detail_docs(files))
+                                           detail_docs(files),
+                                           identity_doc(files))
     except ContractFail:
         raise
     except Exception as exc:                      # a shape the validator cannot walk
@@ -840,7 +900,14 @@ def run_cases(xff_ip):
         check(MOCK.commit_count == 0, "400 cases must not reach storage "
                                       "(%d commits landed)" % MOCK.commit_count)
 
-    # -- case1 + case20: valid submission => 200, ONE commit, THREE files -----
+    # -- case1 + case20: valid submission => 200, ONE commit, FOUR files ------
+    # 🔴 case23 rides along here: the repository at this moment has NO
+    # data/identity.json (see _reset_repo), so this is the first-submission path
+    # over an absent identity file — the state the live repo is in at the M14.1
+    # commit. It has to create the file, not fail and not skip it.
+    check(IDENTITY_PATH not in repo_files(),
+          "case23 setup: the repository already has %s, so the absent-file path "
+          "is not the one being tested" % IDENTITY_PATH)
     payload = valid_payload()
     status, data = post(payload)
     check(status == 200, "case1: status %s, want 200 (body %r)" % (status, data))
@@ -857,12 +924,20 @@ def run_cases(xff_ip):
               "case1: %d commits, want 1" % MOCK.commit_count)
         landed = MOCK.commit_log[-1]
     detail_rel = "data/subs/%s.json" % sub_id
-    check(landed["paths"] == sorted([INDEX_PATH, FLEET_PATH, detail_rel]),
-          "🔴 case20: one submission must land the index, the fleet series and "
-          "its own detail file in ONE commit — this commit changed %r"
-          % (landed["paths"],))
+    want_files = sorted([INDEX_PATH, IDENTITY_PATH, FLEET_PATH, detail_rel])
+    check(landed["written"] == want_files,
+          "🔴 case20: one submission must land the index, the identity map, the "
+          "fleet series and its own detail file in ONE commit — this commit "
+          "wrote %r, want %r" % (landed["written"], want_files))
+    check(landed["paths"] == want_files,
+          "case20: the commit changed %r, want all four (%r)"
+          % (landed["paths"], want_files))
     check("README.md" in files and files["README.md"] == "# mock repo\n",
           "case20: the commit disturbed a file outside data/")
+    check(IDENTITY_PATH in files,
+          "🔴 case23: the first submission over a repository with no %s did not "
+          "create it — the identity was resolved against nothing and written "
+          "nowhere" % IDENTITY_PATH)
     doc = index_doc(files)
     subs = doc.get("submissions", [])
     check(doc.get("schema_version") == 2, "case1: index schema_version %r, want 2"
@@ -894,24 +969,40 @@ def run_cases(xff_ip):
     check(detail is not None, "case1: no detail file at %s" % detail_rel)
     check(detail.get("daily") == payload["daily"], "case1: detail daily mismatch")
     check(detail.get("totals") == payload["totals"], "case1: detail totals mismatch")
-    # M13 adds exactly two server-generated keys, and `updated_at` only
-    # once a row has actually been merged into.
+    # M14.1: `identity` is no longer one of them — it lives in its own file.
+    # The index row is now exactly the fields a reader uses, and `updated_at`
+    # appears only once a row has actually been merged into.
     extra = set(stored) - {"id", "submitted_at", "nickname", "plan", "client",
                            "concurrent_sessions", "period_start", "period_end",
-                           "totals", "daily_days", "detail", "script_version",
-                           "identity"}
+                           "totals", "daily_days", "detail", "script_version"}
     check(not extra, "case1: undefined fields stored: %r" % extra)
+    check("identity" not in stored,
+          "🔴 case1: the index row still carries the identity block — those "
+          "digests are ~70%% of a fingerprinted row and every visitor downloads "
+          "the index")
     check("updated_at" not in stored,
           "case1: a first submission is marked as updated")
     # This payload carries no anchors, so the API falls back to layer 2 and
-    # issues a token. Only its hash may be stored.
+    # issues a token. Only its hash may be stored, and now only in data/identity.json.
     check(re.fullmatch(r"[0-9a-f]{32}", data.get("token", "")),
           "case1: no link token issued to a submission with no anchors (%r)"
           % data.get("token"))
     check(data.get("merged") is False, "case1: a first submission reported a merge")
-    check(stored["identity"].get("token_hash") ==
+    ident_doc = identity_doc(files)
+    check(ident_doc is not None and ident_doc.get("schema_version") == 1,
+          "case1: %s schema_version %r, want 1"
+          % (IDENTITY_PATH, (ident_doc or {}).get("schema_version")))
+    entry = identity_of(sub_id, files)
+    check(entry is not None,
+          "case1: no identity entry for %s in %s" % (sub_id, IDENTITY_PATH))
+    check(entry.get("token_hash") ==
           hashlib.sha256(("cco.token.v1|" + data["token"]).encode("utf-8")).hexdigest(),
-          "case1: identity.token_hash is not the hash of the issued token")
+          "case1: identity token_hash is not the hash of the issued token")
+    check("anchor_hashes" not in entry,
+          "case1: an anchorless submission invented anchors: %r" % entry)
+    check(list(identity_entries(files)) == [sub_id],
+          "case1: %s holds entries for %r, want only the one row that exists"
+          % (IDENTITY_PATH, list(identity_entries(files))))
     check(data["token"] not in leak_blob(),
           "case1: the token itself was written into the public dataset")
     want_msg = ("data: submission %s — c***, 2026-08-01~2026-08-15, "
@@ -924,7 +1015,9 @@ def run_cases(xff_ip):
     check_file_arithmetic("case1")
     print("PASS case1 valid submit -> 200, index + detail + commit message verified")
     print("PASS case20 one submission = one commit carrying %s"
-          % ", ".join(landed["paths"]))
+          % ", ".join(landed["written"]))
+    print("PASS case23 first submission with no %s present -> file created"
+          % IDENTITY_PATH)
 
     # -- case7: the ref moves under us => re-read + single retry => 200 ------
     # The mock lands a REAL third-party commit at the moment of the first ref
@@ -963,8 +1056,22 @@ def run_cases(xff_ip):
     # the entity. A raw "<" here would be an injection into the public JSON.
     check(subs[-1].get("nickname") == "&lt;***",
           "case7: nickname not masked+escaped: %r" % subs[-1].get("nickname"))
+    # 🔴 case24: the third party's row carries no identity at all, which is the
+    # legitimate "explicitly none" state — the same one the row committed in
+    # data/ is in. The retry rebuilt data/identity.json against the fresh read,
+    # so it must have kept the entries for the rows that have one and invented
+    # nothing for the row that does not. check_file_arithmetic above would have
+    # rejected an entry keyed by a row the index does not list.
+    check(identity_of(FOREIGN_ID) is None,
+          "🔴 case24: an identity entry was invented for a row that has no "
+          "fingerprint (%r)" % identity_of(FOREIGN_ID))
+    check(sorted(identity_entries()) == sorted(i for i in ids if i != FOREIGN_ID),
+          "case24: %s keys %r, want an entry for every row except the "
+          "fingerprintless one" % (IDENTITY_PATH, sorted(identity_entries())))
     print("PASS case7 ref moved -> one re-read + retry -> 200, the third party's "
           "row survives (rows now %d)" % len(subs))
+    print("PASS case24 an index row with no identity entry is valid, and the "
+          "ref-moved retry re-resolved the identity map against the fresh read")
 
     # -- case8: GitHub 5xx => 502 storage, no retry --------------------------
     with MOCK.lock:
@@ -1181,12 +1288,19 @@ def run_identity_cases():
     stored_first = before["submissions"][0]
     check("updated_at" not in stored_first,
           "case12: a brand new row already claims to have been updated")
-    check(stored_first["identity"]["anchor_hashes"] == [stored_anchor(x) for x in a1],
-          "case12: the record does not hold the second hash of what was sent")
+    check("identity" not in stored_first,
+          "case12: the index row carries an identity block again")
+    check(identity_of(row_id)["anchor_hashes"] == [stored_anchor(x) for x in a1],
+          "case12: %s does not hold the second hash of what was sent"
+          % IDENTITY_PATH)
+    # The double-hash property, re-proven where the values now live. Scanning
+    # every public file rather than just the index: the point of M14.1 is that
+    # these moved, and a check that only looked at the index would pass for the
+    # wrong reason after the move.
     for sent in a1:
-        check(sent not in json.dumps(before),
+        check(sent not in leak_blob(),
               "case12: an anchor the client sent is stored verbatim — anyone "
-              "reading the public file could replay it")
+              "reading the public files could replay it")
 
     # A fresher scan of the same machine: 3 days overlap, 5 days are new.
     second = scan_payload("2026-06-08", 8, 200, 5, 3000, 11, anchors=a2)
@@ -1231,17 +1345,20 @@ def run_identity_cases():
     check(row["totals"]["iron_losses"] == 12,
           "case12: iron_losses %d, want 12 (7 - 6 superseded losses, + 11)"
           % row["totals"]["iron_losses"])
-    check(row["identity"]["anchor_hashes"] == [stored_anchor(x) for x in a2],
+    check(identity_of(row_id)["anchor_hashes"] == [stored_anchor(x) for x in a2],
           "case12: the stored anchors were not refreshed to the newest sample")
+    check(list(identity_entries()) == [row_id],
+          "case12: %s holds %r, want one entry for the one row"
+          % (IDENTITY_PATH, list(identity_entries())))
     with MOCK.lock:
         msg = MOCK.commit_messages[-1]
-        merge_paths = MOCK.commit_log[-1]["paths"]
+        merge_written = MOCK.commit_log[-1]["written"]
     check(msg.startswith("data: update " + row_id + " —"),
           "case12: the commit message does not say this was an update: %r" % msg)
-    check(merge_paths == sorted([INDEX_PATH, FLEET_PATH,
-                                 "data/subs/%s.json" % row_id]),
-          "case12: a MERGE must also rewrite all three files in one commit, not "
-          "%r" % (merge_paths,))
+    check(merge_written == sorted([INDEX_PATH, IDENTITY_PATH, FLEET_PATH,
+                                   "data/subs/%s.json" % row_id]),
+          "case12: a MERGE must also rewrite all four files in one commit, not "
+          "%r" % (merge_written,))
     print("PASS case12 two folder submissions, same machine -> 1 row "
           "(%s..%s, %d requests, %d daily rows)"
           % (row["period_start"], row["period_end"],
@@ -1257,13 +1374,16 @@ def run_identity_cases():
           % (first["totals"]["requests"] + second["totals"]["requests"],
              first["totals"]["in_ttl_losses"] + second["totals"]["in_ttl_losses"]))
 
-    # -- case13: a value copied out of the PUBLIC file changes nothing --------
-    # M14 widened what "the public file" means: the anchor hash is in the index,
-    # and the victim's daily rows are in a detail file anyone can open and read.
-    # Both are re-proven here — the replay carries a hash lifted out of the
-    # index, and the detail file has to come back byte-identical too.
-    published = row["identity"]["anchor_hashes"][0]
+    # -- case13: a value copied out of a PUBLIC file changes nothing ----------
+    # M14 widened what "the public file" means and M14.1 moved the piece this
+    # case is about. data/identity.json is in the same public repository as
+    # everything else — it is not hidden, not restricted, and anyone may open it
+    # — so the replay is mounted from exactly there, and all three files an
+    # attacker could aim at must come back byte-identical: the row, its detail
+    # file, and the identity entry the hash was lifted out of.
+    published = identity_of(row_id)["anchor_hashes"][0]
     detail_before = detail_doc(row_id)
+    identity_before = identity_doc()
     replay = scan_payload("2026-07-01", 3, 9999, 0, 0, 0,
                           anchors=[published], nickname="attacker")
     status, data = submit(replay, "198.51.100.31")
@@ -1280,13 +1400,20 @@ def run_identity_cases():
           "🔴 case13: the target row CHANGED after a replay of its own published "
           "hash\n  before %r\n  after  %r" % (row, doc["submissions"][0]))
     check(detail_doc(row_id) == detail_before,
-          "🔴 case13: the target's DETAIL FILE changed after a replay of a hash "
-          "published in the index — the daily rows are public too, and a value "
-          "copied out of any public file must still modify nothing")
-    print("PASS case13 replay of a published hash -> new row, target row AND its "
-          "detail file byte-identical")
-    print("       sent anchors=[%s…] (copied from submissions.json), got id %s, "
-          "rows %d" % (published[:16], data["id"], len(doc["submissions"])))
+          "🔴 case13: the target's DETAIL FILE changed after a replay of a "
+          "published hash — the daily rows are public too, and a value copied "
+          "out of any public file must still modify nothing")
+    check(identity_of(row_id) == identity_before["identities"][row_id],
+          "🔴 case13: the target's IDENTITY ENTRY changed after a replay of the "
+          "hash lifted out of it — moving the digests to their own public file "
+          "must not have made them an overwrite key")
+    check(published not in json.dumps(identity_of(data["id"]) or {}),
+          "case13: the replayed hash was stored again under the attacker's own "
+          "id, which would make it match the victim on the next submission")
+    print("PASS case13 replay of a published hash -> new row; target row, detail "
+          "file AND identity entry all byte-identical")
+    print("       sent anchors=[%s…] (copied from %s), got id %s, rows %d"
+          % (published[:16], IDENTITY_PATH, data["id"], len(doc["submissions"])))
 
     # -- case14: server-only and malformed identity fields => 400 ------------
     bad_ip = "198.51.100.32"
@@ -1394,9 +1521,9 @@ def run_identity_cases():
           "case17: no link token was issued to a submission that cannot be "
           "fingerprinted (%r)" % token)
     doc = check_file_arithmetic("case17 first")
-    ident = doc["submissions"][0]["identity"]
-    check(ident.get("token_hash") == stored_token(token),
-          "case17: the record does not hold the hash of the issued token")
+    ident = identity_of(doc["submissions"][0]["id"])
+    check(ident is not None and ident.get("token_hash") == stored_token(token),
+          "case17: %s does not hold the hash of the issued token" % IDENTITY_PATH)
     check("anchor_hashes" not in ident,
           "case17: a paste row invented anchors: %r" % ident)
     check(token not in leak_blob(),
@@ -1424,6 +1551,10 @@ def run_identity_cases():
     check(len(doc["submissions"]) == 2,
           "case17: %d rows, want 2 (an unlinkable paste appends)"
           % len(doc["submissions"]))
+    check(sorted(identity_entries()) == sorted(r["id"] for r in doc["submissions"]),
+          "case17: %s keys %r do not match the index's rows %r"
+          % (IDENTITY_PATH, sorted(identity_entries()),
+             sorted(r["id"] for r in doc["submissions"])))
     print("PASS case17 paste path -> token issued, presented token merges, "
           "no token appends")
 
@@ -1442,10 +1573,11 @@ def run_identity_cases():
           "case18: a folder scan presenting the stored token did not adopt the "
           "paste row (%r)" % data)
     doc = check_file_arithmetic("case18 folder")
-    ident = doc["submissions"][0]["identity"]
-    check(ident["anchor_hashes"] == [stored_anchor(x) for x in a],
+    ident = identity_of(row_id)
+    check(ident is not None and ident.get("anchor_hashes") ==
+          [stored_anchor(x) for x in a],
           "case18: the adopted row did not gain the machine's fingerprint")
-    check(ident["token_hash"] == stored_token(token),
+    check(ident.get("token_hash") == stored_token(token),
           "case18: adopting the row dropped its token")
     status, data = submit(scan_payload("2026-04-10", 2, 30, 0, 0, 0, anchors=a), ip)
     data = expect_ok("case18 fingerprint only", status, data)
@@ -1600,6 +1732,112 @@ def run_fleet_cases():
         check(not MOCK.errors, "mock observed protocol violations: %r" % MOCK.errors)
 
 
+# ---------------------------------------------------------------------------
+# M14.1: the two sides of index <-> identity, one of which no live path can reach
+# ---------------------------------------------------------------------------
+
+def _mini_dataset(identities):
+    """The smallest dataset that validates, plus whatever identity map is being
+    tested against it. One row, one day, one detail file."""
+    sub_id = "sub-20260824115135-75fb"
+    totals = {"requests": 10, "in_ttl_losses": 2, "iron_losses": 1,
+              "wasted_tokens": 40}
+    daily = [{"date": "2026-08-24", "requests": 10, "losses": 2,
+              "wasted_tokens": 40}]
+    index = {"schema_version": 2, "submissions": [{
+        "id": sub_id, "submitted_at": "2026-08-24", "nickname": "anonymous",
+        "plan": "unknown", "client": "unknown", "concurrent_sessions": "unknown",
+        "period_start": "2026-08-24", "period_end": "2026-08-24",
+        "totals": totals, "daily_days": 1,
+        "detail": "data/subs/%s.json" % sub_id, "script_version": "web-1.0"}]}
+    fleet = {"schema_version": 1, "days": [dict(daily[0], machines=1)]}
+    details = {sub_id: {"schema_version": 1, "id": sub_id,
+                        "period_start": "2026-08-24", "period_end": "2026-08-24",
+                        "totals": totals, "daily": daily}}
+    doc = None if identities is None else {"schema_version": 1,
+                                           "identities": identities}
+    return sub_id, index, fleet, details, doc
+
+
+def run_validator_cases():
+    """The index<->identity relation is deliberately ASYMMETRIC, and only one
+    half of it is reachable from the write path. A row with no entry happens for
+    real (case24, and the row committed in data/). An entry with no row cannot
+    be produced by any sequence of submissions — the map is derived from the
+    index that was just written — so the only way to prove the validator would
+    catch it is to hand it one. Needs no server, so it runs before wrangler
+    boots and fails in seconds rather than minutes."""
+    anchors = [stored_anchor("x%d" % i) for i in range(16)]
+
+    def errors_for(identities):
+        _sid, index, fleet, details, doc = _mini_dataset(identities)
+        return dataset_validate.validate(index, fleet, details, doc)
+
+    sub_id, _i, _f, _d, _doc = _mini_dataset({})
+
+    ok_cases = [
+        ("no identity file at all (the pre-M14.1 repository)", None),
+        ("a file with no entries, and a row that has none", {}),
+        ("a row with a full 16-anchor fingerprint",
+         {sub_id: {"anchor_hashes": anchors}}),
+        ("a row with a token hash only (the paste path)",
+         {sub_id: {"token_hash": stored_token("0" * 32)}}),
+        ("a row with both",
+         {sub_id: {"anchor_hashes": anchors, "token_hash": stored_token("1" * 32)}}),
+    ]
+    for why, identities in ok_cases:
+        errs = errors_for(identities)
+        check(not errs, "validator: rejected a legitimate dataset (%s): %r"
+              % (why, errs))
+
+    orphan = "sub-20260101000000-beef"
+    bad_cases = [
+        ("an entry keyed by an id the index has no row for",
+         {orphan: {"anchor_hashes": anchors}}, "identity/%s" % orphan),
+        ("an entry that is empty", {sub_id: {}}, "neither anchor_hashes"),
+        ("an anchor that is not a sha-256 digest",
+         {sub_id: {"anchor_hashes": ["nope"]}}, "lowercase sha-256"),
+        ("an uppercase anchor digest",
+         {sub_id: {"anchor_hashes": ["A" * 64]}}, "lowercase sha-256"),
+        ("more than 16 anchors",
+         {sub_id: {"anchor_hashes": anchors + [stored_anchor("y")]}}, "max 16"),
+        ("a token hash that is not a digest",
+         {sub_id: {"token_hash": "0" * 31}}, "token_hash"),
+        ("an undefined field inside an entry",
+         {sub_id: {"anchor_hashes": anchors, "anchors": ["raw"]}}, "undefined field"),
+        ("an entry that is not an object", {sub_id: "deadbeef"}, "not an object"),
+    ]
+    for why, identities, needle in bad_cases:
+        errs = errors_for(identities)
+        check(errs, "🔴 validator: accepted a broken dataset (%s)" % why)
+        check(any(needle in e for e in errs),
+              "validator (%s): no violation mentions %r: %r" % (why, needle, errs))
+
+    # The index row itself must not carry the block back.
+    _sid, index, fleet, details, doc = _mini_dataset({})
+    index["submissions"][0]["identity"] = {"anchor_hashes": anchors}
+    errs = dataset_validate.validate(index, fleet, details, doc)
+    check(any("still carries an identity block" in e for e in errs),
+          "🔴 validator: an index row carrying the identity block again was "
+          "accepted: %r" % errs)
+
+    # A malformed document, as opposed to a malformed entry.
+    _sid, index, fleet, details, _doc = _mini_dataset({})
+    for why, doc, needle in (
+            ("wrong schema_version", {"schema_version": 2, "identities": {}},
+             "schema_version"),
+            ("identities is not an object",
+             {"schema_version": 1, "identities": []}, "not an object"),
+            ("not a JSON object", ["nope"], "not a JSON object")):
+        errs = dataset_validate.validate(index, fleet, details, doc)
+        check(any(needle in e for e in errs),
+              "validator (%s): no violation mentions %r: %r" % (why, needle, errs))
+
+    print("PASS validator %d valid + %d invalid identity datasets, including "
+          "'index row with no identity' (valid) and 'identity entry with no "
+          "index row' (error)" % (len(ok_cases), len(bad_cases) + 4))
+
+
 def main():
     try:
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -1626,6 +1864,14 @@ def main():
     if npx is None:
         print("FATAL: npx not found (node.js install required)")
         return 2
+
+    # Pure-python, no server: fail in seconds if the validator itself is wrong,
+    # rather than after a four-minute wrangler boot.
+    try:
+        run_validator_cases()
+    except ContractFail as exc:
+        print("CONTRACT_FAIL: %s" % exc)
+        return 1
 
     _reset_repo()   # a repository that exists, with an empty dataset in it
     mock_server, mock_port = start_mock()

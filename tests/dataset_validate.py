@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Cross-file arithmetic validator for the split public dataset (M14).
+"""Cross-file consistency validator for the split public dataset (M14, M14.1).
 
 Until M14 the dataset was one file, and "does this add up" was a question you
-could answer by reading it. The split into an index, a fleet-wide daily series
-and one detail file per submission buys bounded downloads at the cost of that
-property: three files can now disagree with each other while each one looks
-internally fine.
+could answer by reading it. The split into an index, a fleet-wide daily series,
+one detail file per submission and (M14.1) an identity map buys bounded
+downloads at the cost of that property: four files can now disagree with each
+other while each one looks internally fine.
 
 This module is the answer to that. It is the single definition of what "the
 dataset adds up" means, and it has two callers on purpose:
@@ -21,8 +21,19 @@ checked against is a validator that drifts.
 What is checked (all of it is arithmetic a reader could redo by hand):
 
   index      every row has a well-formed id, a detail path derived from that
-             id, no `daily` array of its own, and totals whose iron subset
-             cannot exceed the in-TTL count it is a subset of.
+             id, no `daily` array of its own, no `identity` block of its own,
+             and totals whose iron subset cannot exceed the in-TTL count it is
+             a subset of.
+  index↔identity
+             every index row has an identity entry OR EXPLICITLY NONE — a row
+             with no fingerprint is a legitimate state, not a defect, and the
+             row committed before M13 is exactly that. What is not legitimate
+             is an identity entry keyed by an id the index does not list: that
+             is a fingerprint belonging to no row, which means either a row was
+             dropped without its identity or the write path invented a key. An
+             entry that exists must also be well formed — at most 16 anchor
+             digests, each a lowercase sha-256, a token hash of the same shape,
+             and at least one of the two present.
   index↔detail
              exactly one detail file per row and no orphans; the detail file
              names the row it belongs to; the row's totals are EXACTLY the sum
@@ -49,11 +60,17 @@ DATA_DIR = os.path.join(SITE_DIR, "data")
 
 INDEX_PATH = "data/submissions.json"
 DAILY_PATH = "data/daily.json"
+IDENTITY_PATH = "data/identity.json"
 SUBS_DIR = "data/subs"
 
 INDEX_SCHEMA_VERSION = 2
 DAILY_SCHEMA_VERSION = 1
 DETAIL_SCHEMA_VERSION = 1
+IDENTITY_SCHEMA_VERSION = 1
+
+# Mirrors MAX_ANCHORS / HEX64_RE in functions/api/submit.js.
+MAX_ANCHORS = 16
+HEX64_RE = re.compile(r"^[0-9a-f]{64}$")
 
 # Mirrors SUB_ID_RE in functions/api/submit.js. The id becomes a file NAME, so
 # anything outside this alphabet is refused rather than sanitised: a lenient id
@@ -81,10 +98,66 @@ def _is_day(v):
     return isinstance(v, str) and bool(DATE_RE.match(v))
 
 
-def validate(index_doc, daily_doc, details):
-    """index_doc: parsed data/submissions.json
-       daily_doc: parsed data/daily.json
-       details:   {submission id -> parsed data/subs/<id>.json}
+def _identity_entries(identity_doc, err):
+    """The {id -> entry} map out of data/identity.json, or None if the document
+    itself is unusable. `None` for the whole document means the file is absent,
+    which is the pre-M14.1 state and is valid: nobody has an identity yet."""
+    if identity_doc is None:
+        return {}
+    if not isinstance(identity_doc, dict):
+        err.append("identity: not a JSON object")
+        return None
+    if identity_doc.get("schema_version") != IDENTITY_SCHEMA_VERSION:
+        err.append("identity: schema_version %r, want %d"
+                   % (identity_doc.get("schema_version"), IDENTITY_SCHEMA_VERSION))
+    entries = identity_doc.get("identities")
+    if not isinstance(entries, dict):
+        err.append("identity: identities is not an object")
+        return None
+    return entries
+
+
+def _check_identity_entry(sub_id, entry, err):
+    """An entry that exists has to be usable as a fingerprint. A malformed one
+    is worse than none: it silently stops matching, and the machine it belonged
+    to quietly opens a second row on its next submission — the exact double
+    count M13 removed."""
+    if not isinstance(entry, dict):
+        err.append("identity/%s: entry is not an object" % sub_id)
+        return
+    extra = set(entry) - {"anchor_hashes", "token_hash"}
+    if extra:
+        err.append("identity/%s: undefined field(s) %s"
+                   % (sub_id, ", ".join(sorted(extra))))
+    anchors = entry.get("anchor_hashes")
+    if "anchor_hashes" in entry:
+        if not isinstance(anchors, list) or not anchors:
+            err.append("identity/%s: anchor_hashes %r is not a non-empty array"
+                       % (sub_id, anchors))
+            anchors = []
+        elif len(anchors) > MAX_ANCHORS:
+            err.append("identity/%s: %d anchor hashes, max %d"
+                       % (sub_id, len(anchors), MAX_ANCHORS))
+        for h in anchors if isinstance(anchors, list) else []:
+            if not isinstance(h, str) or not HEX64_RE.match(h):
+                err.append("identity/%s: %r is not a lowercase sha-256 digest"
+                           % (sub_id, h))
+    if "token_hash" in entry:
+        th = entry.get("token_hash")
+        if not isinstance(th, str) or not HEX64_RE.match(th):
+            err.append("identity/%s: token_hash %r is not a lowercase sha-256 "
+                       "digest" % (sub_id, th))
+    if not entry.get("anchor_hashes") and not entry.get("token_hash"):
+        err.append("identity/%s: the entry holds neither anchor_hashes nor a "
+                   "token_hash — an empty entry says 'this row's fingerprint "
+                   "was lost', which is not the same as having none" % sub_id)
+
+
+def validate(index_doc, daily_doc, details, identity_doc=None):
+    """index_doc:    parsed data/submissions.json
+       daily_doc:    parsed data/daily.json
+       details:      {submission id -> parsed data/subs/<id>.json}
+       identity_doc: parsed data/identity.json, or None when the file is absent
        Returns a list of human-readable violations; empty means valid."""
     err = []
 
@@ -96,6 +169,8 @@ def validate(index_doc, daily_doc, details):
     rows = index_doc.get("submissions")
     if not isinstance(rows, list):
         return err + ["index: submissions is not an array"]
+
+    identities = _identity_entries(identity_doc, err)
 
     seen_ids = set()
     # date -> [summed requests, losses, wasted, machines]
@@ -118,6 +193,19 @@ def validate(index_doc, daily_doc, details):
             err.append("index/%s: the index row still carries a daily array — "
                        "the per-day detail belongs in %s"
                        % (sub_id, detail_path(sub_id)))
+        # M14.1. The index is the file every visitor downloads, and the digests
+        # are 70.7% of a fingerprinted row while being the one part of it no
+        # reader ever looks at. A row that carries them again is a regression
+        # in what a visitor pays to load the page.
+        if "identity" in row:
+            err.append("index/%s: the index row still carries an identity block "
+                       "— the anchor digests and the token hash belong in %s"
+                       % (sub_id, IDENTITY_PATH))
+        # An index row with NO identity entry is legitimate and deliberately not
+        # an error: sub-20260824115135-75fb predates M13 and has no fingerprint
+        # to carry. Only a malformed entry, or an entry with no row, is a fault.
+        if identities is not None and sub_id in identities:
+            _check_identity_entry(sub_id, identities[sub_id], err)
         want_detail = detail_path(sub_id)
         if row.get("detail") != want_detail:
             err.append("index/%s: detail %r, want %r"
@@ -231,6 +319,16 @@ def validate(index_doc, daily_doc, details):
     for oid in orphans:
         err.append("%s: a detail file no index row points at" % detail_path(oid))
 
+    # 🔴 The asymmetry is the point. A row with no identity entry is fine; an
+    # entry with no row is not. The write path derives this file from the index
+    # it just wrote, so an orphan here means either a row was dropped without
+    # its fingerprint or a key was invented — and a fingerprint that belongs to
+    # no row is an overwrite key aimed at nothing, sitting in a public file.
+    if identities is not None:
+        for oid in sorted(set(identities) - seen_ids):
+            err.append("identity/%s: an identity entry the index has no row for"
+                       % oid)
+
     # -- the fleet series --------------------------------------------------
     if not isinstance(daily_doc, dict):
         return err + ["daily: not a JSON object"]
@@ -287,6 +385,11 @@ def _read_json(path):
 def load_from_disk(site_dir=SITE_DIR):
     index_doc = _read_json(os.path.join(site_dir, "data", "submissions.json"))
     daily_doc = _read_json(os.path.join(site_dir, "data", "daily.json"))
+    # Absent is valid and is not turned into an empty document here: the
+    # validator is told "there is no file", not "there is a file saying nobody
+    # has an identity", because only one of those two is the truth on disk.
+    identity_path = os.path.join(site_dir, "data", "identity.json")
+    identity_doc = _read_json(identity_path) if os.path.isfile(identity_path) else None
     details = {}
     subs_dir = os.path.join(site_dir, "data", "subs")
     if os.path.isdir(subs_dir):
@@ -294,7 +397,7 @@ def load_from_disk(site_dir=SITE_DIR):
             if not name.endswith(".json"):
                 continue
             details[name[:-5]] = _read_json(os.path.join(subs_dir, name))
-    return index_doc, daily_doc, details
+    return index_doc, daily_doc, details, identity_doc
 
 
 def main():
@@ -303,11 +406,11 @@ def main():
     except AttributeError:
         pass
     try:
-        index_doc, daily_doc, details = load_from_disk()
+        index_doc, daily_doc, details, identity_doc = load_from_disk()
     except (OSError, ValueError) as exc:
         print("FATAL: could not read the dataset: %s" % exc)
         return 2
-    errors = validate(index_doc, daily_doc, details)
+    errors = validate(index_doc, daily_doc, details, identity_doc)
     if errors:
         print("DATASET_INVALID: %d violation(s)" % len(errors))
         for e in errors:
@@ -316,12 +419,18 @@ def main():
     rows = index_doc["submissions"]
     days = daily_doc["days"]
     total_daily_rows = sum(len(d["daily"]) for d in details.values())
+    entries = (identity_doc or {}).get("identities", {})
+    without = [r["id"] for r in rows if r["id"] not in entries]
     print("index      %s: %d submission(s)" % (INDEX_PATH, len(rows)))
     print("fleet      %s: %d calendar day(s)%s"
           % (DAILY_PATH, len(days),
              ", %s..%s" % (days[0]["date"], days[-1]["date"]) if days else ""))
     print("detail     %s/: %d file(s), %d daily row(s) in total"
           % (SUBS_DIR, len(details), total_daily_rows))
+    print("identity   %s: %s, %d entr(y/ies), %d row(s) with none"
+          % (IDENTITY_PATH,
+             "absent" if identity_doc is None else "present",
+             len(entries), len(without)))
     print("DATASET_OK")
     return 0
 

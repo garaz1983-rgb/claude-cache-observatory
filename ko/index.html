@@ -507,7 +507,7 @@ a{color:inherit}
 <section id="secSubs">
   <h2>제출 목록 <span class="badge real h2-badge">실제 제출 데이터</span></h2>
   <p class="desc">제출별 집계 합계. 시각·세션 ID·파일 경로는 없다. 스키마 차원에서 담을 수 없다. 닉네임은 마스킹해서 저장하므로, 본인이 제출한 행은 이 브라우저에 남은 기록으로 표시한다. 열 제목을 누르면 정렬된다. 화면에 보이는 행 순서만 바뀌고 이 페이지의 다른 것은 아무것도 바뀌지 않는다.</p>
-  <p class="desc">마지막 열은 그 행의 일별 원본 파일을 링크한다. 행의 합계가 곧 그 파일의 합이므로 산수를 한 행씩 따로 검증할 수 있다. <a href="../data/submissions.json">색인</a>(이 표), <a href="../data/daily.json">일자별 시계열</a>(위 그래프), 그리고 기계당 상세 파일 1개다. 이 페이지가 내려받는 건 앞의 둘뿐이고 상세 파일은 절대 자동으로 받지 않는다. 여는 건 읽는 사람의 선택이다.</p>
+  <p class="desc">마지막 열은 그 행의 일별 원본 파일을 링크한다. 행의 합계가 곧 그 파일의 합이므로 산수를 한 행씩 따로 검증할 수 있다. <a href="../data/submissions.json">색인</a>(이 표), <a href="../data/daily.json">일자별 시계열</a>(위 그래프), 그리고 기계당 상세 파일 1개다. 이 페이지가 내려받는 건 앞의 둘뿐이고 상세 파일은 절대 자동으로 받지 않는다. 여는 건 읽는 사람의 선택이다. <a href="../data/identity.json">지문 파일</a>도 마찬가지다. 공개돼 있고 여기서 링크하지만 받지는 않는다.</p>
   <div class="card tbl-scroll">
     <table class="subs" id="subsTable">
       <thead><tr>
@@ -553,9 +553,10 @@ a{color:inherit}
         <li><span class="mono">assets/parse.js</span>: 유실 판정 엔진(브라우저에서 실행). CLI <span class="mono">scripts/check_cache_loss.py</span>와 같은 규칙이고, 두 결과가 같은지 자동 테스트로 대조한다.</li>
         <li><span class="mono">assets/charts.js</span>: 그래프 그리기 전용. 판정 계산은 하지 않는다.</li>
         <li><span class="mono">assets/store.js</span>: 진단 페이지의 선택적 로컬 저장. 브라우저 저장 공간만 쓰고 네트워크는 쓰지 않으며, 확인했을 때만 동작한다.</li>
-        <li><span class="mono">functions/api/submit.js</span>: 서버에서 도는 유일한 코드. 제출 버튼을 눌렀을 때만 호출되고, 스키마 검증 후 아래 세 데이터 파일을 <b>한</b> 커밋에 함께 쓴다.</li>
+        <li><span class="mono">functions/api/submit.js</span>: 서버에서 도는 유일한 코드. 제출 버튼을 눌렀을 때만 호출되고, 스키마 검증 후 아래 네 데이터 파일을 <b>한</b> 커밋에 함께 쓴다.</li>
         <li><a class="mono" href="../data/submissions.json">data/submissions.json</a>: 색인. 제출한 기계 1대가 1행이고 합계만 담는다. 이 페이지가 읽는다.</li>
         <li><a class="mono" href="../data/daily.json">data/daily.json</a>: 일자별 시계열. 달력 하루가 1행이고 모든 기계를 합산한 값이다. 그래프가 이걸 읽고, 이 페이지가 받는 파일은 이 둘뿐이다.</li>
+        <li><a class="mono" href="../data/identity.json">data/identity.json</a>: 기계 지문. 해시된 anchor와 링크 토큰 해시를 제출 id별로 담는다. <b>다른 파일과 똑같이 공개돼 있고 이 링크로 바로 열린다. 이 페이지가 내려받지 않을 뿐이다.</b> 예전에는 색인 행 안에 들어 있었고 지문 붙은 행 용량의 약 70%를 차지해서 모든 방문자가 그 무게를 같이 받았다. 빼낸 건 페이지를 가볍게 한 것이지 데이터를 감춘 게 아니다. 저장되는 값은 두 번 해시한 값이라 여기서 복사한 값으로는 아무것도 맞출 수 없다.</li>
         <li><span class="mono">data/subs/&lt;id&gt;.json</span>: 제출 1건당 1개 파일. 그 기계의 일별 원본이 들어 있다. <b>제출 목록의 모든 행에서 링크되지만 이 페이지가 내려받지는 않는다.</b> 색인 행의 합계는 그 파일의 합과 정확히 같고, <span class="mono">data/daily.json</span>은 모든 상세 파일의 합과 정확히 같다. repo의 <span class="mono">tests/dataset_validate.py</span>가 둘 다 다시 검산한다.</li>
         <li><span class="mono">wrangler.toml</span>: 서버 설정도 repo에 공개. 숨겨진 백엔드가 없다.</li>
       </ul>
@@ -591,11 +592,23 @@ a{color:inherit}
 <script src="../assets/demo.js"></script>
 <script>
 "use strict";
-/* ===== 이 페이지가 내려받는 것 (M14) =====================================
-   언제나 정확히 두 파일이다. 색인은 제출한 기계 1대당 1행이고 일별 행은 하나도
-   담지 않는다(실측: 지문 붙은 행 1,901바이트, 지문 없는 행 508바이트). 일자별
-   시계열은 몇 대가 보고했든 달력 하루당 96바이트 1행이다. 둘 중 어느 쪽도 다른 쪽 때문에 커지지 않고, 헤드라인
-   숫자 넷을 읽자고 남의 일별 이력 전체를 내려받는 일도 없다.
+/* ===== 이 페이지가 내려받는 것 (M14, M14.1) ==============================
+   언제나 정확히 두 파일이다. data/submissions.json과 data/daily.json이다.
+   색인은 제출한 기계 1대당 1행이고 일별 행은 하나도 담지 않는다. 일자별
+   시계열은 몇 대가 보고했든 달력 하루당 96바이트 1행이다. 둘 중 어느 쪽도 다른
+   쪽 때문에 커지지 않고, 헤드라인 숫자 넷을 읽자고 남의 일별 이력 전체를
+   내려받는 일도 없다.
+
+   M14.1은 같은 이유로 기계 지문을 색인에서 빼냈다. data/에 커밋된 행으로 실측한
+   결과 anchor 해시 16개가 붙은 행이 1,857바이트였고 그 중 1,313바이트(70.7%)가
+   해시 자체였다. 빼내면 544바이트다. 그 해시는 서버만 읽는데 모든 방문자가
+   내려받는 파일의 3분의 2를 차지하고 있었다. 지금은 data/identity.json에 있고
+   이 페이지는 그 파일을 받지 않는다.
+
+   🔴 이건 용량 문제이지 비공개로 바꾼 게 아니다. data/identity.json도 같은 공개
+   저장소에 있고 누구나 열 수 있다. 아래 FAQ에 그렇게 적혀 있고, 여기 어떤 문구도
+   그 반대로 읽히게 쓰면 안 된다.
+
    제출별 상세는 data/subs/<id>.json에 있고 링크만 한다. 자동으로 받지 않는다.
    각 행의 "일별 원본" 링크가 감사 경로다. 의도한 선택이고, 이 페이지에는 남의
    일별 데이터를 보여주는 뷰어가 없다. */

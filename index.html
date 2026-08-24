@@ -534,7 +534,7 @@ a{color:inherit}
 <section id="secSubs">
   <h2>Submissions <span class="badge real h2-badge">Real submissions</span></h2>
   <p class="desc">Aggregate totals per submission. No timestamps, no session IDs, no file paths; the schema cannot carry them. Nicknames are stored masked, so the row you submitted is marked from this browser's own record instead. Click a column header to sort: it reorders the rows on screen and changes nothing else on the page.</p>
-  <p class="desc">The last column links each row's own daily rows. That file is what the row's totals are the sum of, so the arithmetic on this page is checkable one row at a time: <a href="data/submissions.json">the index</a> (these rows), <a href="data/daily.json">the fleet series</a> (the chart above), and one detail file per machine. This page downloads the first two and never the third — opening one is your choice, not the page's.</p>
+  <p class="desc">The last column links each row's own daily rows. That file is what the row's totals are the sum of, so the arithmetic on this page is checkable one row at a time: <a href="data/submissions.json">the index</a> (these rows), <a href="data/daily.json">the fleet series</a> (the chart above), and one detail file per machine. This page downloads the first two and never the third — opening one is your choice, not the page's. The same goes for <a href="data/identity.json">the fingerprint map</a>: public, linked here, and not fetched.</p>
   <div class="card tbl-scroll">
     <table class="subs" id="subsTable">
       <thead><tr>
@@ -580,9 +580,10 @@ a{color:inherit}
         <li><span class="mono">assets/parse.js</span> — the scoring engine, running in your browser. Same rules as the CLI <span class="mono">scripts/check_cache_loss.py</span>, with an automated test comparing both outputs.</li>
         <li><span class="mono">assets/charts.js</span> — drawing only. It does no scoring.</li>
         <li><span class="mono">assets/store.js</span> — the check page's optional local save. Browser storage only, never the network, and only after you confirm.</li>
-        <li><span class="mono">functions/api/submit.js</span> — the only code that runs on a server. Called only when you press submit; it validates the schema and commits all three data files below in <b>one</b> commit.</li>
+        <li><span class="mono">functions/api/submit.js</span> — the only code that runs on a server. Called only when you press submit; it validates the schema and commits all four data files below in <b>one</b> commit.</li>
         <li><a class="mono" href="data/submissions.json">data/submissions.json</a> — the index: one row per submitting machine, totals only. This page reads it.</li>
         <li><a class="mono" href="data/daily.json">data/daily.json</a> — the fleet series: one row per calendar day, summed across every machine. This page reads it for the chart, and it is the only other file it fetches.</li>
+        <li><a class="mono" href="data/identity.json">data/identity.json</a> — the machine fingerprints: hashed anchors and link-token hashes, keyed by submission id. <b>Public like everything else here and open in the link — it is simply not downloaded by this page.</b> It used to sit inside each index row and was about 70% of a fingerprinted row's bytes, which every visitor paid for; moving it out made the page lighter, not the data more hidden. What is stored is a second hash, so a value copied out of it matches nothing.</li>
         <li><span class="mono">data/subs/&lt;id&gt;.json</span> — one file per submission, holding that machine's daily rows. <b>Linked from every row of the submission list, never downloaded by this page.</b> An index row's totals are exactly the sum of its own file, and <span class="mono">data/daily.json</span> is exactly the sum across all of them; <span class="mono">tests/dataset_validate.py</span> in the repo re-checks both.</li>
         <li><span class="mono">wrangler.toml</span> — even the deployment configuration is public: there is no hidden backend.</li>
       </ul>
@@ -619,12 +620,24 @@ a{color:inherit}
 <script src="assets/demo.js"></script>
 <script>
 "use strict";
-/* ===== What this page downloads (M14) ====================================
-   Exactly two files, ever. The index carries one row per submitting machine
-   (measured 1,901 bytes with a fingerprint, 508 without) and no per-day rows at
-   all; the fleet series carries one 96-byte row per calendar DATE no matter how
-   many machines report it. Neither grows with the other, and a visitor is never
-   made to download somebody else's daily history to read four headline numbers.
+/* ===== What this page downloads (M14, M14.1) =============================
+   Exactly two files, ever: data/submissions.json and data/daily.json.
+   The index carries one row per submitting machine and no per-day rows at all;
+   the fleet series carries one 96-byte row per calendar DATE no matter how many
+   machines report it. Neither grows with the other, and a visitor is never made
+   to download somebody else's daily history to read four headline numbers.
+
+   M14.1 took the machine fingerprint out of the index for the same reason.
+   Measured on the row committed in data/: 1,857 bytes once it carried 16 anchor
+   digests, of which 1,313 (70.7%) were the digests themselves, against 544
+   without them. Those digests are read by the server and by nobody else, so the
+   file every visitor downloads was two thirds material no reader ever looks at.
+   They now live in data/identity.json, which this page does NOT fetch.
+
+   🔴 That was a size change, not a privacy change. data/identity.json is in the
+   same public repository as everything else and anyone can open it; the FAQ
+   below says so, and nothing here should be worded to suggest otherwise.
+
    The per-submission detail lives in data/subs/<id>.json and is LINKED, not
    fetched: the row's own "daily detail" link is the audit path. That is a
    deliberate choice — the page has no viewer for another machine's days. */

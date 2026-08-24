@@ -4,19 +4,20 @@
 Targets:
   - assets/parse.js          — judged by tests/parity_check.py (M01..M15, M22)
   - functions/api/submit.js  — judged by tests/submit_contract_test.py
-                               (S16..S21, S23..S24, S39..S47, S52..S62)
+                               (S16..S21, S23..S24, S39..S47, S52..S67)
   - assets/localtime.js      — judged by tests/localtime_test.py (L25..L28)
   - check.html, ko/check.html — judged by tests/localtime_test.py
                                (C29..C30, C48..C51)
   - assets/identity.js       — judged by tests/identity_test.py (I34..I38)
 
-M14 added the S52..S62 block. Those guard the split of the public dataset into
-an index, a fleet-wide daily series and one detail file per submission, written
-as ONE commit through the Git Data API. Two properties there have no production
-check behind them: nothing recomputes the fleet series from scratch on the live
-path (it is a delta, on purpose — recomputing it would restore the cost the
-milestone removed), and nothing re-reads a commit to confirm all three files
-were in it. Both therefore have to be proven by mutants that die.
+M14 added the S52..S62 block and M14.1 the S63..S67 one. Those guard the split
+of the public dataset into an index, an identity map, a fleet-wide daily series
+and one detail file per submission, written as ONE commit through the Git Data
+API. Two properties there have no production check behind them: nothing
+recomputes the fleet series from scratch on the live path (it is a delta, on
+purpose — recomputing it would restore the cost the milestone removed), and
+nothing re-reads a commit to confirm all four files were in it. Both therefore
+have to be proven by mutants that die.
 
 M13 added the identity target and the S39..S47 block. Those two groups guard an
 AUTHORISATION surface that did not exist before: matchIndex decides which
@@ -251,7 +252,7 @@ MUTATIONS = [
      "const want = new Set(anchorHashes);",
      "const want = { has: function () { return true; } };", "contract"),
     ("S41_token_match_disabled", SUBMIT_JS_REL,
-     "if (storedTokenHash(subs[i]) === tokenHash) return i;",
+     "if (storedTokenHash(identityEntry(identities, subs[i] && subs[i].id)) === tokenHash) return i;",
      "if (false) return i;", "contract"),
     ("S42_anchor_stored_unhashed", SUBMIT_JS_REL,
      "anchorHashes.push(await sha256Hex(ANCHOR_STORE_PREFIX + anchors[i]));",
@@ -336,6 +337,47 @@ MUTATIONS = [
     ("S62_base_tree_dropped", SUBMIT_JS_REL,
      "body: JSON.stringify({ base_tree: state.rootTreeSha, tree: entries })",
      "body: JSON.stringify({ tree: entries })", "contract"),
+
+    # -- M14.1: the identity file (functions/api/submit.js) ------------------
+    # Moving the digests out of the index turned one field into a fourth FILE,
+    # and a file has three ways to go wrong that a field did not: it can fail to
+    # be written, fail to be read, or be read in a way that quietly resolves
+    # every submitter as a stranger. Each of those silently un-does M13 — the
+    # machine that already has a row opens a second one — while every response
+    # stays 200 and every file still parses. S63..S67 are those failures.
+    #
+    # S65 is the regression this milestone exists to prevent: putting the block
+    # back on the index row. It stays a 200, the dataset still adds up
+    # arithmetically, and the only thing that changes is that every visitor
+    # downloads 1,313 bytes per fingerprinted row again — so nothing but an
+    # explicit check can catch it, which is why the validator gained one.
+    ("S63_identity_file_not_written", SUBMIT_JS_REL,
+     "      { path: IDENTITY_PATH,\n"
+     "        text: serializeIdentity({ schema_version: IDENTITY_SCHEMA_VERSION,\n"
+     "                                  identities: identities }) },",
+     '      { path: "data/.mutant2", text: "x\\n" },', "contract"),
+    ("S64_identity_lookup_disabled", SUBMIT_JS_REL,
+     "  if (!Object.prototype.hasOwnProperty.call(identities, id)) return null;",
+     "  return null;", "contract"),
+    ("S65_index_row_keeps_identity", SUBMIT_JS_REL,
+     "    const record = composeRecord(id, submittedAt, updatedAt, fields);",
+     "    const record = composeRecord(id, submittedAt, updatedAt, fields);\n"
+     "    if (identity) record.identity = identity;", "contract"),
+    ("S66_identity_absent_is_fatal", SUBMIT_JS_REL,
+     "  let identities = {};\n  if (identitySha) {",
+     "  let identities = {};\n  if (!identitySha) return null;\n  if (identitySha) {",
+     "contract"),
+    ("S67_identity_map_not_carried", SUBMIT_JS_REL,
+     "      if (carried) identities[rowId] = carried;",
+     "      void carried;", "contract"),
+    # NOT mutated: swapping the rebuild loop to walk state.identities instead of
+    # the index, which is how an "entry with no index row" would be produced.
+    # No sequence of submissions can reach it — the map is derived from the
+    # index every time, so an orphan never exists to be carried forward — and it
+    # would therefore be an equivalent mutant. A mutation list that carries one
+    # teaches the next reader to tolerate survivors. That half of the relation
+    # is proven instead by run_validator_cases() in the contract test, which
+    # hands the validator an orphan directly.
 
     ("C50_payload_drops_token", CHECK_HTML_REL,
      '  if(typeof LAST.link_token === "string" && LAST.link_token) payload.token = LAST.link_token;',
