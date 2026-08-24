@@ -1,0 +1,15 @@
+# Cloudflare Pages configuration — source of truth for bindings.
+# Declared in the repo (not the dashboard) so the full runtime surface of
+# /api/submit is publicly auditable: one KV namespace for best-effort rate
+# limiting, one plaintext var. The GitHub token is a dashboard-side secret
+# and never appears here.
+name = "claude-cache-observatory"
+compatibility_date = "2026-08-24"
+pages_build_output_dir = "."
+
+[vars]
+GITHUB_REPO = "garaz1983-rgb/claude-cache-observatory"
+
+[[kv_namespaces]]
+binding = "RATE_LIMIT"
+id = "7ae51840546247858413a3b8bca806d8"
