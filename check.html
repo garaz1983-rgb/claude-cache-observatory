@@ -53,6 +53,16 @@ header h1{font-size:1.5rem; font-weight:700; margin:0 0 4px; letter-spacing:-.01
 header .sub{color:var(--muted); font-size:.86rem; margin:0}
 header .sub .mono{font-size:.82rem}
 .notice{font-size:.85rem; margin:18px 0 0; padding:10px 14px; border-left:3px solid var(--amber); background:var(--amber-soft); border-radius:0 6px 6px 0}
+.trust-block{margin:18px 0 0; padding:14px 16px; border-left:3px solid var(--ok); background:var(--ok-soft); border-radius:0 8px 8px 0}
+.trust-block h3{margin:0 0 8px; font-size:.92rem; font-weight:700}
+.trust-block ul{margin:0; padding-left:20px; font-size:.85rem}
+.trust-block li{margin:5px 0}
+.trust-block details{margin-top:11px; border-top:1px solid var(--line); padding-top:9px}
+.trust-block summary{cursor:pointer; font-size:.82rem; font-weight:600; color:var(--muted)}
+.trust-block .map{margin:9px 0 0; font-size:.8rem}
+.trust-block .map li{margin:4px 0}
+.trust-block .map .mono{font-size:.78rem}
+.trust-block .more{margin:10px 0 0; font-size:.8rem}
 section{margin-top:28px}
 section h2{font-size:1.02rem; font-weight:700; margin:0 0 2px}
 section .desc{color:var(--muted); font-size:.85rem; margin:0 0 14px}
@@ -146,6 +156,27 @@ a{color:inherit}
 </header>
 
 <div class="notice"><b>Desktop browser required.</b> The logs live on the machine where Claude Code runs (<span class="mono">~/.claude/projects</span>); mobile browsers cannot access them.</div>
+
+<div class="trust-block">
+  <h3>Before you run it: what this page does, and what it does not</h3>
+  <ul>
+    <li><b>Your log files never leave this machine.</b> Reading, scoring and charting all happen inside this tab, and everything is gone when you close it. Running a check makes <b>zero</b> network requests: open F12 → Network and watch it yourself.</li>
+    <li><b>Nothing is sent unless you press the button in step 3.</b> Even then, all that leaves is the aggregate numbers shown to you first (daily counts and totals) plus an optional nickname. Conversation text, file paths, session IDs and timestamps are not part of the submission schema at all.</li>
+    <li><b>There is no build step.</b> The code your browser runs is the same file that sits in the repo, so you can diff view-source against GitHub line by line.</li>
+    <li><b>No login, no account.</b> The page only reads log files; it never talks to your Anthropic account or the API.</li>
+  </ul>
+  <details>
+    <summary>How this site is put together (file map)</summary>
+    <ul class="map">
+      <li><span class="mono">assets/parse.js</span> — the scoring engine. Every number on this page comes from it. It follows the same rules as the CLI <span class="mono">scripts/check_cache_loss.py</span>, and an automated test compares the two outputs.</li>
+      <li><span class="mono">assets/charts.js</span> — drawing only (charts and heatmap). It does no scoring.</li>
+      <li><span class="mono">functions/api/submit.js</span> — the only code that runs on a server. It is called only when you press submit, validates the schema, and commits to the public repo.</li>
+      <li><span class="mono">data/submissions.json</span> — the public dataset. One submission is one commit, so the whole history is auditable by anyone.</li>
+      <li><span class="mono">wrangler.toml</span> — even the server configuration lives in the repo: there is no hidden backend.</li>
+    </ul>
+    <p class="more"><a href="index.html#secMethod">Full scoring rules and trust model</a> · <a href="https://github.com/garaz1983-rgb/claude-cache-observatory">Browse the source</a></p>
+  </details>
+</div>
 
 <section>
   <h2>1 · Load your session logs</h2>

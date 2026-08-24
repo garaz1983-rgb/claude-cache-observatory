@@ -53,6 +53,16 @@ header h1{font-size:1.5rem; font-weight:700; margin:0 0 4px; letter-spacing:-.01
 header .sub{color:var(--muted); font-size:.86rem; margin:0}
 header .sub .mono{font-size:.82rem}
 .notice{font-size:.85rem; margin:18px 0 0; padding:10px 14px; border-left:3px solid var(--amber); background:var(--amber-soft); border-radius:0 6px 6px 0}
+.trust-block{margin:18px 0 0; padding:14px 16px; border-left:3px solid var(--ok); background:var(--ok-soft); border-radius:0 8px 8px 0}
+.trust-block h3{margin:0 0 8px; font-size:.92rem; font-weight:700}
+.trust-block ul{margin:0; padding-left:20px; font-size:.85rem}
+.trust-block li{margin:5px 0}
+.trust-block details{margin-top:11px; border-top:1px solid var(--line); padding-top:9px}
+.trust-block summary{cursor:pointer; font-size:.82rem; font-weight:600; color:var(--muted)}
+.trust-block .map{margin:9px 0 0; font-size:.8rem}
+.trust-block .map li{margin:4px 0}
+.trust-block .map .mono{font-size:.78rem}
+.trust-block .more{margin:10px 0 0; font-size:.8rem}
 section{margin-top:28px}
 section h2{font-size:1.02rem; font-weight:700; margin:0 0 2px}
 section .desc{color:var(--muted); font-size:.85rem; margin:0 0 14px}
@@ -146,6 +156,27 @@ a{color:inherit}
 </header>
 
 <div class="notice"><b>데스크톱 브라우저 필요.</b> 로그는 Claude Code가 실행되는 기기(<span class="mono">~/.claude/projects</span>)에 있다. 모바일 브라우저에서는 접근할 수 없다.</div>
+
+<div class="trust-block">
+  <h3>돌리기 전에: 이 페이지가 무엇을 하고, 무엇을 하지 않나</h3>
+  <ul>
+    <li><b>로그 파일은 이 기기를 떠나지 않는다.</b> 읽기·판정·그래프가 전부 이 탭 안에서 끝나고 탭을 닫으면 사라진다. 진단만 돌리면 네트워크 요청이 <b>0건</b>이다. F12 → Network 탭을 열어둔 채 실행해 직접 확인할 수 있다.</li>
+    <li><b>전송은 3번 카드의 버튼을 눌러야만 일어난다.</b> 그때 나가는 것도 화면에 미리 보여준 집계 숫자(일별 건수·합계)와 직접 입력한 닉네임뿐이다. 대화 내용·파일 경로·세션 ID·시각은 제출 스키마에 아예 없다.</li>
+    <li><b>빌드 스텝이 없다.</b> 브라우저가 실행하는 코드가 repo에 올라간 파일 그대로다. view-source와 GitHub를 한 줄씩 대조할 수 있다.</li>
+    <li><b>로그인도 계정도 없다.</b> Anthropic 계정이나 API와는 어떤 통신도 하지 않고, 로그 파일을 읽기만 한다.</li>
+  </ul>
+  <details>
+    <summary>이 사이트가 어떻게 구성돼 있나 (파일 지도)</summary>
+    <ul class="map">
+      <li><span class="mono">assets/parse.js</span>: 유실 판정 엔진. 이 페이지의 모든 숫자가 여기서 나온다. CLI <span class="mono">scripts/check_cache_loss.py</span>와 같은 규칙이며, 두 결과가 같은지 자동 테스트로 대조한다.</li>
+      <li><span class="mono">assets/charts.js</span>: 그래프·히트맵 그리기 전용. 판정 계산은 하지 않는다.</li>
+      <li><span class="mono">functions/api/submit.js</span>: 서버에서 도는 유일한 코드. 제출 버튼을 눌렀을 때만 호출되고, 스키마 검증 후 공개 repo에 커밋한다.</li>
+      <li><span class="mono">data/submissions.json</span>: 공개 집계 데이터. 제출 1건이 커밋 1건으로 남아 이력 전체를 누구나 감사할 수 있다.</li>
+      <li><span class="mono">wrangler.toml</span>: 서버 설정도 repo에 공개. 숨겨진 백엔드가 없다는 뜻이다.</li>
+    </ul>
+    <p class="more"><a href="index.html#secMethod">판정 규칙·신뢰 모델 자세히</a> · <a href="https://github.com/garaz1983-rgb/claude-cache-observatory">소스 전체 보기</a></p>
+  </details>
+</div>
 
 <section>
   <h2>1 · 세션 로그 불러오기</h2>

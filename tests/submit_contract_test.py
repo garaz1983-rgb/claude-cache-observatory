@@ -117,7 +117,12 @@ def _rm_no_follow(path):
 
 def guarded_delete_scratch(path):
     """Deletes only the path make_scratch() returned. Guards live in here:
-    temp-root whitelist + prefix + marker check + no junction following."""
+    temp-root whitelist + prefix + marker check + no junction following.
+
+    The marker is deleted last, after every other entry is gone. Windows keeps
+    wrangler's state files locked for a moment after taskkill, so the first
+    sweep can fail partway; leaving the marker until the end means the retry
+    can still prove ownership instead of being refused for a missing marker."""
     if not path:
         raise RuntimeError("refusing delete: empty path")
     real = os.path.realpath(path)
@@ -126,9 +131,16 @@ def guarded_delete_scratch(path):
         raise RuntimeError("refusing delete outside temp root: %r" % real)
     if not os.path.basename(real).startswith(SCRATCH_PREFIX):
         raise RuntimeError("refusing delete: prefix mismatch: %r" % real)
-    if not os.path.isfile(os.path.join(real, SCRATCH_MARKER)):
+    marker = os.path.join(real, SCRATCH_MARKER)
+    if not os.path.isfile(marker):
         raise RuntimeError("refusing delete: scratch marker missing: %r" % real)
-    _rm_no_follow(real)
+    with os.scandir(real) as entries:
+        children = [e.path for e in entries
+                    if os.path.basename(e.path) != SCRATCH_MARKER]
+    for child in children:
+        _rm_no_follow(child)
+    os.unlink(marker)
+    os.rmdir(real)
 
 
 # ---------------------------------------------------------------------------

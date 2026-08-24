@@ -81,6 +81,10 @@ table.subs td.crit{color:var(--crit); font-weight:600}
 details.faq{border:1px solid var(--line); border-radius:8px; background:var(--bg); margin-top:10px}
 details.faq summary{cursor:pointer; padding:10px 14px; font-weight:600; font-size:.88rem}
 details.faq .body{padding:0 14px 12px; font-size:.85rem}
+details.faq .body p{margin:0 0 8px}
+.filemap{margin:0; padding-left:20px; font-size:.83rem}
+.filemap li{margin:4px 0}
+.filemap .mono{font-size:.78rem}
 .rules{margin:0 0 14px; padding-left:20px; font-size:.88rem}
 .rules li{margin:5px 0}
 .trust-note{font-size:.85rem; margin-top:14px; padding:12px 14px; border-left:3px solid var(--ok); background:var(--ok-soft); border-radius:0 6px 6px 0}
@@ -167,8 +171,17 @@ a{color:inherit}
     <div class="trust-note">
       <b>Trust model:</b> parsing runs in <b>your browser, locally</b>: log files never leave your machine. What gets transmitted is only the aggregate numbers you explicitly approve (daily counts and totals). And because this site has <b>no build step</b>, the code that runs is exactly the code in the repo. Read it line by line before you run it.
     </div>
-    <details class="faq"><summary>Is my conversation content uploaded?</summary><div class="body">No. Parsing happens entirely inside your browser. You can verify this yourself: open the F12 Network tab and run a diagnosis; no network request appears. Nothing is transmitted before you press the share button, and pressing it sends only the aggregate-number JSON previewed on screen.</div></details>
-    <details class="faq"><summary>How can I trust what this code does?</summary><div class="body">The code that runs is exactly the repo's files; there is no build step. You can compare the browser's view-source against the repo line by line. The only server code is <span class="mono">functions/api/submit.js</span>, and the deployment configuration is public in <span class="mono">wrangler.toml</span>.</div></details>
+    <details class="faq" open><summary>Is my conversation content uploaded?</summary><div class="body">No. Parsing happens entirely inside your browser. You can verify this yourself: open the F12 Network tab and run a diagnosis; no network request appears. Nothing is transmitted before you press the share button, and pressing it sends only the aggregate-number JSON previewed on screen.</div></details>
+    <details class="faq" open><summary>How can I trust what this code does?</summary><div class="body">
+      <p>The code that runs is exactly the repo's files; there is no build step, so you can compare the browser's view-source against the repo line by line. This is the whole thing:</p>
+      <ul class="filemap">
+        <li><span class="mono">assets/parse.js</span> — the scoring engine, running in your browser. Same rules as the CLI <span class="mono">scripts/check_cache_loss.py</span>, with an automated test comparing both outputs.</li>
+        <li><span class="mono">assets/charts.js</span> — drawing only. It does no scoring.</li>
+        <li><span class="mono">functions/api/submit.js</span> — the only code that runs on a server. Called only when you press submit; it validates the schema and commits to this repo.</li>
+        <li><span class="mono">data/submissions.json</span> — the public dataset this page reads. One submission is one commit, so the full history is auditable.</li>
+        <li><span class="mono">wrangler.toml</span> — even the deployment configuration is public: there is no hidden backend.</li>
+      </ul>
+    </div></details>
     <details class="faq"><summary>Does running this affect my Claude account?</summary><div class="body">No. It only reads log files. It makes no contact with your Anthropic account or the API.</div></details>
     <details class="faq"><summary>I got in-TTL losses. What now?</summary><div class="body">Please leave your result on <a href="https://github.com/anthropics/claude-code/issues/87966">anthropics/claude-code#87966</a>. A zero result is equally valuable data: knowing healthy accounts exist also helps narrow down the cause.</div></details>
     <details class="faq"><summary>What becomes public if I submit?</summary><div class="body">Only the aggregate and daily numbers you approved in the preview, plus the optional nickname. Every submission lands as a public commit in the repo, so the full submission history is auditable.</div></details>
