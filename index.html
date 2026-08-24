@@ -30,6 +30,14 @@
      a soft drop in light, a much deeper one in dark where a faint shadow is
      invisible. */
   --float-shadow:0 6px 20px rgba(0,0,0,.22);
+  /* Text and badge colours for the amber "example data" wash. The wash is a
+     different painted background from the page, so a colour that reads on the
+     page does not automatically read on it: measured on the composited wash,
+     the page amber is 3.25:1 in light and the page muted is 4.15:1 in dark,
+     both under 4.5. These are the same two roles retuned for that one
+     background. They are separate tokens rather than an override of --amber
+     and --muted because only the elements sitting on the wash may move. */
+  --demo-ink:#5B6B7A; --demo-badge:#8A5E18;
 }
 @media (prefers-color-scheme: dark){
   :root:not([data-theme="light"]){
@@ -40,6 +48,7 @@
     --amber:#D9A254; --amber-soft:rgba(217,162,84,.16);
     --cta-bg:#FF6B5E; --cta-ink:#12161B;
     --float-shadow:0 8px 24px rgba(0,0,0,.55);
+    --demo-ink:#9DAAB8; --demo-badge:#D9A254;
   }
 }
 :root[data-theme="dark"]{
@@ -50,6 +59,7 @@
   --amber:#D9A254; --amber-soft:rgba(217,162,84,.16);
   --cta-bg:#FF6B5E; --cta-ink:#12161B;
   --float-shadow:0 8px 24px rgba(0,0,0,.55);
+  --demo-ink:#9DAAB8; --demo-badge:#D9A254;
 }
 *{box-sizing:border-box}
 body{
@@ -79,7 +89,26 @@ body{height:100vh; height:100dvh; overflow:hidden; display:flex; flex-direction:
 /* min-height:0 lets the pane shrink below its content height, which a flex
    item otherwise refuses to do — without it the bar is pushed off screen. */
 .pane{flex:1 1 auto; min-height:0; overflow-y:auto}
-.pane:focus-visible{outline:2px solid var(--ink); outline-offset:-2px}
+/* No focus ring on the pane. It had one while M11 made the pane a real tab stop
+   (tabindex 0), where a ring was the right thing: a keyboard user could land on
+   it and needed to see that they had. M11.1 makes it tabindex -1, so the only
+   thing that ever focuses it is focusPane() on load, and a click never matches
+   :focus-visible. Measured with the ring still in place: every cold load below
+   1520px matched :focus-visible and painted a 2px outline around the entire
+   viewport, on a box the reader never chose to focus.
+   Nothing is left unlabelled by removing it. The pane is a scroll container,
+   not a control, and it is exactly as visible as the document scroller it
+   stands in for above 1520px, which no browser rings either. What tells a
+   screen reader that focus is here is the role and the name syncPaneFocus sets,
+   which is the part that actually carries meaning.
+   Deleting the author rule was not enough and the computed style is not the
+   check: with the rule gone the corner still changed colour when the pane was
+   blurred, because the UA's own :focus-visible ring had taken over at
+   "1px auto". This suppresses that too. It is written on :focus rather than
+   :focus-visible so it covers both, and it is safe here in the one way this
+   normally is not: with tabindex -1 no keyboard user can reach this box, so
+   there is no focus state being hidden from anyone. */
+.pane:focus{outline:none}
 .wrap{max-width:960px; margin:0 auto; padding:24px 20px 40px}
 .topbar{display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:22px}
 .badge{font-size:.72rem; letter-spacing:.04em; text-transform:uppercase; color:var(--amber); border:1px solid var(--amber); border-radius:99px; padding:2px 10px; white-space:nowrap}
@@ -216,9 +245,17 @@ table.subs th .sort-btn{font:inherit; font-size:inherit; letter-spacing:inherit;
 table.subs th .sort-btn:hover{color:var(--ink)}
 table.subs th .sort-btn:focus-visible{outline:2px solid var(--ink); outline-offset:2px}
 table.subs th[aria-sort="ascending"], table.subs th[aria-sort="descending"]{color:var(--ink)}
-.sort-ind{font-size:.9em; opacity:.55}
-table.subs th[aria-sort="ascending"] .sort-ind,
-table.subs th[aria-sort="descending"] .sort-ind{opacity:1}
+/* No opacity on the glyph. It carried opacity:.55 until M11.1, which is why
+   the unsorted arrow measured 2.26:1 in light and 2.64:1 in dark: getComputedStyle
+   reports the declared --muted, but the compositor multiplies it by .55 before
+   the eye sees it, and the ratio has to be computed on the composited pixel.
+   This glyph is the only cue that the columns sort at all, so at 2.26:1 the
+   whole feature shipped invisible. At full strength it inherits the th colour:
+   5.48:1 light / 5.57:1 dark, measured on the composited surface.
+   Nothing is lost by dropping it. The sorted state was never carried by opacity
+   alone: the glyph itself changes shape, and the rule above turns the whole th
+   from --muted to --ink. Those two signals stay. */
+.sort-ind{font-size:.9em}
 /* --- "this row is mine" (M11) ---------------------------------------------
    Nicknames are masked at storage time, so a submitter can no longer find
    their own row by reading it. The browser that submitted has the submission
@@ -265,8 +302,16 @@ table.subs tr.mine td{background:var(--ok-soft)}
 .env-demo{margin-bottom:12px}
 .env-demo h3{font-size:.85rem; font-weight:700; margin:0 0 6px}
 .env-demo table{background:var(--surface); border-radius:6px}
+/* The two elements that sit directly on the amber wash rather than on the page,
+   retuned for it. Scoped to .env-demo on purpose: the preview frame further up
+   is not this frame and is not this milestone's to move. */
+.env-demo .demo-note{color:var(--demo-ink)}
+.env-demo .badge{color:var(--demo-badge); border-color:var(--demo-badge)}
 table.env td.grp{font-family:ui-monospace,'Cascadia Mono',Consolas,monospace; text-align:left}
-table.env td.na{color:var(--muted); font-family:inherit}
+/* The withheld-value cell. table.subs is listed too, because the submission
+   list withholds a loss rate on the same rule the environment table does: a
+   rate that cannot be computed is not printed as a number. */
+table.subs td.na, table.env td.na{color:var(--muted); font-family:inherit}
 table.env tr.pick{cursor:pointer}
 table.env tr.pick:hover td{background:var(--grid)}
 table.env tr.on td{background:var(--ok-soft)}
@@ -294,14 +339,48 @@ footer code{font-family:ui-monospace,'Cascadia Mono',Consolas,monospace; font-si
 a{color:inherit}
 [hidden]{display:none!important}
 @media (prefers-reduced-motion: reduce){ *{transition:none!important; animation:none!important} }
+/* --- Print ----------------------------------------------------------------
+   The screen layout is an app shell: html and body are overflow:hidden and
+   exactly one viewport tall, and everything a reader reads lives in a nested
+   scrolling pane. A sheet of paper has no scrollport to hand that pane, so
+   without this block the printer gets the first viewport and silently drops
+   the rest. Measured before this block existed: index.html printed 1 page
+   where its own parent commit printed 6, ko/index.html 1 where the parent
+   printed 5, with the footer laid out at y=8833 outside the printed box. No
+   error, no visual cue, 93% of the page simply absent.
+   That is worse here than a normal print bug. This site exists to be attached
+   to the issue thread it links to, so the reader most likely to press Ctrl+P
+   is the one trying to carry the methodology and the fleet numbers into that
+   thread, and what they would have carried is the hero section.
+   The fix is only to give the document its normal flow back: once the pane is
+   ordinary content instead of a scrollport, the page box breaks across sheets
+   the way it always did. Nothing about the screen arrangement changes, so the
+   0 px2 overlap the pane and the dock are built to guarantee is untouched.
+   This block is last in the stylesheet so it wins over the 1520px rules
+   regardless of the paper width the reader chooses. */
+@media print{
+  html{height:auto; overflow:visible}
+  body{height:auto; min-height:0; overflow:visible; display:block}
+  .pane{flex:none; min-height:0; height:auto; overflow:visible}
+  /* The dock is a screen affordance: a button that cannot be pressed on paper,
+     printed across the foot of a sheet, is just a hole in the evidence. */
+  .cta-dock{display:none!important}
+}
 </style>
 </head>
 <body>
 <!-- The scrolling pane. Everything a reader reads lives in here; the action
-     bar below is its sibling, not its overlay. tabindex is added by script
-     only while this really is the scroll container, so keyboard scrolling has
-     something to focus, and is removed again at the widths where the page
-     scrolls normally (a permanent tabindex would be a dead tab stop there). -->
+     bar below is its sibling, not its overlay.
+     tabindex, role and aria-label are added by script together, and only while
+     this really is the scroll container: at the widths where the document
+     scrolls normally this is a plain wrapper div, and a landmark or a tab stop
+     there would be describing a box that does nothing.
+     tabindex is -1, not 0. M11 used 0, which made a bare div with no role and
+     no accessible name the FIRST thing Tab reached on the page (measured
+     order: DIV#pane, then the language link, then the CTA), so the page opened
+     by announcing a focusable group that could not say what it was. -1 keeps
+     it focusable by script - which is what makes PageDown work from a cold
+     load - without putting it in the tab order at all. -->
 <div class="pane" id="pane">
 <div class="wrap">
 
@@ -688,10 +767,23 @@ function bindSortControls(){
   });
 }
 
+/* The loss rate is withheld, not zeroed. A submission with no requests has no
+   rate to show, and until M11.1 this printed it as "0.00%" while SORT_KEYS.rate
+   returned null for the same row and parked it last in both directions: the
+   table printed a number and then declined to order it, so sorting Loss rate
+   ascending put a visible "0.00%" below rows reading 0.10% and 8.00%.
+   Of the two halves, the printed zero is the wrong one. "0.00%" is a claim - no
+   losses in the observed requests - and there were no observed requests to make
+   it about. The cell now carries the same "not enough data" the environment
+   table has always shown for a group under the sample floor, which is the rule
+   this page already had for a rate it cannot compute; the null parking in the
+   sort is correct and stays exactly as it is.
+   Reachable with a zero-request submission, which validateSanity permits (it
+   sets no minimum on totals.requests). No such row is in the live dataset. */
 function renderTable(subs){
   var tb = document.querySelector("#subsTable tbody");
   tb.innerHTML = sortedForTable(subs).map(function(s){
-    var rate = s.totals.requests > 0 ? 100 * s.totals.in_ttl_losses / s.totals.requests : 0;
+    var rate = s.totals.requests > 0 ? 100 * s.totals.in_ttl_losses / s.totals.requests : null;
     var mine = MINE_IDS.has(s.id);
     return "<tr" + (mine ? " class='mine'" : "") + ">" +
       "<td class='nick'>" + esc(s.nickname || "anonymous") +
@@ -701,7 +793,8 @@ function renderTable(subs){
       "<td class='crit'>" + fmtInt(s.totals.in_ttl_losses) + "</td>" +
       "<td>" + fmtInt(s.totals.iron_losses) + "</td>" +
       "<td class='crit'>" + fmtInt(s.totals.wasted_tokens) + "</td>" +
-      "<td>" + fmtPct(rate) + "</td>" +
+      (rate === null ? "<td class='na'>not enough data</td>"
+                     : "<td>" + fmtPct(rate) + "</td>") +
       "<td>" + esc(s.plan) + "</td>" +
       "<td>" + esc(s.client) + "</td>" +
       "<td>" + esc(s.concurrent_sessions || "unknown") + "</td>" +
@@ -1135,21 +1228,132 @@ fetch("data/submissions.json")
     renderEnv();
     drawAll();
     syncPaneFocus();
+    // Restore first, then focus: the pane has its final height only now that
+    // the fleet rows and the chart are in it, and focusPane() is preventScroll
+    // precisely so it cannot undo the offset just restored.
+    initScrollMemory();
+    focusPane();
   })
   .catch(function(){
     document.getElementById("loadErr").hidden = false;
+    // A failed fetch still leaves a long, readable page. The keyboard and the
+    // remembered position are not part of what failed.
+    syncPaneFocus();
+    initScrollMemory();
+    focusPane();
   });
 
-/* The scrolling pane is a div, and a div that scrolls needs to be focusable
-   or a keyboard user has nothing to press arrow keys against. It is only
-   focusable while it really is the scroll container: above 1520px the document
-   scrolls again, and a tabindex there would be a tab stop that does nothing. */
+/* The scrolling pane is a div, and a div that scrolls needs to be focusable or
+   a keyboard user has nothing to press arrow keys against. It is only marked up
+   as one while it really is the scroll container: above 1520px the document
+   scrolls again, and a tab stop or a landmark there would describe a box that
+   does nothing.
+   tabindex is -1. With M11's 0 this div was the first thing Tab reached, ahead
+   of every link, and it had no role and no name to announce. -1 is focusable by
+   script and invisible to Tab, which is the combination this needs: the keys
+   have somewhere to land without a nameless stop being pushed in front of the
+   page. The role and the name are still set, because focusPane() moves focus
+   here on load and an unnamed focus target is exactly what was wrong before. */
 function syncPaneFocus(){
   var p = document.getElementById("pane");
   if(!p) return;
-  if(p.scrollHeight - p.clientHeight > 1) p.setAttribute("tabindex", "0");
-  else p.removeAttribute("tabindex");
+  if(p.scrollHeight - p.clientHeight > 1){
+    p.setAttribute("tabindex", "-1");
+    p.setAttribute("role", "region");
+    p.setAttribute("aria-label", "Observatory content, scrollable");
+  } else {
+    p.removeAttribute("tabindex");
+    p.removeAttribute("role");
+    p.removeAttribute("aria-label");
+  }
 }
+
+/* Cold keyboard scrolling. With nothing focused after a load the document is no
+   longer the scroller, so PageDown, Space, End and the arrows all did nothing
+   at all until the first Tab or click. Measured on M11: every one of them dead,
+   where the parent scrolled 738 / 40 / 738 px. check.html, which this milestone
+   never restructured, still scrolls from the keyboard, so two pages of the same
+   site answered the same key differently.
+   Focus is moved once, and only from a standing start: if the reader has already
+   put focus somewhere - the language link, a sort button, anything - that focus
+   is theirs and is left alone. preventScroll matters because the pane may have
+   just been restored to a remembered offset, and focusing without it would yank
+   that back to the top. */
+var PANE_FOCUSED = false;
+function focusPane(){
+  var p = document.getElementById("pane");
+  if(!p || PANE_FOCUSED || !p.hasAttribute("tabindex")) return;
+  var a = document.activeElement;
+  if(a && a !== document.body && a !== document.documentElement) return;
+  try { p.focus({ preventScroll: true }); PANE_FOCUSED = true; } catch(e){ /* keys stay dead, nothing throws */ }
+}
+
+/* ===== Remembering where the reader was ==================================
+   A browser restores the scroll position of the DOCUMENT scroller. Below
+   1520px the document does not scroll here: a script-populated pane does, and
+   no browser restores that. Measured on M11: 1500 -> 0 on reload and 1200 -> 0
+   on Back, where the parent came back to 1500 and 1200 exactly.
+
+   The offset is carried in history.state, written with replaceState, and NOT
+   in localStorage or sessionStorage. That is a hard constraint, not a
+   preference: index.html is a page that writes nothing to storage at all, and
+   the check that guards it reads localStorage.length === 0 after a full load.
+   It is also the better fit on its own merits. history.state is per history
+   ENTRY, so two entries for this page remember their own positions instead of
+   sharing one global key, and it survives both a reload and a Back to the same
+   entry, which is exactly the pair that broke.
+
+   Which element gets restored is decided at restore time, not at load time,
+   so this works on both sides of 1520px. That matters because
+   scrollRestoration = "manual" turns the browser's own restoration off for the
+   document too, and above 1520px the document is the scroller: handing it back
+   is now this code's job in both modes. */
+try { if("scrollRestoration" in history) history.scrollRestoration = "manual"; }
+catch(e){ /* browser keeps its own behaviour; nothing below depends on this */ }
+
+function scrollHost(){
+  var p = document.getElementById("pane");
+  if(p && p.scrollHeight - p.clientHeight > 1) return p;
+  return document.scrollingElement || document.documentElement;
+}
+
+var scrollSaveTimer = null;
+function rememberScroll(){
+  if(scrollSaveTimer) return;               // throttle: one write per 200ms at most
+  scrollSaveTimer = setTimeout(function(){
+    scrollSaveTimer = null;
+    try {
+      var top = Math.round(scrollHost().scrollTop);
+      var st = history.state || {};
+      if(st.paneTop === top) return;        // no history churn for an unchanged value
+      var next = {};
+      for(var k in st){ if(Object.prototype.hasOwnProperty.call(st, k)) next[k] = st[k]; }
+      next.paneTop = top;
+      history.replaceState(next, "");
+    } catch(e){ /* degrade to "no restore", never throw at the reader */ }
+  }, 200);
+}
+
+function restoreScroll(){
+  try {
+    var st = history.state;
+    if(!st || typeof st.paneTop !== "number") return;
+    scrollHost().scrollTop = st.paneTop;
+  } catch(e){ /* degrade to "no restore" */ }
+}
+
+var scrollMemoryWired = false;
+function initScrollMemory(){
+  restoreScroll();
+  if(scrollMemoryWired) return;
+  scrollMemoryWired = true;
+  // Capture phase: a scroll on the pane does not bubble, and which element
+  // scrolls depends on the viewport width, so one listener covers both.
+  document.addEventListener("scroll", rememberScroll, true);
+}
+// A Back that comes out of the bfcache never re-runs the fetch, so the restore
+// has to be hung on pageshow as well as on the render path below.
+window.addEventListener("pageshow", function(ev){ if(ev.persisted) restoreScroll(); });
 
 // The preview is local and static, so it renders immediately and independently
 // of the fleet fetch: a failed submissions.json must not blank the example.
@@ -1163,6 +1367,10 @@ var rt;
 window.addEventListener("resize", function(){
   clearDemoSelection();
   clearTimeout(rt);
+  // syncPaneFocus on resize also crosses 1520px in both directions, which is
+  // where the pane stops and starts being the scroller. The remembered offset
+  // follows whichever element that is, because scrollHost() re-decides on
+  // every read rather than caching one at load.
   rt = setTimeout(function(){ drawAll(); syncPaneFocus(); }, 150);
 });
 if(window.matchMedia){
