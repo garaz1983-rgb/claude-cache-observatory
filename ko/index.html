@@ -365,11 +365,11 @@ a{color:inherit}
 
 <header>
   <h1>캐시 유실 관측소</h1>
-  <p class="sub">Claude Code in-TTL <span class="mono">previous_message_not_found</span> 프롬프트 캐시 유실을 계정 단위로 추적한다. 아래 모든 수치는 자발적 제출자의 <b>브라우저에서 로컬로 파싱</b>되어, 본인이 승인한 집계 숫자만 제출된 것이다.</p>
+  <p class="sub">Claude Code in-TTL <span class="mono">previous_message_not_found</span> 프롬프트 캐시 유실을 보고한 기계 단위로 추적한다. 기계 1대가 1행이고, 같은 기계의 두 번째 제출은 행을 늘리지 않고 기존 행을 갱신한다. 아래 모든 수치는 자발적 제출자의 <b>브라우저에서 로컬로 파싱</b>되어, 본인이 승인한 집계 숫자만 제출된 것이다.</p>
 </header>
 
 <div class="kpis">
-  <div class="kpi"><div class="label">제출 계정 수</div><div class="val" id="kpiAccounts">–</div><div class="note">제출 1건 = 1행</div></div>
+  <div class="kpi"><div class="label">보고한 기계 수</div><div class="val" id="kpiMachines">–</div><div class="note">사람이 아니라 기계 1대 = 1행</div></div>
   <div class="kpi crit"><div class="label">총 관측 유실</div><div class="val" id="kpiLosses">–</div><div class="note">정당한 TTL 만료는 제외</div></div>
   <div class="kpi crit"><div class="label">재과금 토큰</div><div class="val" id="kpiTokens">–</div><div class="note">유실 후 다시 과금된 캐시 생성 토큰</div></div>
   <div class="kpi"><div class="label">관측 기간</div><div class="val" id="kpiPeriod" style="font-size:1.05rem">–</div><div class="note">제출된 가장 이른 날 ~ 가장 늦은 날</div></div>
@@ -387,7 +387,7 @@ a{color:inherit}
     <p>8월, 서버가 로컬 세션 로그에 직접 남기는 진단 필드 <span class="mono">message.diagnostics.cache_miss_reason</span>이 확인됐다. 이때부터 유실을 체감이 아니라 서버 기록으로 판정할 수 있게 됐다.</p>
     <p>정직한 반론도 적어 둔다: 원시 집계의 대부분(운영자 데이터 기준 78%)은 장시간 유휴 후의 정당한 만료였다. 이 사이트는 그것을 제외하고 TTL 안쪽 유실만 센다.</p>
     <p>통제된 재현에서는 같은 기계의 4개 세션이 같은 1분 안에 동시에 캐시를 잃었고, 생성된 지 24초 된 캐시 엔트리가 사라지는 것도 관측됐다. 같은 시그니처가 독립 계정 3곳에서 확인됐다.</p>
-    <p>개인 환경 문제인지 광범위한 문제인지 가르려면 구조화된 다계정 데이터가 필요하다. 그것을 모으는 곳이 이 사이트다. 논의는 <a href="https://github.com/anthropics/claude-code/issues/87966">anthropics/claude-code#87966</a>에서 진행 중이다.</p>
+    <p>개인 환경 문제인지 광범위한 문제인지 가르려면 여러 기계에서 모은 구조화된 데이터가 필요하다. 그것을 모으는 곳이 이 사이트다. 논의는 <a href="https://github.com/anthropics/claude-code/issues/87966">anthropics/claude-code#87966</a>에서 진행 중이다.</p>
   </div>
 </section>
 
@@ -433,7 +433,7 @@ a{color:inherit}
 
 <section id="secFleet">
   <h2>Fleet 일별 유실률 추이 <span class="badge real h2-badge">실제 제출 데이터</span></h2>
-  <p class="desc">그날 요청 대비 in-TTL 유실 비율, 제출자별 한 선. 계정을 가로질러 수직으로 정렬된 급등은 서버측 이벤트를, 계정 전체에서 유지되는 하락 계단은 수정 배포 시점을 가리킨다. <b>이 축의 하루는 모두 UTC 기준</b>이고 모든 제출에 같은 기준이 적용된다. 서로 다른 계정을 같은 날짜에 놓고 보는 일이 의미를 가지는 근거가 이것이다.</p>
+  <p class="desc">그날 요청 대비 in-TTL 유실 비율, 보고한 기계별 한 선. 기계를 가로질러 수직으로 정렬된 급등은 서버측 이벤트를, 기계 전체에서 유지되는 하락 계단은 수정 배포 시점을 가리킨다. <b>이 축의 하루는 모두 UTC 기준</b>이고 모든 제출에 같은 기준이 적용된다. 서로 다른 기계를 같은 날짜에 놓고 보는 일이 의미를 가지는 근거가 이것이다.</p>
   <div class="card">
     <canvas id="fleet" height="260"></canvas>
     <div class="legend" id="fleetLegend"></div>
@@ -489,7 +489,7 @@ a{color:inherit}
     <ul class="env-limits">
       <li>환경 항목은 전부 제출자가 <b>스스로 적은 값</b>이다. 검증할 수단이 없다.</li>
       <li id="envSoft">–</li>
-      <li>계정마다 요청 규모가 자릿수 단위로 다르다. 여기 유실률의 분모는 서로 크기가 비대칭이고, 큰 계정 하나가 그룹 전체를 끌고 갈 수 있다.</li>
+      <li>기계마다 요청 규모가 자릿수 단위로 다르다. 여기 유실률의 분모는 서로 크기가 비대칭이고, 큰 기계 하나가 그룹 전체를 끌고 갈 수 있다.</li>
       <li>제출 <b id="envMinN">5</b>건 미만인 그룹은 건수만 표시한다. 행 순서는 정렬이지 순위가 아니다. 한 행이 뒷받침하는 것은 "지금까지 제출된 것이 이렇다"까지다.</li>
     </ul>
   </div>
@@ -624,7 +624,7 @@ function renderKpis(subs){
     if(minD === null || s.period_start < minD) minD = s.period_start;
     if(maxD === null || s.period_end > maxD) maxD = s.period_end;
   });
-  document.getElementById("kpiAccounts").textContent = String(subs.length);
+  document.getElementById("kpiMachines").textContent = String(subs.length);
   document.getElementById("kpiLosses").textContent = fmtInt(losses);
   document.getElementById("kpiTokens").textContent = fmtTok(tokens);
   document.getElementById("kpiPeriod").textContent = minD && maxD ? minD + " ~ " + maxD : "–";
@@ -775,13 +775,13 @@ function renderTable(subs){
 
    ENV_MIN_N은 그룹 유실률을 화면에 내기 전에 넘어야 하는 표본 하한이다.
    통계적 검정력 계산이 아니라 하한선이고, 근거는 두 가지다.
-     (1) 요청 수는 그룹 단위로 합산된다. 하한 아래에서는 가장 큰 계정이
-         그룹 분모의 대부분을 차지해서, "그룹 유실률"이 사실상 그 계정
+     (1) 요청 수는 그룹 단위로 합산된다. 하한 아래에서는 가장 큰 기계가
+         그룹 분모의 대부분을 차지해서, "그룹 유실률"이 사실상 그 기계
          하나의 유실률에 그룹 이름표를 붙인 값이 된다.
      (2) n = 5면 제출 1건이 그룹 건수의 과반이 될 수 없다.
    하한 미만이어도 n·요청·유실 건수는 그대로 보여주고, 파생값인 유실률만
    빼둔다. 이 페이지에서는 이 구분이 특히 중요하다. 이 사이트의 주장 자체가
-   "계정 하나로는 개인 환경 문제와 광범위한 문제를 가를 수 없다"인데,
+   "기계 하나로는 개인 환경 문제와 광범위한 문제를 가를 수 없다"인데,
    제출 3건짜리 유실률을 띄우면 바로 그 추론을 화면에 되돌려 놓는 셈이다. */
 var ENV_MIN_N = 5;
 var ENV_AXES = ["client", "plan", "concurrent_sessions"];

@@ -47,7 +47,7 @@ MAX_PERIOD_DAYS = 92
 
 # Every key the stored object is allowed to carry, per level.
 RUN_KEYS = {"saved_at", "source", "script_version", "period_start", "period_end",
-            "totals", "daily", "census", "events", "events_saved"}
+            "totals", "daily", "census", "events", "events_saved", "anchors"}
 TOTALS_KEYS = {"requests", "in_ttl_losses", "iron_losses", "wasted_tokens"}
 DAILY_KEYS = {"date", "requests", "losses", "wasted_tokens"}
 CENSUS_KEYS = {"date", "hours"}
@@ -254,6 +254,27 @@ def main():
         print("PASS round trip: %d daily rows, %d census rows, %d events preserved exactly"
               % (len(run["daily"]), len(run["census"] or []), len(run["events"] or [])))
 
+        # ---------- 1b. M13 fingerprint hashes (round trip + shape) ----------
+        anchors = run["anchors"]
+        check(anchors, "the stored run carries no fingerprint hashes")
+        for h in anchors:
+            check(re.fullmatch(r"[0-9a-f]{64}", h),
+                  "stored anchor %r is not a lowercase sha-256 digest" % h)
+        check(len(set(anchors)) == len(anchors), "the stored anchors repeat")
+        check(anchors == out["anchors"],
+              "buildRun changed the anchors it was handed")
+        check(rt["runs"][0]["anchors"] == anchors,
+              "the anchors did not survive the storage round trip")
+        # The whole point: what is stored is the digest, never the requestId.
+        for rid in out["sampled_ids"]:
+            check(rid not in json.dumps(run),
+                  "a sampled requestId %r reached the stored run" % rid)
+        check(out["link"]["anchor_filter"] == [anchors[0], anchors[1]],
+              "sanitizeAnchors let a malformed value through: %r"
+              % out["link"]["anchor_filter"])
+        print("PASS fingerprint: %d digests stored, %d sampled requestIds absent"
+              % (len(anchors), len(out["sampled_ids"])))
+
         # ---------- 2. forbidden fields ----------
         check(set(run.keys()) == RUN_KEYS,
               "run carries unexpected keys: %r" % (set(run.keys()) ^ RUN_KEYS))
@@ -405,6 +426,17 @@ def main():
               "a failed save left a partial record behind: %r" % q["tiny_back"])
         print("PASS quota: the save degrades to aggregates, and reports failure "
               "when nothing fits at all")
+
+        # ---------- M13 link token ----------
+        lk = out["link"]
+        check(lk["token"] == "0123456789abcdef0123456789abcdef",
+              "the link token did not survive the round trip: %r" % lk["token"])
+        check(lk["survives_runs"] and lk["survives_submissions"],
+              "storing a link token dropped the saved runs or submissions: %r" % lk)
+        for key in ("rejects_short", "rejects_upper", "rejects_nonstring"):
+            check(lk[key] == "", "%s: a malformed link token was kept (%r)" % (key, lk[key]))
+        check(lk["cleared"] is True, "clear() left the link token behind")
+        print("PASS link token: round trip, malformed values refused, cleared with the rest")
 
         c = out["clear"]
         check(c["before"] is True, "setup: nothing was stored before the clear")

@@ -25,6 +25,13 @@
  *      whole event record over. tests/storage_test.py asserts this.
  *   3. Quota degradation instead of failure: a payload that does not fit is
  *      retried without per-event detail, then without the hourly census.
+ *   4. M13 adds exactly two identity values, both one-way and both validated
+ *      in and out: `run.anchors` (sha-256 digests of this machine's own
+ *      requestIds — never the requestIds) and `state.link_token` (the secret
+ *      /api/submit issues to a submitter it could not fingerprint). The first
+ *      still rides the opt-in save; the second is the one value the check page
+ *      writes on its own, and only on the pasted-CLI path, which the page
+ *      discloses before the submit button.
  *
  * UMD: Node -> module.exports, browser -> window.CacheObservatoryStore.
  * No dependencies, no network, no DOM.
@@ -43,6 +50,9 @@
   var MAX_RUNS = 8;          // keep a short history; a comparison needs 2
   var MAX_SUBMISSIONS = 24;  // overlap checks only need the recent ones
   var IRON_MINUTES = 5;      // gap < 5 min == iron (parse.js IRON_SECONDS)
+  var MAX_ANCHORS = 16;      // assets/identity.js ANCHOR_COUNT
+  var HEX64 = /^[0-9a-f]{64}$/;
+  var TOKEN_RE = /^[0-9a-f]{32}$/;
 
   /* ---------------- primitives ---------------- */
 
@@ -142,7 +152,29 @@
   }
 
   function emptyState() {
-    return { v: STATE_VERSION, runs: [], submissions: [] };
+    return { v: STATE_VERSION, runs: [], submissions: [], link_token: "" };
+  }
+
+  /* M13 identity, the two values this store is allowed to hold.
+     `anchors` are sha-256 digests of the machine's own requestIds, never the
+     requestIds: keeping them lets a run restored from storage still be
+     recognised as this machine, which is what makes M10's increment path and
+     M13's one-row rule work together. `link_token` is the secret the API
+     issues to a submitter it could NOT fingerprint (the pasted-CLI path); it
+     is the only value this page writes without being asked, and the check page
+     says so before the button. Both are validated on the way in and on the way
+     out: the store is user-editable by definition. */
+  function sanitizeAnchors(list) {
+    if (!Array.isArray(list)) return [];
+    var out = [];
+    for (var i = 0; i < list.length && out.length < MAX_ANCHORS; i++) {
+      if (typeof list[i] === "string" && HEX64.test(list[i])) out.push(list[i]);
+    }
+    return out;
+  }
+
+  function sanitizeToken(v) {
+    return (typeof v === "string" && TOKEN_RE.test(v)) ? v : "";
   }
 
   function readRaw(storage) {
@@ -183,7 +215,8 @@
     return {
       v: STATE_VERSION,
       runs: runs.map(reviveRun).filter(Boolean).slice(-MAX_RUNS),
-      submissions: subs.map(sanitizeSubmission).filter(Boolean).slice(-MAX_SUBMISSIONS)
+      submissions: subs.map(sanitizeSubmission).filter(Boolean).slice(-MAX_SUBMISSIONS),
+      link_token: sanitizeToken(o.link_token)
     };
   }
 
@@ -193,7 +226,8 @@
       v: STATE_VERSION,
       runs: (Array.isArray(state.runs) ? state.runs : []).slice(-MAX_RUNS),
       submissions: (Array.isArray(state.submissions) ? state.submissions : [])
-        .slice(-MAX_SUBMISSIONS)
+        .slice(-MAX_SUBMISSIONS),
+      link_token: sanitizeToken(state.link_token)
     };
     // Quota degradation: full -> drop per-event detail -> drop hourly census.
     // A run that lost its events can no longer recount iron losses for a
@@ -226,7 +260,8 @@
         copy.events_saved = false;
         return copy;
       }),
-      submissions: state.submissions
+      submissions: state.submissions,
+      link_token: state.link_token
     };
   }
 
@@ -239,7 +274,8 @@
         copy.census = null;
         return copy;
       }),
-      submissions: state.submissions
+      submissions: state.submissions,
+      link_token: state.link_token
     };
   }
 
@@ -378,7 +414,8 @@
       daily: daily,
       census: sanitizeCensus(census),
       events: events,
-      events_saved: events !== null
+      events_saved: events !== null,
+      anchors: sanitizeAnchors(o.anchors)
     };
   }
 
@@ -388,7 +425,8 @@
     var built = buildRun(
       { totals: r.totals, daily: r.daily, events: r.events },
       r.census,
-      { saved_at: r.saved_at, source: r.source, script_version: r.script_version }
+      { saved_at: r.saved_at, source: r.source, script_version: r.script_version,
+        anchors: r.anchors }
     );
     if (!built) return null;
     if (r.events_saved === false) {
@@ -418,7 +456,8 @@
     return {
       v: STATE_VERSION,
       runs: runs.slice(-MAX_RUNS),
-      submissions: Array.isArray(st.submissions) ? st.submissions.slice() : []
+      submissions: Array.isArray(st.submissions) ? st.submissions.slice() : [],
+      link_token: sanitizeToken(st.link_token)
     };
   }
 
@@ -430,8 +469,28 @@
     return {
       v: STATE_VERSION,
       runs: Array.isArray(st.runs) ? st.runs.slice() : [],
-      submissions: subs.slice(-MAX_SUBMISSIONS)
+      submissions: subs.slice(-MAX_SUBMISSIONS),
+      link_token: sanitizeToken(st.link_token)
     };
+  }
+
+  /* The link token, kept apart from the opt-in save on purpose: it is the only
+     thing the page stores on its own, and it is stored only for a submitter
+     the observatory could not fingerprint. Returns a new state; the caller
+     saves it. An empty/invalid token clears the field rather than keeping a
+     stale one. */
+  function withLinkToken(state, token) {
+    var st = isPlainObject(state) ? state : emptyState();
+    return {
+      v: STATE_VERSION,
+      runs: Array.isArray(st.runs) ? st.runs.slice() : [],
+      submissions: Array.isArray(st.submissions) ? st.submissions.slice() : [],
+      link_token: sanitizeToken(token)
+    };
+  }
+
+  function linkTokenOf(state) {
+    return isPlainObject(state) ? sanitizeToken(state.link_token) : "";
   }
 
   /* ---------------- incremental period ---------------- */
@@ -591,7 +650,12 @@
       },
       census: census,
       evtMap: evtMap,
-      events_saved: run.events_saved !== false
+      events_saved: run.events_saved !== false,
+      // M13: a restored run can still say which machine it came from, so
+      // re-submitting one merges into that machine's row instead of opening a
+      // second. Hashes only — the requestIds they were derived from were never
+      // stored and cannot be recovered from these.
+      anchors: sanitizeAnchors(run.anchors)
     };
   }
 
@@ -608,8 +672,11 @@
     buildRun: buildRun,
     reviveRun: reviveRun,
     sanitizeSubmission: sanitizeSubmission,
+    sanitizeAnchors: sanitizeAnchors,
     addRun: addRun,
     addSubmission: addSubmission,
+    withLinkToken: withLinkToken,
+    linkTokenOf: linkTokenOf,
     lastSubmission: lastSubmission,
     incrementalRange: incrementalRange,
     overlapWith: overlapWith,

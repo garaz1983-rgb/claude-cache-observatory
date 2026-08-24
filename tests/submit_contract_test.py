@@ -22,6 +22,31 @@ drives the contract cases:
                                     padding, already-masked, HTML, empty,
                                     whitespace) all survive the rule
 
+M13 (one submitter, one row) adds:
+
+  case12 same machine twice      -> ONE row, merged in place, period widened,
+                                    totals recomputed, id kept, anchors
+                                    refreshed to the newest set
+  case13 replay from the file    -> a value copied out of the public dataset
+                                    modifies nothing; the target row comes back
+                                    byte-identical
+  case14 server-only fields      -> identity / anchor_hashes / token_hash /
+                                    updated_at / id are rejected by the same
+                                    whitelist as any unknown field, and
+                                    malformed anchors and tokens are 400 too
+  case15 increment               -> a disjoint later window is ADDED to the row,
+                                    never replaces it
+  case16 overlapping re-scan     -> the incoming rows win for the days both
+                                    cover; the older ones survive elsewhere
+  case17 paste path              -> no anchors, so the API issues a token; the
+                                    next submission presenting it updates the
+                                    same row, and one without it appends
+  case18 paste then folder       -> a fingerprinted submission carrying the
+                                    stored token adopts the paste row and from
+                                    then on matches by fingerprint alone
+  case19 masking on update       -> a merge cannot smuggle a raw nickname into
+                                    the record or the commit message
+
 All pass -> prints CONTRACT_OK as the last line, exit 0.
 Contract violation -> exit 1. Setup/infra failure -> exit 2 (the mutation
 harness treats exit 1 as KILLED and exit 2 as fatal, so infra problems can
@@ -30,6 +55,8 @@ never masquerade as a defended mutation).
 No real GitHub, no real tokens, no network beyond 127.0.0.1.
 """
 import base64
+import datetime
+import hashlib
 import json
 import os
 import random
@@ -516,10 +543,25 @@ def run_cases(xff_ip):
               "case1: nickname %r, want the masked 'c***'" % stored.get("nickname"))
         check(stored.get("totals") == payload["totals"], "case1: totals mismatch")
         check(stored.get("daily") == payload["daily"], "case1: daily mismatch")
+        # M13 adds exactly two server-generated keys, and `updated_at` only
+        # once a row has actually been merged into.
         extra = set(stored) - {"id", "submitted_at", "nickname", "plan", "client",
                                "concurrent_sessions", "period_start", "period_end",
-                               "totals", "daily", "script_version"}
+                               "totals", "daily", "script_version", "identity"}
         check(not extra, "case1: undefined fields stored: %r" % extra)
+        check("updated_at" not in stored,
+              "case1: a first submission is marked as updated")
+        # This payload carries no anchors, so the API falls back to layer 2 and
+        # issues a token. Only its hash may be stored.
+        check(re.fullmatch(r"[0-9a-f]{32}", data.get("token", "")),
+              "case1: no link token issued to a submission with no anchors (%r)"
+              % data.get("token"))
+        check(data.get("merged") is False, "case1: a first submission reported a merge")
+        check(stored["identity"].get("token_hash") ==
+              hashlib.sha256(("cco.token.v1|" + data["token"]).encode("utf-8")).hexdigest(),
+              "case1: identity.token_hash is not the hash of the issued token")
+        check(data["token"] not in json.dumps(MOCK.doc),
+              "case1: the token itself was written into the public dataset")
         want_msg = ("data: submission %s — c***, 2026-08-01~2026-08-15, "
                     "10 losses / 1000 req" % sub_id)
         check(MOCK.put_messages[-1] == want_msg,
@@ -651,6 +693,414 @@ def run_mask_cases():
           % len(MASK_CASES))
 
 
+# ---------------------------------------------------------------------------
+# M13: one submitter, one row (cases 12-19)
+# ---------------------------------------------------------------------------
+
+ANCHOR_STORE_PREFIX = "cco.anchor2.v1|"
+TOKEN_STORE_PREFIX = "cco.token.v1|"
+
+
+def anchor_set(tag, count=16, start=0):
+    """A client-side anchor list. Any two lists sharing one element are the
+    same machine as far as the API is concerned, which is exactly what the
+    overlapping ranges below exercise."""
+    return [hashlib.sha256(("%s#%d" % (tag, i)).encode("utf-8")).hexdigest()
+            for i in range(start, start + count)]
+
+
+def stored_anchor(anchor):
+    """What the record must hold for that anchor: a SECOND hash. This is the
+    security property — the public file never carries a replayable value."""
+    return hashlib.sha256((ANCHOR_STORE_PREFIX + anchor).encode("utf-8")).hexdigest()
+
+
+def stored_token(token):
+    return hashlib.sha256((TOKEN_STORE_PREFIX + token).encode("utf-8")).hexdigest()
+
+
+def day(iso):
+    return datetime.date(int(iso[0:4]), int(iso[5:7]), int(iso[8:10]))
+
+
+def shift(iso, n):
+    return (day(iso) + datetime.timedelta(days=n)).isoformat()
+
+
+def scan_payload(start, days, requests, losses, wasted, iron, **over):
+    """A submission covering `days` consecutive calendar days from `start`,
+    with sum(daily) == totals by construction."""
+    rows = [{"date": shift(start, i), "requests": requests,
+             "losses": losses, "wasted_tokens": wasted} for i in range(days)]
+    payload = valid_payload(
+        period_start=rows[0]["date"], period_end=rows[-1]["date"], daily=rows,
+        totals={"requests": requests * days, "in_ttl_losses": losses * days,
+                "iron_losses": iron, "wasted_tokens": wasted * days})
+    payload.update(over)
+    return payload
+
+
+def reset_doc():
+    """Start a stage from an empty dataset. Each M13 case is about the
+    relationship between rows, so it needs to own the whole file."""
+    with MOCK.lock:
+        MOCK.doc = {"schema_version": 1, "submissions": []}
+        MOCK.sha = secrets.token_hex(20)
+
+
+def doc_snapshot():
+    with MOCK.lock:
+        return json.loads(json.dumps(MOCK.doc, ensure_ascii=False))
+
+
+def submit(payload, ip):
+    return http_json("POST", BASE + "/api/submit", payload,
+                     headers={"X-Forwarded-For": ip})
+
+
+def expect_ok(name, status, data):
+    check(status == 200, "%s: status %s, want 200 (body %r)" % (name, status, data))
+    check(isinstance(data, dict) and data.get("ok") is True,
+          "%s: body %r, want ok:true" % (name, data))
+    return data
+
+
+def check_file_arithmetic(tag):
+    """🔴 After every path: the public file's own numbers still add up, and its
+    daily rows stay inside the period they claim. A reader adding up the JSON by
+    hand is the site's whole trust model."""
+    doc = doc_snapshot()
+    check(doc.get("schema_version") == 1, "%s: schema_version lost" % tag)
+    for row in doc["submissions"]:
+        daily = row["daily"]
+        dates = [d["date"] for d in daily]
+        check(dates == sorted(dates), "%s/%s: daily rows are not in date order"
+              % (tag, row["id"]))
+        check(len(set(dates)) == len(dates), "%s/%s: a date appears twice"
+              % (tag, row["id"]))
+        check(row["period_start"] <= dates[0] and dates[-1] <= row["period_end"],
+              "%s/%s: daily rows %s..%s fall outside the period %s..%s"
+              % (tag, row["id"], dates[0], dates[-1],
+                 row["period_start"], row["period_end"]))
+        for field, total in (("requests", "requests"),
+                             ("losses", "in_ttl_losses"),
+                             ("wasted_tokens", "wasted_tokens")):
+            got = sum(d[field] for d in daily)
+            check(got == row["totals"][total],
+                  "%s/%s: daily %s sums to %d but totals.%s says %d"
+                  % (tag, row["id"], field, got, total, row["totals"][total]))
+        check(row["totals"]["iron_losses"] <= row["totals"]["in_ttl_losses"],
+              "%s/%s: iron_losses %d exceeds in_ttl_losses %d"
+              % (tag, row["id"], row["totals"]["iron_losses"],
+                 row["totals"]["in_ttl_losses"]))
+    return doc
+
+
+def run_identity_cases():
+    # -- case12: two folder submissions from the same machine => ONE row -----
+    reset_doc()
+    ip = "198.51.100.30"
+    a1 = anchor_set("machine-one", 16, 0)
+    a2 = anchor_set("machine-one", 16, 15)   # shares exactly one anchor with a1
+    check(len(set(a1) & set(a2)) == 1, "case12 setup: the two scans must share 1 anchor")
+
+    first = scan_payload("2026-06-01", 10, 100, 2, 1000, 7, anchors=a1)
+    status, data = submit(first, ip)
+    data = expect_ok("case12 first", status, data)
+    check(data.get("merged") is False, "case12: the first submission reported a merge")
+    check("token" not in data,
+          "case12: a fingerprinted submission was handed a token to store — the "
+          "folder path must not be asked to store anything (%r)" % data)
+    row_id = data["id"]
+    before = check_file_arithmetic("case12 first")
+    check(len(before["submissions"]) == 1,
+          "case12: %d rows after the first submission" % len(before["submissions"]))
+    stored_first = before["submissions"][0]
+    check("updated_at" not in stored_first,
+          "case12: a brand new row already claims to have been updated")
+    check(stored_first["identity"]["anchor_hashes"] == [stored_anchor(x) for x in a1],
+          "case12: the record does not hold the second hash of what was sent")
+    for sent in a1:
+        check(sent not in json.dumps(before),
+              "case12: an anchor the client sent is stored verbatim — anyone "
+              "reading the public file could replay it")
+
+    # A fresher scan of the same machine: 3 days overlap, 5 days are new.
+    second = scan_payload("2026-06-08", 8, 200, 5, 3000, 11, anchors=a2)
+    status, data = submit(second, ip)
+    data = expect_ok("case12 second", status, data)
+    check(data.get("merged") is True,
+          "case12: the same machine's second submission was not merged (%r)" % data)
+    check(data.get("id") == row_id, "case12: the row changed id on update")
+    after = check_file_arithmetic("case12 second")
+    check(len(after["submissions"]) == 1,
+          "case12: %d rows after the second submission from the SAME machine — "
+          "this is the double count M13 exists to remove"
+          % len(after["submissions"]))
+    row = after["submissions"][0]
+    check(row["period_start"] == "2026-06-01" and row["period_end"] == "2026-06-15",
+          "case12: merged period %s..%s, want 2026-06-01..2026-06-15"
+          % (row["period_start"], row["period_end"]))
+    check(row["submitted_at"] == stored_first["submitted_at"],
+          "case12: submitted_at moved; it records the FIRST submission")
+    check(re.fullmatch(r"\d{4}-\d{2}-\d{2}", row.get("updated_at", "")),
+          "case12: no updated_at on a merged row (%r)" % row.get("updated_at"))
+    by_date = {d["date"]: d for d in row["daily"]}
+    check(len(row["daily"]) == 15,
+          "case12: %d daily rows, want 15 (10 + 8 with 3 overlapping)"
+          % len(row["daily"]))
+    check(by_date["2026-06-01"]["requests"] == 100,
+          "case12: a day only the first submission covered was overwritten")
+    check(by_date["2026-06-08"]["requests"] == 200,
+          "case12: an overlapping day kept the STALER measurement")
+    check(by_date["2026-06-15"]["requests"] == 200,
+          "case12: a day only the second submission covered is missing")
+    want_requests = 7 * 100 + 8 * 200
+    check(row["totals"]["requests"] == want_requests,
+          "case12: totals.requests %d, want %d (recomputed from the merged rows, "
+          "not summed across submissions)" % (row["totals"]["requests"], want_requests))
+    # iron: the 3 superseded days carried 6 in-TTL losses, which is less than the
+    # 7 iron the first row claimed, so 1 survives alongside the fresh 11.
+    check(row["totals"]["iron_losses"] == 12,
+          "case12: iron_losses %d, want 12 (7 - 6 superseded losses, + 11)"
+          % row["totals"]["iron_losses"])
+    check(row["identity"]["anchor_hashes"] == [stored_anchor(x) for x in a2],
+          "case12: the stored anchors were not refreshed to the newest sample")
+    with MOCK.lock:
+        msg = MOCK.put_messages[-1]
+    check(msg.startswith("data: update " + row_id + " —"),
+          "case12: the commit message does not say this was an update: %r" % msg)
+    print("PASS case12 two folder submissions, same machine -> 1 row "
+          "(%s..%s, %d requests, %d daily rows)"
+          % (row["period_start"], row["period_end"],
+             row["totals"]["requests"], len(row["daily"])))
+    print("       rows %d -> %d · id %s kept" % (1, len(after["submissions"]), row_id))
+    print("       before %s..%s %s"
+          % (stored_first["period_start"], stored_first["period_end"],
+             json.dumps(stored_first["totals"], sort_keys=True)))
+    print("       after  %s..%s %s"
+          % (row["period_start"], row["period_end"],
+             json.dumps(row["totals"], sort_keys=True)))
+    print("       pre-M13 would have summed to requests=%d in_ttl_losses=%d"
+          % (first["totals"]["requests"] + second["totals"]["requests"],
+             first["totals"]["in_ttl_losses"] + second["totals"]["in_ttl_losses"]))
+
+    # -- case13: a value copied out of the PUBLIC file changes nothing --------
+    published = row["identity"]["anchor_hashes"][0]
+    replay = scan_payload("2026-07-01", 3, 9999, 0, 0, 0,
+                          anchors=[published], nickname="attacker")
+    status, data = submit(replay, "198.51.100.31")
+    data = expect_ok("case13", status, data)
+    check(data.get("merged") is False,
+          "🔴 case13: a hash lifted out of the public dataset MERGED into the row "
+          "it came from — the public file is an overwrite key")
+    check(data.get("id") != row_id, "case13: the replay was given the victim's id")
+    doc = check_file_arithmetic("case13")
+    check(len(doc["submissions"]) == 2,
+          "case13: %d rows, want 2 (the replay appends as a stranger)"
+          % len(doc["submissions"]))
+    check(doc["submissions"][0] == row,
+          "🔴 case13: the target row CHANGED after a replay of its own published "
+          "hash\n  before %r\n  after  %r" % (row, doc["submissions"][0]))
+    print("PASS case13 replay of a published hash -> new row, target byte-identical")
+    print("       sent anchors=[%s…] (copied from submissions.json), got id %s, "
+          "rows %d" % (published[:16], data["id"], len(doc["submissions"])))
+
+    # -- case14: server-only and malformed identity fields => 400 ------------
+    bad_ip = "198.51.100.32"
+    server_only = [
+        ("identity", {"anchor_hashes": [stored_anchor(a1[0])]}),
+        ("anchor_hashes", [stored_anchor(a1[0])]),
+        ("token_hash", stored_token("0" * 32)),
+        ("updated_at", "2026-08-24"),
+        ("id", "sub-20260824115135-75fb"),
+        ("submitted_at", "2026-08-24"),
+    ]
+    for field, value in server_only:
+        status, data = submit(scan_payload("2026-06-01", 2, 10, 0, 0, 0,
+                                           **{field: value}), bad_ip)
+        expect_schema_400("case14 " + field, status, data)
+        check(any(("undefined field: " + field) in str(d) for d in data["detail"]),
+              "case14 %s: a server-generated field was not rejected as undefined: %r"
+              % (field, data["detail"]))
+    malformed = [
+        ("anchors not an array", {"anchors": "deadbeef"}),
+        ("anchors over the cap", {"anchors": anchor_set("x", 17, 0)}),
+        ("anchor too short", {"anchors": ["a" * 63]}),
+        ("anchor uppercase", {"anchors": ["A" * 64]}),
+        ("anchor not a string", {"anchors": [12345]}),
+        ("token too short", {"token": "0" * 31}),
+        ("token uppercase", {"token": "A" * 32}),
+        ("token is a stored hash", {"token": stored_token("0" * 32)}),
+        ("token not a string", {"token": 12345}),
+    ]
+    for name, over in malformed:
+        status, data = submit(scan_payload("2026-06-01", 2, 10, 0, 0, 0, **over),
+                              bad_ip)
+        expect_schema_400("case14 " + name, status, data)
+    doc = doc_snapshot()
+    check(len(doc["submissions"]) == 2,
+          "case14: a rejected payload still reached storage (%d rows)"
+          % len(doc["submissions"]))
+    print("PASS case14 %d server-only + %d malformed identity fields -> 400"
+          % (len(server_only), len(malformed)))
+
+    # -- case15: a disjoint increment is ADDED, never a replacement ----------
+    reset_doc()
+    ip = "198.51.100.33"
+    a = anchor_set("machine-inc", 16, 0)
+    base = scan_payload("2026-07-01", 3, 100, 4, 500, 3, anchors=a)
+    status, data = submit(base, ip)
+    expect_ok("case15 base", status, data)
+    inc = scan_payload("2026-07-10", 3, 50, 1, 200, 1, anchors=a)
+    status, data = submit(inc, ip)
+    data = expect_ok("case15 increment", status, data)
+    check(data.get("merged") is True, "case15: the increment opened a second row")
+    doc = check_file_arithmetic("case15")
+    row = doc["submissions"][0]
+    check(len(doc["submissions"]) == 1, "case15: %d rows" % len(doc["submissions"]))
+    check(len(row["daily"]) == 6,
+          "🔴 case15: %d daily rows, want 6 — a 3-day increment must not wipe the "
+          "days it does not mention" % len(row["daily"]))
+    check(row["period_start"] == "2026-07-01" and row["period_end"] == "2026-07-12",
+          "case15: period %s..%s, want 2026-07-01..2026-07-12"
+          % (row["period_start"], row["period_end"]))
+    check(row["totals"]["requests"] == 3 * 100 + 3 * 50,
+          "case15: totals.requests %d, want 450" % row["totals"]["requests"])
+    check(row["totals"]["iron_losses"] == 4,
+          "case15: iron_losses %d, want 4 (nothing superseded, so 3 + 1)"
+          % row["totals"]["iron_losses"])
+    print("PASS case15 disjoint increment merges (6 daily rows, %s..%s)"
+          % (row["period_start"], row["period_end"]))
+
+    # -- case16: a full re-scan of an overlapping period, fresher wins -------
+    reset_doc()
+    ip = "198.51.100.34"
+    a = anchor_set("machine-rescan", 16, 0)
+    status, data = submit(scan_payload("2026-07-01", 5, 100, 4, 500, 9, anchors=a), ip)
+    expect_ok("case16 first", status, data)
+    status, data = submit(scan_payload("2026-07-01", 8, 111, 3, 777, 5, anchors=a), ip)
+    data = expect_ok("case16 rescan", status, data)
+    check(data.get("merged") is True, "case16: the re-scan opened a second row")
+    doc = check_file_arithmetic("case16")
+    row = doc["submissions"][0]
+    check(len(doc["submissions"]) == 1, "case16: %d rows" % len(doc["submissions"]))
+    check(len(row["daily"]) == 8, "case16: %d daily rows, want 8" % len(row["daily"]))
+    check(all(d["requests"] == 111 for d in row["daily"]),
+          "case16: a day the re-scan covered kept the older measurement")
+    check(row["totals"]["requests"] == 8 * 111,
+          "case16: totals.requests %d, want %d" % (row["totals"]["requests"], 8 * 111))
+    check(row["totals"]["iron_losses"] == 5,
+          "case16: iron_losses %d, want 5 — every day of the older row was "
+          "superseded, so only the fresh count stands"
+          % row["totals"]["iron_losses"])
+    print("PASS case16 overlapping re-scan merges, fresher rows win "
+          "(8 daily rows, %d requests)" % row["totals"]["requests"])
+
+    # -- case17: the paste path falls back to a token ------------------------
+    reset_doc()
+    ip = "198.51.100.35"
+    paste = scan_payload("2026-05-01", 4, 70, 2, 300, 2)   # no anchors at all
+    check("anchors" not in paste, "case17 setup: the paste payload carries anchors")
+    status, data = submit(paste, ip)
+    data = expect_ok("case17 first", status, data)
+    check(data.get("merged") is False, "case17: the first paste reported a merge")
+    token = data.get("token", "")
+    check(re.fullmatch(r"[0-9a-f]{32}", token),
+          "case17: no link token was issued to a submission that cannot be "
+          "fingerprinted (%r)" % token)
+    doc = check_file_arithmetic("case17 first")
+    ident = doc["submissions"][0]["identity"]
+    check(ident.get("token_hash") == stored_token(token),
+          "case17: the record does not hold the hash of the issued token")
+    check("anchor_hashes" not in ident,
+          "case17: a paste row invented anchors: %r" % ident)
+    check(token not in json.dumps(doc),
+          "🔴 case17: the token itself was written into the public dataset")
+
+    status, data = submit(scan_payload("2026-05-05", 4, 80, 1, 400, 1, token=token), ip)
+    data = expect_ok("case17 return", status, data)
+    check(data.get("merged") is True,
+          "case17: presenting the issued token did not update the same row (%r)" % data)
+    check("token" not in data, "case17: a second token was issued to the same row")
+    doc = check_file_arithmetic("case17 return")
+    check(len(doc["submissions"]) == 1,
+          "case17: %d rows after a token-linked return" % len(doc["submissions"]))
+    check(len(doc["submissions"][0]["daily"]) == 8,
+          "case17: the token-linked merge lost days (%d)"
+          % len(doc["submissions"][0]["daily"]))
+
+    status, data = submit(scan_payload("2026-05-20", 2, 10, 0, 0, 0), ip)
+    data = expect_ok("case17 no token", status, data)
+    check(data.get("merged") is False,
+          "case17: a paste with no token was merged into somebody's row")
+    check(re.fullmatch(r"[0-9a-f]{32}", data.get("token", "")),
+          "case17: the appended paste row was not given its own token")
+    doc = check_file_arithmetic("case17 no token")
+    check(len(doc["submissions"]) == 2,
+          "case17: %d rows, want 2 (an unlinkable paste appends)"
+          % len(doc["submissions"]))
+    print("PASS case17 paste path -> token issued, presented token merges, "
+          "no token appends")
+
+    # -- case18: a folder scan adopts the row its paste created --------------
+    reset_doc()
+    ip = "198.51.100.36"
+    status, data = submit(scan_payload("2026-04-01", 3, 60, 2, 100, 1), ip)
+    data = expect_ok("case18 paste", status, data)
+    token = data["token"]
+    row_id = data["id"]
+    a = anchor_set("machine-adopt", 16, 0)
+    status, data = submit(scan_payload("2026-04-05", 3, 90, 1, 150, 1,
+                                       anchors=a, token=token), ip)
+    data = expect_ok("case18 folder", status, data)
+    check(data.get("merged") is True and data.get("id") == row_id,
+          "case18: a folder scan presenting the stored token did not adopt the "
+          "paste row (%r)" % data)
+    doc = check_file_arithmetic("case18 folder")
+    ident = doc["submissions"][0]["identity"]
+    check(ident["anchor_hashes"] == [stored_anchor(x) for x in a],
+          "case18: the adopted row did not gain the machine's fingerprint")
+    check(ident["token_hash"] == stored_token(token),
+          "case18: adopting the row dropped its token")
+    status, data = submit(scan_payload("2026-04-10", 2, 30, 0, 0, 0, anchors=a), ip)
+    data = expect_ok("case18 fingerprint only", status, data)
+    check(data.get("merged") is True and data.get("id") == row_id,
+          "case18: the row no longer matches by fingerprint alone (%r)" % data)
+    doc = check_file_arithmetic("case18 fingerprint only")
+    check(len(doc["submissions"]) == 1, "case18: %d rows" % len(doc["submissions"]))
+    print("PASS case18 paste row adopted by a fingerprinted submission, then "
+          "matched by fingerprint alone")
+
+    # -- case19: masking still holds on the update path ----------------------
+    reset_doc()
+    ip = "198.51.100.37"
+    a = anchor_set("machine-mask", 16, 0)
+    raw_first = "first-raw-nick"
+    raw_update = "update-raw-nick"
+    status, data = submit(scan_payload("2026-03-01", 2, 10, 0, 0, 0,
+                                       anchors=a, nickname=raw_first), ip)
+    expect_ok("case19 first", status, data)
+    status, data = submit(scan_payload("2026-03-05", 2, 10, 0, 0, 0,
+                                       anchors=a, nickname=raw_update), ip)
+    data = expect_ok("case19 update", status, data)
+    check(data.get("merged") is True, "case19: the second submission did not merge")
+    doc = check_file_arithmetic("case19")
+    check(doc["submissions"][0]["nickname"] == "u***",
+          "case19: the updated nickname is not masked: %r"
+          % doc["submissions"][0]["nickname"])
+    with MOCK.lock:
+        blob = json.dumps(MOCK.doc, ensure_ascii=False) + "\n".join(MOCK.put_messages)
+    for raw in (raw_first, raw_update, "attacker", "contract-test"):
+        check(raw not in blob,
+              "🔴 case19: the raw nickname %r survives in the stored data or a "
+              "commit message" % raw)
+    with MOCK.lock:
+        check(not MOCK.errors, "mock observed protocol violations: %r" % MOCK.errors)
+    print("PASS case19 masking holds across an update (raw values absent from "
+          "%d commit messages and the whole file)" % len(MOCK.put_messages))
+
+
 def main():
     try:
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -693,6 +1143,7 @@ def main():
         print("wrangler ready — running contract cases")
         run_cases(xff_ip)
         run_mask_cases()
+        run_identity_cases()
         print("CONTRACT_OK")
         code = 0
     except ContractFail as exc:

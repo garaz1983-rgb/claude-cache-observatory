@@ -301,9 +301,19 @@ var hostView = viewOut(lt.localize(result, census));
 var pagePayloadView = lt.localize(result, census, 540);
 var utcFirst = result.daily[0].date;
 var utcLast = result.daily[result.daily.length - 1].date;
+/* M13: the same probe also carries a fingerprint and a link token, so "the page
+   still sends what keeps a submitter to one row" is a test rather than a habit.
+   A page that quietly stops attaching them would double count again, and the
+   API cannot notice: a payload without anchors is perfectly valid. */
+var PROBE_ANCHORS = ["a1", "a2", "a3"].map(function (x) {
+  return require("crypto").createHash("sha256").update(x).digest("hex");
+});
+var PROBE_TOKEN = "0123456789abcdef0123456789abcdef";
 var pagePayload = {};
 ["check.html", "ko/check.html"].forEach(function (rel) {
-  var last = { result: result, census: census, source_version: null, detail_dropped: false };
+  var last = { result: result, census: census, source_version: null,
+               detail_dropped: false, anchors: PROBE_ANCHORS,
+               link_token: PROBE_TOKEN };
   var blank = {
     subNickname: { value: "" }, subPlan: { value: "unknown" },
     subClient: { value: "unknown" }, subSessions: { value: "unknown" },
@@ -314,13 +324,19 @@ var pagePayload = {};
     subClient: { value: "unknown" }, subSessions: { value: "unknown" },
     subFrom: { value: utcFirst }, subTo: { value: utcLast }
   };
+  // The same page with no fingerprint at all: the fields must then be ABSENT,
+  // never invented, guessed or defaulted.
+  var bare = { result: result, census: census, source_version: null,
+               detail_dropped: false, anchors: [], link_token: "" };
   pagePayload[rel] = {
     whole: payloadOf(rel, last, pagePayloadView, blank, false),
     ranged: payloadOf(rel, last, pagePayloadView, ranged, true),
+    bare: payloadOf(rel, bare, pagePayloadView, ranged, true),
     view_daily: pagePayloadView.daily,
     view_period: pagePayloadView.period
   };
 });
+var probeIdentity = { anchors: PROBE_ANCHORS, token: PROBE_TOKEN };
 
 /* ---- D2: the strings the PAGES print ---- */
 var ZONE_STUB = {
@@ -410,6 +426,7 @@ process.stdout.write(JSON.stringify({
     view: hostView
   },
   page_payload: pagePayload,
+  probe_identity: probeIdentity,
   page_labels: pageLabels,
   unit: unit,
   labels: [0, 540, 330, 345, -300, 825, -210, 60].reduce(function (a, o) {

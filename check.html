@@ -190,6 +190,8 @@ details.preview pre{margin:0; padding:2px 12px 12px; font-family:ui-monospace,'C
 .store-cmp{margin:13px 0 0; font-size:.85rem; padding:10px 13px; border-left:3px solid var(--amber); background:var(--amber-soft); border-radius:0 6px 6px 0; font-variant-numeric:tabular-nums}
 .sub-warn{font-size:.85rem; margin:0 0 14px; padding:10px 13px; border-left:3px solid var(--amber); background:var(--amber-soft); border-radius:0 6px 6px 0}
 .inc-hint{margin:9px 0 0; font-size:.78rem; color:var(--muted); font-variant-numeric:tabular-nums}
+.sub-identity{font-size:.83rem; line-height:1.6; margin:0 0 14px; padding:10px 13px; border-left:3px solid var(--line); background:var(--bg); border-radius:0 6px 6px 0; color:var(--muted)}
+.sub-identity b{color:var(--ink)}
 .modal-back{position:fixed; inset:0; z-index:100; background:var(--scrim); display:flex; align-items:center; justify-content:center; padding:20px}
 .modal-box{width:100%; max-width:460px; padding:20px 22px; background:var(--surface); color:var(--ink); border:1px solid var(--line); border-radius:10px; box-shadow:0 18px 50px var(--scrim)}
 .modal-box h3{margin:0 0 10px; font-size:1rem; font-weight:700}
@@ -229,7 +231,8 @@ a{color:inherit}
   <h3>Before you run it: what this page does, and what it does not</h3>
   <ul>
     <li><b>Your log files never leave this machine.</b> Reading, scoring and charting all happen inside this tab. Nothing is kept when you close it <b>unless you press “Save to this browser”</b> in step 2 — and that save is written to this browser's local storage on this computer, is never sent to a server, and can be deleted at any time with one button. Running a check makes <b>zero</b> network requests: open F12 → Network and watch it yourself.</li>
-    <li><b>Nothing is sent unless you press the button in step 3.</b> Even then, all that leaves is the aggregate numbers shown to you first (daily counts and totals) plus an optional nickname. Conversation text, file paths, session IDs and timestamps are not part of the submission schema at all.</li>
+    <li><b>Nothing is sent unless you press the button in step 3.</b> Even then, all that leaves is the aggregate numbers shown to you first (daily counts and totals), an optional nickname, and up to 16 <b>one-way hashes</b> that let the observatory recognise this machine as the same submitter next time. Conversation text, file paths, session IDs and timestamps are not part of the submission schema at all.</li>
+    <li><b>Why the hashes exist, and what they are.</b> The observatory adds every row together, so a person who submits twice used to be counted twice. There is no login here, so the page derives a stable pseudonym for this machine from the request IDs already inside your logs: it takes a fixed sample of them, hashes each one with SHA-256, and sends only the digests. The request IDs themselves never leave, nothing can be turned back into them, and the observatory hashes the digests a second time before storing them, so nobody reading the public dataset holds anything they could send back. The full list is shown in the JSON preview in step 3 before you send it.</li>
     <li><b>There is no build step.</b> The code your browser runs is the same file that sits in the repo, so you can diff view-source against GitHub line by line.</li>
     <li><b>No login, no account.</b> The page only reads log files; it never talks to your Anthropic account or the API.</li>
   </ul>
@@ -238,7 +241,8 @@ a{color:inherit}
     <ul class="map">
       <li><span class="mono">assets/parse.js</span> — the scoring engine. Every number on this page comes from it. It follows the same rules as the CLI <span class="mono">scripts/check_cache_loss.py</span>, and an automated test compares the two outputs.</li>
       <li><span class="mono">assets/charts.js</span> — drawing only (charts and heatmap). It does no scoring.</li>
-      <li><span class="mono">assets/store.js</span> — the optional local save. It touches only this browser's own storage on this computer, never the network, and only after you press the save button and confirm.</li>
+      <li><span class="mono">assets/store.js</span> — the optional local save. It touches only this browser's own storage on this computer, never the network, and only after you press the save button and confirm. The single exception is the link token described in step 3, which is stored only when a submission could not be fingerprinted.</li>
+      <li><span class="mono">assets/identity.js</span> — the fingerprint. It reads request IDs out of the logs you loaded, samples 16 of them and hashes them here. It has no network access and writes nothing.</li>
       <li><span class="mono">functions/api/submit.js</span> — the only code that runs on a server. It is called only when you press submit, validates the schema, and commits to the public repo.</li>
       <li><span class="mono">data/submissions.json</span> — the public dataset. One submission is one commit, so the whole history is auditable by anyone.</li>
       <li><span class="mono">wrangler.toml</span> — even the server configuration lives in the repo: there is no hidden backend.</li>
@@ -333,7 +337,7 @@ a{color:inherit}
 
   <div class="store-box" id="storeBox">
     <h3>Keep this result in this browser (optional)</h3>
-    <p class="lead">Nothing is saved automatically. Pressing the button writes the totals, the daily rows and the hour-by-hour counts into <b>this browser's own storage on this computer</b>. It is never sent to a server, and “Clear saved results” deletes it immediately. It also lets the next run start the day after your last submission instead of repeating a period you already sent. Every period named in this card is a <b>UTC</b> period, matching the submission card rather than the charts above. <b>Do not save on a shared or public computer.</b></p>
+    <p class="lead">Nothing is saved automatically. Pressing the button writes the totals, the daily rows, the hour-by-hour counts and this machine's fingerprint hashes into <b>this browser's own storage on this computer</b>. It is never sent to a server, and “Clear saved results” deletes it immediately. It also lets the next run start the day after your last submission instead of repeating a period you already sent. Every period named in this card is a <b>UTC</b> period, matching the submission card rather than the charts above. <b>Do not save on a shared or public computer.</b></p>
     <p class="store-state off" id="storeState">Nothing is saved in this browser yet.</p>
     <div class="store-actions">
       <button id="storeSaveBtn" type="button" class="go">Save to this browser</button>
@@ -344,7 +348,7 @@ a{color:inherit}
 
   <section id="submitSection">
     <h2>3 · Share your aggregate (optional)</h2>
-    <p class="desc">Exactly the JSON shown below is sent: period, totals and daily counts only. Never your logs, file paths, session contents or per-event details. Narrowing the shared period recomputes the totals for that window. <b>The days in this card are UTC days</b>, unlike the screens above, which are in your own timezone: submissions from many countries are summed day by day, and cutting each one by its own local date would scramble the fleet's daily totals. The dates in the picker below are therefore the UTC dates that will be sent.</p>
+    <p class="desc">Exactly the JSON shown below is sent: period, totals, daily counts and the one-way fingerprint hashes that keep your machine to a single row. Never your logs, file paths, session contents or per-event details. Narrowing the shared period recomputes the totals for that window. <b>The days in this card are UTC days</b>, unlike the screens above, which are in your own timezone: submissions from many countries are summed day by day, and cutting each one by its own local date would scramble the fleet's daily totals. The dates in the picker below are therefore the UTC dates that will be sent.</p>
     <div class="card">
       <div class="range-box" id="subRange" hidden>
         <div class="range-head">Shared period</div>
@@ -368,6 +372,7 @@ a{color:inherit}
         <p class="inc-hint" id="subIncHint" hidden></p>
       </div>
       <div class="sub-warn" id="subOverlap" hidden></div>
+      <p class="sub-identity" id="subIdentity" hidden></p>
       <div class="submit-form">
         <div>
           <label for="subNickname">Nickname (optional, max 20 chars)</label>
@@ -411,7 +416,7 @@ a{color:inherit}
       </details>
       <div class="submit-actions">
         <button class="btn-primary" id="subBtn" type="button">Share my result</button>
-        <span class="note">POST <span class="mono">/api/submit</span> · appended to the public dataset as a bot commit · max 3 submissions per hour</span>
+        <span class="note">POST <span class="mono">/api/submit</span> · written to the public dataset as a bot commit, into your machine's existing row when there is one · max 3 submissions per hour</span>
       </div>
       <div class="submit-msg" id="subMsg" hidden></div>
     </div>
@@ -431,7 +436,7 @@ a{color:inherit}
   <div class="modal-box" role="dialog" aria-modal="true" aria-labelledby="saveModalTitle" aria-describedby="saveModalBody">
     <h3 id="saveModalTitle">Save this result in this browser?</h3>
     <ul id="saveModalBody">
-      <li><b>It stays in this browser, on this computer.</b> The result is written to this browser's local storage and remains there until you delete it. Nothing is sent to a server.</li>
+      <li><b>It stays in this browser, on this computer.</b> The result is written to this browser's local storage and remains there until you delete it. Nothing is sent to a server. The machine fingerprint hashes are kept with it, so a later submission of this saved run still updates your row instead of adding a second one.</li>
       <li><b>On a shared or public computer, do not save.</b> Anyone who uses this browser profile afterwards can open this page and read the result.</li>
       <li><b>You can delete it at any time</b> with “Clear saved results”, which removes it immediately and completely.</li>
     </ul>
@@ -443,6 +448,7 @@ a{color:inherit}
 </div>
 
 <script src="assets/parse.js"></script>
+<script src="assets/identity.js"></script>
 <script src="assets/store.js"></script>
 <script src="assets/charts.js"></script>
 <script src="assets/localtime.js"></script>
@@ -456,6 +462,18 @@ var LAST = null;     // {result, census, source_version} — census null = paste
    VIEW to build a payload, and nothing reads LAST to draw a date row. */
 var VIEW = null;     // {localized, daily, census, evtMap, period, utcPeriod}
 var ZONE = ObservatoryLocalTime.detect("en-US");
+
+/* M13: the link token this browser holds, if any. It exists only for a
+   submitter the observatory could not fingerprint (the pasted-CLI path), and
+   reading it is free of side effects — the store's own guards handle a private
+   window or blocked site data. Declared here because every path that builds
+   LAST carries it into the payload. */
+function linkToken(){
+  try{
+    return (window.CacheObservatoryStore && STORE_OK && STATE)
+      ? CacheObservatoryStore.linkTokenOf(STATE) : "";
+  }catch(e){ return ""; }
+}
 
 function fmtInt(n){ return n.toLocaleString("en-US"); }
 function fmtTok(n){
@@ -635,8 +653,14 @@ async function processList(list){
     showError("Parsing failed: " + e.message);
     return;
   }
+  // M13: the fingerprint, derived from the logs and hashed here. Only the
+  // digests can leave, and only when the submit button is pressed.
+  setProgress("Fingerprinting this machine locally…");
+  var fp = { count: 0, sampled: 0, anchors: [] };
+  try{ fp = await CacheObservatoryIdentity.fingerprint(files); }catch(e){ /* degrade */ }
   setProgress("Done: " + files.length + " files · " + fmtInt(result.totals.requests) + " requests scanned.");
-  LAST = { result: result, census: census, source_version: null, detail_dropped: false };
+  LAST = { result: result, census: census, source_version: null, detail_dropped: false,
+           anchors: fp.anchors, id_count: fp.count, link_token: linkToken() };
   document.getElementById("pasteSrcNote").hidden = true;
   document.getElementById("storeRestored").hidden = true;
   // Unhide BEFORE drawing: canvases in a hidden section have zero width.
@@ -744,7 +768,10 @@ document.getElementById("pasteBtn").addEventListener("click", function(){
   document.getElementById("parseErr").hidden = true;
   document.getElementById("singleFileNote").hidden = true;
   setProgress("Rendered from pasted CLI JSON: " + fmtInt(v.result.totals.requests) + " requests, " + v.result.daily.length + " days.");
-  LAST = { result: v.result, census: null, source_version: v.version, detail_dropped: false };
+  // A pasted aggregate holds no request IDs, so there is nothing to fingerprint
+  // here: this path falls back to the link token (see updateIdentityNote).
+  LAST = { result: v.result, census: null, source_version: v.version, detail_dropped: false,
+           anchors: [], id_count: 0, link_token: linkToken() };
   document.getElementById("storeRestored").hidden = true;
   document.getElementById("pasteSrcNote").hidden = false;
   document.getElementById("results").hidden = false;
@@ -1042,6 +1069,14 @@ function buildSubmitPayload(){
   payload.daily = slice.daily;
   // Pasted CLI results carry the CLI's own version tag (e.g. cli-2.1).
   payload.script_version = LAST.source_version || CacheObservatory.SCRIPT_VERSION;
+  /* M13 identity. Both are about the MACHINE, not the selected window, so they
+     are taken whole from LAST and are unaffected by narrowing the period. The
+     anchors are hashes computed when the logs were read; the token is the
+     secret the API issued to an earlier submission it could not fingerprint.
+     Neither is invented here — an absent value is simply absent, which is the
+     honest degradation the card above describes. */
+  if(Array.isArray(LAST.anchors) && LAST.anchors.length) payload.anchors = LAST.anchors.slice(0, 16);
+  if(typeof LAST.link_token === "string" && LAST.link_token) payload.token = LAST.link_token;
   return payload;
 }
 /* SUBMIT-PAYLOAD:END */
@@ -1087,12 +1122,70 @@ function updateTzPayloadNote(){
   el.textContent = text;
 }
 
+/* M13: which case is this reader in, said before the button rather than after.
+   The page cannot ask the observatory in advance — a check makes zero network
+   requests, and that promise is not worth trading for a preview — so it states
+   the mechanism, what this browser holds, and the specific way each case can
+   fail. The answer for this submission arrives in the result line. */
+function updateIdentityNote(payload){
+  var el = document.getElementById("subIdentity");
+  if(!payload){
+    el.hidden = true;
+    el.textContent = "";
+    return;
+  }
+  var parts = [];
+  var anchors = payload.anchors ? payload.anchors.length : 0;
+  if(anchors){
+    parts.push("One machine is one row. This submission carries " + anchors +
+      " one-way hashes taken from" +
+      (LAST && LAST.id_count ? " the " + fmtInt(LAST.id_count) : "") +
+      " request IDs in your own logs, so if this machine has " +
+      "submitted before, these days are merged into that same row — days you already " +
+      "sent are replaced by this fresher measurement, new days are added, and the row's " +
+      "totals are recomputed. If it has not submitted before, this creates its row.");
+    parts.push("Where this can still go wrong: the sample leans on the oldest requests in " +
+      "your log folder, so if those files have since been deleted the link can be lost and " +
+      "a new row is created. Submitting again before a cleanup keeps the chain intact.");
+    if(payload.token){
+      parts.push("The link token this browser stored for an earlier pasted submission is " +
+        "sent as well, so a row created that way is adopted rather than left behind.");
+    }
+  } else if(payload.token){
+    parts.push("A pasted CLI aggregate carries no request IDs, so it cannot be fingerprinted. " +
+      "This browser holds the link token the observatory issued for your earlier paste " +
+      "submission, and sending it updates that same row.");
+  } else {
+    parts.push("A pasted CLI aggregate carries no request IDs, so there is nothing to " +
+      "fingerprint and this creates a new row.");
+    if(LAST && LAST.source_version === null &&
+       !(window.CacheObservatoryIdentity && CacheObservatoryIdentity.available())){
+      parts.push("This browser also cannot compute the hashes at all (SHA-256 is unavailable " +
+        "outside a secure context), which is why a folder scan produced none either.");
+    }
+    if(STORE_OK){
+      parts.push("So that a later paste updates this row instead of adding another, the " +
+        "observatory will issue a link token and this browser will store it. That is the " +
+        "one thing this page writes without being asked, and “Clear saved results” deletes it.");
+    } else {
+      parts.push("This browser is not allowing local storage, so the link token cannot be " +
+        "kept: a later submission will create another row rather than update this one. " +
+        "You can still submit.");
+    }
+  }
+  parts.push("A row counts a machine, not a person. Two computers are two rows and nothing " +
+    "here can tell they are yours.");
+  el.hidden = false;
+  el.textContent = parts.join(" ");
+}
+
 function updateSubmitCard(){
   var payload = buildSubmitPayload();
   var pre = document.getElementById("subPreview");
   var btn = document.getElementById("subBtn");
   var hint = document.getElementById("subRangeHint");
   updateTzPayloadNote();
+  updateIdentityNote(payload);
   if(!payload){
     pre.textContent = "(no parsed results yet)";
     hint.textContent = "";
@@ -1195,9 +1288,24 @@ document.getElementById("subBtn").addEventListener("click", async function(){
   SUBMIT_BUSY = false;
   if(res.ok && data && data.ok){
     SUBMIT_DONE = true;
+    var kept = keepLinkToken(data);
     recordSubmission(payload, data);
     updateSubmitCard();
-    submitMsg("ok", "Submitted. Your row will appear on the observatory in about 1–2 minutes (the bot commit triggers a redeploy).", [
+    // Say which of the two things happened, and on what period the row now
+    // stands: "submitted" alone hides the whole point of M13.
+    var period = (data.period_start && data.period_end)
+      ? " Your row now covers " + data.period_start + " to " + data.period_end + "."
+      : "";
+    submitMsg("ok", (data.merged
+      ? "Merged into your machine's existing row — no second row was created." + period
+      : "Submitted as a new row." + period + (kept === "stored"
+          ? " This browser stored the link token the observatory issued, so a later pasted" +
+            " submission updates this row instead of adding another."
+          : (kept === "failed"
+              ? " The observatory issued a link token but this browser could not store it," +
+                " so a later submission cannot be linked to this row."
+              : ""))) +
+      " The observatory will show it in about 1–2 minutes (the bot commit triggers a redeploy).", [
       { href: data.commit_url || "https://github.com", label: "bot commit" },
       { href: "index.html", label: "open the observatory" }
     ]);
@@ -1297,11 +1405,22 @@ function updateOverlapWarning(payload){
     return s.start === s.end ? s.start : s.start + " to " + s.end;
   }).join(", ");
   box.hidden = false;
-  box.textContent = "Overlap warning: " + ov.days + " " + plural(ov.days, "day", "days") +
+  // Since M13 an overlap is normally harmless: a recognised machine has its
+  // overlapping days REPLACED by this fresher measurement rather than added to
+  // it. Saying "counted twice" here would now be the dishonest line — but so
+  // would promising a merge the page cannot verify without asking the server,
+  // which it will not do during a check. Both halves are stated.
+  box.textContent = "Overlap notice: " + ov.days + " " + plural(ov.days, "day", "days") +
     " of the selected period (" + spans + ") " + plural(ov.days, "was", "were") +
     " already submitted from this browser. " +
-    "Each submission is a separate row, so overlapping days are counted twice in the observatory's totals. " +
-    "This does not block the submission — send it anyway if you are re-sending corrected data or the earlier row was reverted.";
+    (payload.anchors || payload.token
+      ? "If the observatory recognises this machine, those days are overwritten by this " +
+        "measurement instead of being added to it, so re-sending them is safe. If it does " +
+        "not — see the note below for how that can happen — they would land in a second row " +
+        "and be counted twice."
+      : "This submission carries nothing that identifies the machine, so those days would " +
+        "land in a second row and be counted twice in the observatory's totals.") +
+    " This does not block the submission.";
 }
 
 function updateStoreCard(){
@@ -1325,7 +1444,12 @@ function updateStoreCard(){
   saveBtn.disabled = !LAST;
   var runs = storedRuns();
   var subs = storedSubmissions();
-  if(!runs.length && !subs.length){
+  // A link token can exist on its own, with nothing else saved: it is written
+  // by a pasted submission the observatory could not fingerprint. The clear
+  // button has to appear for it too, or the page would be holding something it
+  // promised could be deleted with one press.
+  var token = linkToken();
+  if(!runs.length && !subs.length && !token){
     state.className = "store-state off";
     state.textContent = "Nothing is saved in this browser yet.";
     clearBtn.hidden = true;
@@ -1334,6 +1458,11 @@ function updateStoreCard(){
   }
   clearBtn.hidden = false;
   var parts = [];
+  if(token && !runs.length && !subs.length){
+    parts.push("Only the observatory's link token is stored here (no results). " +
+      "It is what lets a later pasted submission update your row instead of adding " +
+      "a second one, and it says nothing about your logs.");
+  }
   if(runs.length){
     var lastRun = runs[runs.length - 1];
     parts.push(runs.length + " saved " + plural(runs.length, "result", "results") +
@@ -1431,7 +1560,10 @@ function doSave(){
   var run = Store.buildRun(LAST.result, LAST.census, {
     saved_at: new Date().toISOString(),
     source: LAST.census ? "folder" : "cli-paste",
-    script_version: LAST.source_version || CacheObservatory.SCRIPT_VERSION
+    script_version: LAST.source_version || CacheObservatory.SCRIPT_VERSION,
+    // Hashes, never the request IDs they came from: this is what lets a run
+    // restored from storage still be recognised as this machine (M13).
+    anchors: LAST.anchors
   });
   if(!run) return;
   var next = Store.addRun(STATE || Store.emptyState(), run);
@@ -1462,6 +1594,9 @@ document.getElementById("storeClearBtn").addEventListener("click", function(){
   Store.clear();
   STATE = Store.load() || Store.emptyState();
   INC = null;
+  // The link token lives in the same key, so it is gone too — the payload must
+  // stop claiming to carry it.
+  if(LAST) LAST.link_token = "";
   document.getElementById("storeRestored").hidden = true;
   updateStoreCard();
   setupRange();
@@ -1481,7 +1616,12 @@ function restoreRun(run){
     // Why the detail is missing, not just that it is: this run was degraded to
     // fit the storage quota (store.js save()), which is what #tzNote has to say
     // instead of blaming a CLI cut.
-    detail_dropped: !h.events_saved
+    detail_dropped: !h.events_saved,
+    // A restored run kept its fingerprint hashes (store.js), so re-submitting
+    // one still merges into this machine's row instead of opening a second.
+    anchors: h.anchors,
+    id_count: 0,
+    link_token: linkToken()
   };
   // The stored run stays anchored to the engine's own UTC buckets; the reader's
   // clock is applied on the way to the screen (renderResults -> rebuildView),
@@ -1496,6 +1636,23 @@ function restoreRun(run){
   // Unhide BEFORE drawing: canvases in a hidden section have zero width.
   document.getElementById("results").hidden = false;
   renderResults();
+}
+
+/* M13: keep the link token the observatory issued, and only that.
+   The API issues one only where a fingerprint was impossible, so this never
+   fires on the folder-scan path — that path is not asked to store anything at
+   all, which is the reason the design is fingerprint-first. Returns "stored",
+   "failed" or "" (nothing was issued) so the result line can say which. */
+function keepLinkToken(data){
+  var token = (data && typeof data.token === "string") ? data.token : "";
+  if(!token) return "";
+  if(!Store || !STORE_OK) return "failed";
+  var next = Store.withLinkToken(STATE || Store.emptyState(), token);
+  if(!Store.save(next)) return "failed";
+  STATE = Store.load() || next;
+  if(LAST) LAST.link_token = linkToken();
+  updateStoreCard();
+  return "stored";
 }
 
 function recordSubmission(payload, data){

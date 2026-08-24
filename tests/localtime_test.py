@@ -523,6 +523,28 @@ def check_payload(tag, data, discriminating):
                   pay["totals"]["wasted_tokens"] == data["totals"]["wasted_tokens"],
                   "%s %s (%s): payload totals %r != engine totals %r"
                   % (tag, page, path, pay["totals"], data["totals"]))
+            # M13: the fingerprint has to leave with the payload. Nothing
+            # downstream can catch its absence — /api/submit accepts an
+            # anchorless submission and simply appends a second row, which is
+            # the double count this milestone removed.
+            want = data["probe_identity"]
+            check(pay.get("anchors") == want["anchors"],
+                  "%s %s (%s): payload.anchors %r, want the machine's %d "
+                  "fingerprint hashes. Without them every returning submitter "
+                  "opens a new row again."
+                  % (tag, page, path, pay.get("anchors"), len(want["anchors"])))
+            check(pay.get("token") == want["token"],
+                  "%s %s (%s): payload.token %r, want the browser's stored link "
+                  "token %r" % (tag, page, path, pay.get("token"), want["token"]))
+            # Narrowing the period must not touch either: they identify the
+            # machine, not the window.
+            check(pay.get("anchors") == got["whole"].get("anchors"),
+                  "%s %s (%s): the period picker changed the fingerprint"
+                  % (tag, page, path))
+        bare = got["bare"]
+        check("anchors" not in bare and "token" not in bare,
+              "%s %s: a scan with no fingerprint sent one anyway: %r"
+              % (tag, page, {k: bare[k] for k in ("anchors", "token") if k in bare}))
 
 
 def check_page_labels(data):

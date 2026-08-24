@@ -10,7 +10,7 @@
  *   3. rate limit (KV only)         -> 429 {ok:false, error:"rate_limited", retry_after}
  *   4. bot commit via GitHub Contents API (409 => re-GET + one retry)
  *                                   -> 502 {ok:false, error:"storage"} on failure
- *   5. 200 {ok:true, id, commit_url}
+ *   5. 200 {ok:true, id, commit_url, merged, period_start, period_end[, token]}
  *
  * Hard rules:
  *   - No module-scope mutable state: rate limiting lives in KV (env.RATE_LIMIT).
@@ -20,6 +20,39 @@
  *     field list is unchanged; only the value written into `nickname` is.
  *   - env.GITHUB_API_BASE overrides the API base for tests
  *     (default https://api.github.com).
+ *
+ * ---------- M13: one submitter, one row ----------
+ *
+ * Until M13 every submission appended a row and the observatory summed them,
+ * so a person who submitted twice was counted twice. Identity is now resolved
+ * before the write, in two layers:
+ *
+ *   layer 1 (preferred) `anchors` — sha256 of a deterministic sample of the
+ *     machine's own requestIds, hashed in the browser (assets/identity.js).
+ *     Nothing derived from the browser: a cleared store, a private window or a
+ *     different browser all still resolve to the same machine.
+ *   layer 2 (fallback)  `token` — a secret this API issued to a submitter who
+ *     had no anchors to send (the pasted-CLI path carries aggregates only).
+ *
+ * A match updates that row IN PLACE. It never appends a superseding row: this
+ * file is public and its credibility rests on a reader being able to add up
+ * what they see, and a file that only sums correctly if you know a hidden rule
+ * is the failure this milestone exists to fix. Git history is the audit trail.
+ *
+ * 🔴 data/submissions.json is PUBLIC, so nothing a reader of it can copy may
+ * be replayable. The record therefore stores a SECOND hash of what the client
+ * sends (identity.anchor_hashes = sha256("cco.anchor2.v1|" + anchor)) and only
+ * the hash of the token (identity.token_hash). Sending a value lifted out of
+ * the public file hashes to something else and matches nothing; forging a
+ * match needs the machine's own logs. Both fields are server-generated: a
+ * client that puts `identity`, `anchor_hashes`, `token_hash` or `updated_at`
+ * in its payload is rejected by the whitelist above, like any unknown field.
+ *
+ * An update MERGES (mergeRecord below): daily rows are unioned by date with
+ * the incoming row winning, the period widens to the union, and totals are
+ * recomputed from the merged daily rows so the file's own arithmetic stays
+ * true. M10's incremental path depends on this — replacing the row outright
+ * would let a 3-day increment wipe a 3-month record.
  */
 
 const MAX_BODY_BYTES = 64 * 1024;
@@ -35,7 +68,8 @@ const SESSIONS_ENUM = ["single", "multi", "unknown"];
 
 const TOP_FIELDS = [
   "nickname", "plan", "client", "concurrent_sessions",
-  "period_start", "period_end", "totals", "daily", "script_version"
+  "period_start", "period_end", "totals", "daily", "script_version",
+  "anchors", "token"
 ];
 const TOP_REQUIRED = [
   "plan", "client", "concurrent_sessions",
@@ -43,6 +77,16 @@ const TOP_REQUIRED = [
 ];
 const TOTALS_FIELDS = ["requests", "in_ttl_losses", "iron_losses", "wasted_tokens"];
 const DAILY_FIELDS = ["date", "requests", "losses", "wasted_tokens"];
+
+/* Identity (M13). MAX_ANCHORS mirrors assets/identity.js ANCHOR_COUNT.
+   The two prefixes are domain separation, not secrets: they keep an anchor
+   hash and a token hash from ever being the same digest of the same string. */
+const MAX_ANCHORS = 16;
+const HEX64_RE = /^[0-9a-f]{64}$/;
+const TOKEN_RE = /^[0-9a-f]{32}$/;
+const ANCHOR_STORE_PREFIX = "cco.anchor2.v1|";
+const TOKEN_STORE_PREFIX = "cco.token.v1|";
+const TOKEN_BYTES = 16;
 
 const DATA_PATH = "data/submissions.json";
 
@@ -210,6 +254,30 @@ function validateSchema(body) {
       !/^[A-Za-z0-9._-]+$/.test(body.script_version)) {
     errors.push("script_version: must be a short version tag (e.g. web-1.0)");
   }
+
+  /* M13 identity. Both are optional and both are shape-checked hard: an
+     anchor is a lowercase sha-256 digest and nothing else, so no free text
+     can ride into the public file through this door. The record's own
+     identity fields are NOT in TOP_FIELDS, so a client that tries to send a
+     stored hash is rejected by the undefined-field loop above. */
+  if ("anchors" in body) {
+    if (!Array.isArray(body.anchors)) {
+      errors.push("anchors: must be an array");
+    } else if (body.anchors.length > MAX_ANCHORS) {
+      errors.push("anchors: more than " + MAX_ANCHORS + " entries");
+    } else {
+      body.anchors.forEach(function (a, i) {
+        if (typeof a !== "string" || !HEX64_RE.test(a)) {
+          errors.push("anchors[" + i + "]: must be a lowercase sha-256 hex digest");
+        }
+      });
+    }
+  }
+  if ("token" in body) {
+    if (typeof body.token !== "string" || !TOKEN_RE.test(body.token)) {
+      errors.push("token: must be a 32-character lowercase hex string");
+    }
+  }
   return errors;
 }
 
@@ -327,23 +395,28 @@ function b64DecodeUtf8(b64) {
   return new TextDecoder().decode(bytes);
 }
 
-function randomHex4() {
-  const buf = new Uint8Array(2);
+function randomHex(bytes) {
+  const buf = new Uint8Array(bytes);
   crypto.getRandomValues(buf);
   return Array.from(buf)
     .map(function (b) { return b.toString(16).padStart(2, "0"); })
     .join("");
 }
 
-function buildSubmission(body, now) {
+function newSubmissionId(now) {
   const stamp = now.toISOString().slice(0, 19).replace(/[-T:]/g, ""); // yyyymmddHHMMSS
+  return "sub-" + stamp + "-" + randomHex(2);
+}
+
+/* The validated payload, normalised. No id and no submitted_at: whether this
+   becomes a new row or is merged into one is decided against the file that
+   comes back from GitHub, inside the commit loop. */
+function buildIncoming(body) {
   // The raw nickname is read, masked and dropped. It is never assigned to the
   // record, so nothing downstream (commit message included) can reach it.
   const masked = maskNickname(typeof body.nickname === "string" ? body.nickname.trim() : "");
   const nickname = masked === "" ? "anonymous" : escapeHtml(masked);
   return {
-    id: "sub-" + stamp + "-" + randomHex4(),
-    submitted_at: now.toISOString().slice(0, 10), // truncated to the day
     nickname: nickname,
     plan: body.plan,
     client: body.client,
@@ -368,11 +441,187 @@ function buildSubmission(body, now) {
   };
 }
 
-function commitMessage(submission) {
-  return "data: submission " + submission.id + " — " + submission.nickname +
+/* One stored row, always written in the same field order so a diff of the
+   public file reads as a diff of the numbers. */
+function composeRecord(id, submittedAt, updatedAt, fields, identity) {
+  const rec = { id: id, submitted_at: submittedAt };
+  if (updatedAt) rec.updated_at = updatedAt;
+  rec.nickname = fields.nickname;
+  rec.plan = fields.plan;
+  rec.client = fields.client;
+  rec.concurrent_sessions = fields.concurrent_sessions;
+  rec.period_start = fields.period_start;
+  rec.period_end = fields.period_end;
+  rec.totals = fields.totals;
+  rec.daily = fields.daily;
+  rec.script_version = fields.script_version;
+  if (identity) rec.identity = identity;
+  return rec;
+}
+
+function commitMessage(submission, merged) {
+  return "data: " + (merged ? "update" : "submission") + " " + submission.id +
+    " — " + submission.nickname +
     ", " + submission.period_start + "~" + submission.period_end +
     ", " + submission.totals.in_ttl_losses + " losses / " +
     submission.totals.requests + " req";
+}
+
+/* ---------- M13: identity resolution ---------- */
+
+/* What the client sent, hashed once more. `anchorHashes` is what gets stored
+   and compared; the anchors themselves are never written anywhere. */
+async function identityOf(body) {
+  const anchorHashes = [];
+  const anchors = Array.isArray(body.anchors) ? body.anchors : [];
+  for (let i = 0; i < anchors.length && i < MAX_ANCHORS; i++) {
+    anchorHashes.push(await sha256Hex(ANCHOR_STORE_PREFIX + anchors[i]));
+  }
+  const token = typeof body.token === "string" ? body.token : "";
+  const tokenHash = token ? await sha256Hex(TOKEN_STORE_PREFIX + token) : "";
+  return { anchorHashes: anchorHashes, tokenHash: tokenHash };
+}
+
+function storedAnchors(record) {
+  const id = record && isPlainObject(record.identity) ? record.identity : null;
+  if (!id || !Array.isArray(id.anchor_hashes)) return [];
+  return id.anchor_hashes.filter(function (h) {
+    return typeof h === "string" && HEX64_RE.test(h);
+  });
+}
+
+function storedTokenHash(record) {
+  const id = record && isPlainObject(record.identity) ? record.identity : null;
+  if (!id || typeof id.token_hash !== "string" || !HEX64_RE.test(id.token_hash)) return "";
+  return id.token_hash;
+}
+
+/* Which row this submission belongs to, or -1.
+   Fingerprint first, browser token second: the fingerprint is anchored to the
+   machine whose logs are being reported, the token only to a browser. ANY
+   single anchor overlap is the same machine — the sample drifts as logs are
+   written and rotated, so requiring more than one would lose the link on a
+   normal week of use. */
+function matchIndex(subs, anchorHashes, tokenHash) {
+  if (!Array.isArray(subs)) return -1;
+  if (anchorHashes.length) {
+    const want = new Set(anchorHashes);
+    for (let i = 0; i < subs.length; i++) {
+      const have = storedAnchors(subs[i]);
+      for (let j = 0; j < have.length; j++) {
+        if (want.has(have[j])) return i;
+      }
+    }
+  }
+  if (tokenHash) {
+    for (let i = 0; i < subs.length; i++) {
+      if (storedTokenHash(subs[i]) === tokenHash) return i;
+    }
+  }
+  return -1;
+}
+
+/* Anchors refresh to the newest set on every update, so the fingerprint tracks
+   the log folder's drift instead of going stale. A submission with no anchors
+   (the pasted path) leaves the stored ones alone rather than erasing them. */
+function buildIdentity(previous, ident, issuedTokenHash) {
+  const prevAnchors = previous && Array.isArray(previous.anchor_hashes)
+    ? previous.anchor_hashes.filter(function (h) {
+        return typeof h === "string" && HEX64_RE.test(h);
+      })
+    : [];
+  const anchors = ident.anchorHashes.length ? ident.anchorHashes : prevAnchors;
+  const prevToken = previous && typeof previous.token_hash === "string" &&
+    HEX64_RE.test(previous.token_hash) ? previous.token_hash : "";
+  const tokenHash = prevToken || issuedTokenHash || "";
+  if (!anchors.length && !tokenHash) return null;
+  const out = {};
+  if (anchors.length) out.anchor_hashes = anchors;
+  if (tokenHash) out.token_hash = tokenHash;
+  return out;
+}
+
+/* ---------- M13: the merge ---------- */
+
+function dailyRowOf(d) {
+  if (!isPlainObject(d) || parseDay(d.date) === null) return null;
+  if (!isCount(d.requests) || !isCount(d.losses) || !isCount(d.wasted_tokens)) return null;
+  return { date: d.date, requests: d.requests, losses: d.losses, wasted_tokens: d.wasted_tokens };
+}
+
+/* Union the daily rows by date and recompute the totals from the result.
+ *
+ * The incoming row wins for a date both cover: it is the fresher measurement
+ * of the same day. `iron_losses` is the one total that cannot be recomputed —
+ * there is no per-day iron column — so it is carried conservatively:
+ *
+ *     kept = max(0, existing.iron_losses - losses on the superseded days)
+ *
+ * which is EXACT in both flows that matter (a disjoint increment supersedes
+ * nothing, so all of it is kept; a full re-scan supersedes every existing day,
+ * so none of it is and the fresh count stands alone) and never over-claims in
+ * between. Iron is the worst subset of the losses, so under-counting it is the
+ * direction that cannot flatter the site's own headline.
+ */
+function mergeRecord(existing, incoming) {
+  const byDate = new Map();
+  const exDaily = Array.isArray(existing.daily) ? existing.daily : [];
+  let existingLosses = 0;
+  for (let i = 0; i < exDaily.length; i++) {
+    const row = dailyRowOf(exDaily[i]);
+    if (!row) continue;               // a hand-edited file must not poison the merge
+    byDate.set(row.date, row);
+    existingLosses += row.losses;
+  }
+  let supersededLosses = 0;
+  for (let i = 0; i < incoming.daily.length; i++) {
+    const row = incoming.daily[i];
+    const prev = byDate.get(row.date);
+    if (prev) supersededLosses += prev.losses;
+    byDate.set(row.date, { date: row.date, requests: row.requests,
+                           losses: row.losses, wasted_tokens: row.wasted_tokens });
+  }
+  const daily = Array.from(byDate.values()).sort(function (a, b) {
+    return a.date < b.date ? -1 : (a.date > b.date ? 1 : 0);
+  });
+
+  const totals = { requests: 0, in_ttl_losses: 0, iron_losses: 0, wasted_tokens: 0 };
+  for (let i = 0; i < daily.length; i++) {
+    totals.requests += daily[i].requests;
+    totals.in_ttl_losses += daily[i].losses;
+    totals.wasted_tokens += daily[i].wasted_tokens;
+  }
+  const exTotals = isPlainObject(existing.totals) ? existing.totals : {};
+  let exIron = isCount(exTotals.iron_losses) ? exTotals.iron_losses : 0;
+  if (exIron > existingLosses) exIron = existingLosses;
+  const keptIron = Math.max(0, exIron - supersededLosses);
+  totals.iron_losses = Math.min(keptIron + incoming.totals.iron_losses,
+                                totals.in_ttl_losses);
+
+  // The period widens to the union of both, never narrows: a 3-day increment
+  // must not shrink a 3-month record.
+  const starts = [incoming.period_start];
+  const ends = [incoming.period_end];
+  if (parseDay(existing.period_start) !== null) starts.push(existing.period_start);
+  if (parseDay(existing.period_end) !== null) ends.push(existing.period_end);
+  if (daily.length) {
+    starts.push(daily[0].date);
+    ends.push(daily[daily.length - 1].date);
+  }
+  starts.sort();
+  ends.sort();
+
+  return {
+    nickname: incoming.nickname,
+    plan: incoming.plan,
+    client: incoming.client,
+    concurrent_sessions: incoming.concurrent_sessions,
+    period_start: starts[0],
+    period_end: ends[ends.length - 1],
+    totals: totals,
+    daily: daily,
+    script_version: incoming.script_version
+  };
 }
 
 function ghFetch(url, token, options) {
@@ -386,13 +635,16 @@ function ghFetch(url, token, options) {
   return fetch(url, { method: options.method, headers: headers, body: options.body });
 }
 
-async function commitSubmission(env, submission) {
+/* The match, the merge and the write are all inside the retry loop on purpose:
+   a 409 means somebody else's commit landed in between, and after the re-GET
+   the answer to "does this machine already have a row" may have changed. */
+async function commitSubmission(env, incoming, ident, issued, now) {
   const token = env.GITHUB_TOKEN;
   const repo = env.GITHUB_REPO;
   if (!token || !repo) return { ok: false };
   const base = (env.GITHUB_API_BASE || "https://api.github.com").replace(/\/+$/, "");
   const url = base + "/repos/" + repo + "/contents/" + DATA_PATH;
-  const message = commitMessage(submission);
+  const today = now.toISOString().slice(0, 10); // truncated to the day
 
   // attempt 0 = normal path; attempt 1 = the single re-GET retry after a 409.
   for (let attempt = 0; attempt < 2; attempt++) {
@@ -418,9 +670,38 @@ async function commitSubmission(env, submission) {
       return { ok: false }; // 404 = first-ever submission; anything else is storage failure
     }
 
-    doc.submissions.push(submission);
+    const idx = matchIndex(doc.submissions, ident.anchorHashes, ident.tokenHash);
+    const merged = idx !== -1;
+    const previous = merged ? doc.submissions[idx] : null;
+    const prevIdentity = previous && isPlainObject(previous.identity)
+      ? previous.identity : null;
+    // A token is issued only where a fingerprint is impossible, and only when
+    // the row does not already carry one. "Impossible" is decided in exactly
+    // one place — the mint in onRequestPost, which leaves issued.tokenHash
+    // empty on the fingerprinted path — so there is a single guard to get
+    // wrong rather than two that can disagree.
+    const needsToken = issued.tokenHash !== "" &&
+      !(prevIdentity && typeof prevIdentity.token_hash === "string" &&
+        HEX64_RE.test(prevIdentity.token_hash));
+    const identity = buildIdentity(prevIdentity, ident,
+      needsToken ? issued.tokenHash : "");
+
+    let record;
+    if (merged) {
+      const fields = mergeRecord(previous, incoming);
+      const submittedAt = typeof previous.submitted_at === "string" &&
+        /^\d{4}-\d{2}-\d{2}$/.test(previous.submitted_at) ? previous.submitted_at : today;
+      const id = typeof previous.id === "string" && previous.id ? previous.id
+        : newSubmissionId(now);
+      record = composeRecord(id, submittedAt, today, fields, identity);
+      doc.submissions[idx] = record;   // in place: the row keeps its slot and its id
+    } else {
+      record = composeRecord(newSubmissionId(now), today, "", incoming, identity);
+      doc.submissions.push(record);
+    }
+
     const putBody = {
-      message: message,
+      message: commitMessage(record, merged),
       content: b64EncodeUtf8(JSON.stringify(doc, null, 2) + "\n")
     };
     if (sha) putBody.sha = sha;
@@ -435,7 +716,15 @@ async function commitSubmission(env, submission) {
       let out = null;
       try { out = await put.json(); } catch (e) { /* commit landed; url optional */ }
       const commitUrl = out && out.commit && out.commit.html_url ? out.commit.html_url : "";
-      return { ok: true, commitUrl: commitUrl };
+      return {
+        ok: true,
+        commitUrl: commitUrl,
+        id: record.id,
+        merged: merged,
+        periodStart: record.period_start,
+        periodEnd: record.period_end,
+        token: needsToken ? issued.token : ""
+      };
     }
     if (put.status !== 409) break; // only a sha conflict earns the single retry
   }
@@ -475,10 +764,30 @@ export async function onRequestPost(context) {
     return jsonResponse(429, { ok: false, error: "rate_limited", retry_after: rl.retryAfter });
   }
 
-  const submission = buildSubmission(body, new Date());
-  const commit = await commitSubmission(env, submission);
+  const now = new Date();
+  const incoming = buildIncoming(body);
+  const ident = await identityOf(body);
+  // Minted once, before the loop, so a 409 retry cannot hand the browser a
+  // token the stored hash does not correspond to. Used only if the resolved
+  // row turns out to need one.
+  const issued = { token: "", tokenHash: "" };
+  if (ident.anchorHashes.length === 0) {
+    issued.token = randomHex(TOKEN_BYTES);
+    issued.tokenHash = await sha256Hex(TOKEN_STORE_PREFIX + issued.token);
+  }
+
+  const commit = await commitSubmission(env, incoming, ident, issued, now);
   if (!commit.ok) {
     return jsonResponse(502, { ok: false, error: "storage" });
   }
-  return jsonResponse(200, { ok: true, id: submission.id, commit_url: commit.commitUrl });
+  const out = {
+    ok: true,
+    id: commit.id,
+    commit_url: commit.commitUrl,
+    merged: commit.merged,
+    period_start: commit.periodStart,
+    period_end: commit.periodEnd
+  };
+  if (commit.token) out.token = commit.token;
+  return jsonResponse(200, out);
 }

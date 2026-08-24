@@ -29,8 +29,10 @@
 
 var fs = require("fs");
 var path = require("path");
+var nodeCrypto = require("crypto");
 var engine = require(path.join(__dirname, "..", "assets", "parse.js"));
 var store = require(path.join(__dirname, "..", "assets", "store.js"));
+var identity = require(path.join(__dirname, "..", "assets", "identity.js"));
 
 function collect(dir, prefix, out) {
   var entries = fs.readdirSync(dir, { withFileTypes: true }).sort(function (a, b) {
@@ -99,13 +101,26 @@ if (!root || !jobRaw) {
   process.exit(2);
 }
 var job = JSON.parse(jobRaw);
-var result = engine.parseFiles(collect(root, "", []));
+var files = collect(root, "", []);
+var result = engine.parseFiles(files);
 var census = censusFromDaily(result.daily);
+
+/* M13: the fingerprint the check page hands to buildRun. Hashed here with the
+   same prefix assets/identity.js uses, synchronously, so the storage runner
+   stays a plain script — identity.js's own async path is exercised by
+   tests/identity_test.py. What matters here is that the DIGESTS reach storage
+   and the requestIds they came from do not, which the checker greps for. */
+var sampledIds = identity.sample(identity.collect(files));
+var anchors = sampledIds.map(function (id) {
+  return nodeCrypto.createHash("sha256")
+    .update(identity.ANCHOR_PREFIX + id, "utf8").digest("hex");
+});
 
 var run = store.buildRun(result, census, {
   saved_at: "2026-08-24T09:00:00.000Z",
   source: "folder",
-  script_version: engine.SCRIPT_VERSION
+  script_version: engine.SCRIPT_VERSION,
+  anchors: anchors
 });
 
 /* round trip through a working store */
@@ -117,7 +132,8 @@ var reloaded = store.load(s1);
 var run2 = store.buildRun(result, census, {
   saved_at: "2026-08-25T09:00:00.000Z",
   source: "folder",
-  script_version: engine.SCRIPT_VERSION
+  script_version: engine.SCRIPT_VERSION,
+  anchors: anchors
 });
 var state2 = store.addSubmission(store.addRun(reloaded, run2), {
   period_start: run.period_start,
@@ -159,6 +175,31 @@ var tiny = quotaStorage(8);
 var tinySaved = store.save(store.addRun(store.emptyState(), run), tiny);
 var tinyBack = store.load(tiny);
 
+/* M13 link token: the one value the page stores without being asked. It has to
+   survive addRun/addSubmission, refuse anything that is not a 32-hex string,
+   and disappear with clear() like everything else in this key. */
+var s4 = okStorage();
+var linkState = store.withLinkToken(store.emptyState(), "0123456789abcdef0123456789abcdef");
+store.save(store.addSubmission(store.addRun(linkState, run), {
+  period_start: run.period_start, period_end: run.period_end,
+  submitted_at: "2026-08-25T09:05:00.000Z", id: "sub-20260825-abcd"
+}), s4);
+var linkBack = store.load(s4);
+var linkCleared = (store.clear(s4), store.load(s4));
+var link = {
+  token: store.linkTokenOf(linkBack),
+  survives_runs: !!(linkBack && linkBack.runs.length === 1),
+  survives_submissions: !!(linkBack && linkBack.submissions.length === 1),
+  rejects_short: store.linkTokenOf(store.withLinkToken(store.emptyState(), "abc")),
+  rejects_upper: store.linkTokenOf(
+    store.withLinkToken(store.emptyState(), "0123456789ABCDEF0123456789ABCDEF")),
+  rejects_nonstring: store.linkTokenOf(store.withLinkToken(store.emptyState(), 12345)),
+  cleared: linkCleared === null,
+  // Anchors the store refuses: wrong length, uppercase, non-string, over the cap.
+  anchor_filter: store.sanitizeAnchors(
+    [anchors[0], "zz", anchors[0].toUpperCase(), 7, anchors[1]])
+};
+
 /* clearing must actually empty the store */
 var s3 = okStorage();
 store.save(store.addRun(store.emptyState(), run), s3);
@@ -193,6 +234,9 @@ var out = {
     has_daily: !!(quotaBack && quotaBack.runs[0] && quotaBack.runs[0].daily.length),
     tiny_saved: tinySaved, tiny_back: tinyBack },
   clear: { before: beforeClear, returned: cleared, after: afterClear },
+  anchors: anchors,
+  sampled_ids: sampledIds,
+  link: link,
   increments: (job.increments || []).map(function (c) {
     return store.incrementalRange(c.dates, c.submissions, c.today, c.maxDays);
   }),

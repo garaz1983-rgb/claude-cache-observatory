@@ -4,9 +4,19 @@
 Targets:
   - assets/parse.js          — judged by tests/parity_check.py (M01..M15, M22)
   - functions/api/submit.js  — judged by tests/submit_contract_test.py
-                               (S16..S21, S23..S24)
+                               (S16..S21, S23..S24, S39..S47)
   - assets/localtime.js      — judged by tests/localtime_test.py (L25..L28)
-  - check.html, ko/check.html — judged by tests/localtime_test.py (C29..C30)
+  - check.html, ko/check.html — judged by tests/localtime_test.py
+                               (C29..C30, C48..C51)
+  - assets/identity.js       — judged by tests/identity_test.py (I34..I38)
+
+M13 added the last target and the S39..S47 block. Those two groups guard an
+AUTHORISATION surface that did not exist before: matchIndex decides which
+existing row a submission may rewrite, and mergeRecord decides what survives
+that rewrite. An authorisation check that never runs is worse than none, so
+every branch of both is mutated here — including the two that make the public
+file safe to publish (the anchors are hashed a SECOND time before storage, and
+what a client sends is never compared against itself).
 
 M12.1 added the last two targets. Before it, no anchor reached check.html at
 all, and a mutant that built the submission payload out of the localised view —
@@ -38,10 +48,12 @@ SITE_DIR = os.path.dirname(HERE)
 PARITY = os.path.join(HERE, "parity_check.py")
 CONTRACT = os.path.join(HERE, "submit_contract_test.py")
 LOCALTIME = os.path.join(HERE, "localtime_test.py")
+IDENTITY = os.path.join(HERE, "identity_test.py")
 
 PARSE_JS_REL = "assets/parse.js"
 SUBMIT_JS_REL = "functions/api/submit.js"
 LOCALTIME_JS_REL = "assets/localtime.js"
+IDENTITY_JS_REL = "assets/identity.js"
 CHECK_HTML_REL = "check.html"
 CHECK_HTML_KO_REL = "ko/check.html"
 
@@ -56,6 +68,7 @@ RUNNERS = {
     "parity": (PARITY, 300),
     "contract": (CONTRACT, 900),
     "localtime": (LOCALTIME, 600),
+    "identity": (IDENTITY, 300),
 }
 
 # (id, target file relative to site/, anchor — must occur exactly once in the
@@ -191,6 +204,83 @@ MUTATIONS = [
      "  var off = ObservatoryLocalTime.offsetAtLocal(dateKey, hour, VIEW ? VIEW.offsetAt : undefined);\n"
      "  return typeof off === \"number\" ? off : ZONE.offsetMinutes;",
      "  return ZONE.offsetMinutes;", "localtime"),
+
+    # -- M13: the machine fingerprint (assets/identity.js) ------------------
+    # The sample's shape IS the guarantee. Only-the-oldest breaks on a log
+    # cleanup, only-the-newest cannot match anything that came before, and a
+    # sample ordered by anything but the record's own instant is not "the
+    # earliest" at all.
+    ("I34_head_dropped", IDENTITY_JS_REL,
+     "for (var i = 0; i < head; i++) take(i);",
+     "void head;", "identity"),
+    ("I35_spread_dropped", IDENTITY_JS_REL,
+     "for (var j = 0; j < spread; j++) take(Math.round((j + 0.5) * n / spread));",
+     "void spread;", "identity"),
+    ("I36_order_not_by_instant", IDENTITY_JS_REL,
+     "if (a.ms !== b.ms) return a.ms - b.ms;",
+     "if (false) return a.ms - b.ms;", "identity"),
+    ("I37_anchor_prefix_dropped", IDENTITY_JS_REL,
+     "return sha256Hex(ANCHOR_PREFIX + id);",
+     "return sha256Hex(id);", "identity"),
+    ("I38_head_count_shrunk", IDENTITY_JS_REL,
+     "var HEAD_COUNT = 8;      // of those, how many are the earliest records",
+     "var HEAD_COUNT = 1;      // of those, how many are the earliest records",
+     "identity"),
+
+    # -- M13: identity resolution and the merge (functions/api/submit.js) ---
+    # S40 and S42 are the security pair. S40 makes the match accept anything
+    # that has an anchor at all; S42 stores what the client sent instead of a
+    # hash of it, which would turn every value in the public dataset into an
+    # overwrite key for the row it sits in. Both must die on case13.
+    ("S39_identity_match_disabled", SUBMIT_JS_REL,
+     "if (want.has(have[j])) return i;",
+     "if (false) return i;", "contract"),
+    ("S40_identity_matches_anything", SUBMIT_JS_REL,
+     "const want = new Set(anchorHashes);",
+     "const want = { has: function () { return true; } };", "contract"),
+    ("S41_token_match_disabled", SUBMIT_JS_REL,
+     "if (storedTokenHash(subs[i]) === tokenHash) return i;",
+     "if (false) return i;", "contract"),
+    ("S42_anchor_stored_unhashed", SUBMIT_JS_REL,
+     "anchorHashes.push(await sha256Hex(ANCHOR_STORE_PREFIX + anchors[i]));",
+     "anchorHashes.push(anchors[i]);", "contract"),
+    ("S43_merge_drops_existing_days", SUBMIT_JS_REL,
+     "for (let i = 0; i < exDaily.length; i++) {",
+     "for (let i = 0; i < 0; i++) {", "contract"),
+    ("S44_merge_keeps_stale_day", SUBMIT_JS_REL,
+     "byDate.set(row.date, { date: row.date, requests: row.requests,",
+     "if (!prev) byDate.set(row.date, { date: row.date, requests: row.requests,",
+     "contract"),
+    ("S45_merge_period_narrows", SUBMIT_JS_REL,
+     "    period_start: starts[0],",
+     "    period_start: incoming.period_start,", "contract"),
+    ("S46_merge_totals_not_recomputed", SUBMIT_JS_REL,
+     "totals.requests += daily[i].requests;",
+     "totals.requests += 0;", "contract"),
+    # 🔴 The rule the user chose this design for: the folder-scan path is never
+    # asked to store anything, so a fingerprinted submission must not be handed
+    # a token. This is the single place that decides it.
+    ("S47_token_forced_on_folder_path", SUBMIT_JS_REL,
+     "  if (ident.anchorHashes.length === 0) {",
+     "  if (true) {", "contract"),
+
+    # -- M13: the pages still attach what keeps a submitter to one row -------
+    # Nothing downstream can catch a page that stops sending its fingerprint:
+    # /api/submit accepts an anchorless submission and appends a second row,
+    # which is exactly the double count this milestone removed. Same reason
+    # C30/C31 exist for the UTC provenance of the same block.
+    ("C48_payload_drops_anchors", CHECK_HTML_REL,
+     "  if(Array.isArray(LAST.anchors) && LAST.anchors.length) payload.anchors = LAST.anchors.slice(0, 16);",
+     "  void 0;", "localtime"),
+    ("C49_payload_drops_anchors_ko", CHECK_HTML_KO_REL,
+     "  if(Array.isArray(LAST.anchors) && LAST.anchors.length) payload.anchors = LAST.anchors.slice(0, 16);",
+     "  void 0;", "localtime"),
+    ("C50_payload_drops_token", CHECK_HTML_REL,
+     '  if(typeof LAST.link_token === "string" && LAST.link_token) payload.token = LAST.link_token;',
+     "  void 0;", "localtime"),
+    ("C51_payload_drops_token_ko", CHECK_HTML_KO_REL,
+     '  if(typeof LAST.link_token === "string" && LAST.link_token) payload.token = LAST.link_token;',
+     "  void 0;", "localtime"),
 ]
 
 

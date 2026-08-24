@@ -391,11 +391,11 @@ a{color:inherit}
 
 <header>
   <h1>Cache Eviction Observatory</h1>
-  <p class="sub">Tracking Claude Code in-TTL <span class="mono">previous_message_not_found</span> prompt-cache losses across accounts: every data point below was parsed locally in a volunteer's browser and submitted as approved aggregate numbers only.</p>
+  <p class="sub">Tracking Claude Code in-TTL <span class="mono">previous_message_not_found</span> prompt-cache losses across the machines that report them: every data point below was parsed locally in a volunteer's browser and submitted as approved aggregate numbers only. One machine is one row — a second submission from the same machine updates its row instead of adding another.</p>
 </header>
 
 <div class="kpis">
-  <div class="kpi"><div class="label">Accounts submitted</div><div class="val" id="kpiAccounts">–</div><div class="note">one row per submission</div></div>
+  <div class="kpi"><div class="label">Machines reporting</div><div class="val" id="kpiMachines">–</div><div class="note">one row per machine, not per person</div></div>
   <div class="kpi crit"><div class="label">Observed in-TTL losses</div><div class="val" id="kpiLosses">–</div><div class="note">legitimate TTL expiries excluded</div></div>
   <div class="kpi crit"><div class="label">Re-billed tokens</div><div class="val" id="kpiTokens">–</div><div class="note">cache writes charged again after a loss</div></div>
   <div class="kpi"><div class="label">Observation period</div><div class="val" id="kpiPeriod" style="font-size:1.05rem">–</div><div class="note">earliest to latest submitted day</div></div>
@@ -413,7 +413,7 @@ a{color:inherit}
     <p>In August, attention turned to a diagnostic the server itself writes into local session logs: <span class="mono">message.diagnostics.cache_miss_reason</span>. That field made losses measurable from server-stamped records instead of gut feeling.</p>
     <p>An honest counterpoint belongs here: most raw hits are not a bug. In the operator's own data, 78% of raw <span class="mono">previous_message_not_found</span> records were legitimate expiries after long idle periods. This site excludes those and counts only losses inside the cache TTL.</p>
     <p>Controlled observations followed: four sessions on the same machine lost their cache within the same single minute, and one cache entry vanished 24 seconds after it was created. The same signature has been confirmed on three independent accounts.</p>
-    <p>Whether this is a handful of broken environments or a widespread problem can only be answered with structured multi-account data. Collecting that is what this site is for. Discussion continues in <a href="https://github.com/anthropics/claude-code/issues/87966">anthropics/claude-code#87966</a>.</p>
+    <p>Whether this is a handful of broken environments or a widespread problem can only be answered with structured data from many machines. Collecting that is what this site is for. Discussion continues in <a href="https://github.com/anthropics/claude-code/issues/87966">anthropics/claude-code#87966</a>.</p>
   </div>
 </section>
 
@@ -459,7 +459,7 @@ a{color:inherit}
 
 <section id="secFleet">
   <h2>Fleet daily loss rate <span class="badge real h2-badge">Real submissions</span></h2>
-  <p class="desc">In-TTL losses as a share of that day's requests, one line per submission. Vertical alignment across accounts points at server-side events; a step down that holds across accounts points at a fix being deployed. <b>Every day on this axis is a UTC day</b>, the same cut for every submission — which is what makes lining two accounts up on the same date mean anything.</p>
+  <p class="desc">In-TTL losses as a share of that day's requests, one line per reporting machine. Vertical alignment across machines points at server-side events; a step down that holds across machines points at a fix being deployed. <b>Every day on this axis is a UTC day</b>, the same cut for every submission — which is what makes lining two machines up on the same date mean anything.</p>
   <div class="card">
     <canvas id="fleet" height="260"></canvas>
     <div class="legend" id="fleetLegend"></div>
@@ -516,7 +516,7 @@ a{color:inherit}
     <ul class="env-limits">
       <li>Every environment field is <b>self-reported</b> at submission time. Nothing in the pipeline can verify it.</li>
       <li id="envSoft">–</li>
-      <li>Request volume differs by an order of magnitude between accounts, so these denominators are not comparable in size: one heavy account can carry a whole group.</li>
+      <li>Request volume differs by an order of magnitude between machines, so these denominators are not comparable in size: one heavy machine can carry a whole group.</li>
       <li>Groups with fewer than <b id="envMinN">5</b> submissions show counts only. Rows are ordered, not ranked; what a row supports is "this is what has been submitted so far".</li>
     </ul>
   </div>
@@ -652,7 +652,7 @@ function renderKpis(subs){
     if(minD === null || s.period_start < minD) minD = s.period_start;
     if(maxD === null || s.period_end > maxD) maxD = s.period_end;
   });
-  document.getElementById("kpiAccounts").textContent = String(subs.length);
+  document.getElementById("kpiMachines").textContent = String(subs.length);
   document.getElementById("kpiLosses").textContent = fmtInt(losses);
   document.getElementById("kpiTokens").textContent = fmtTok(tokens);
   document.getElementById("kpiPeriod").textContent = minD && maxD ? minD + " → " + maxD : "–";
@@ -810,13 +810,13 @@ function renderTable(subs){
    ENV_MIN_N is the sample floor a group must clear before its loss rate is
    printed. It is not a power calculation, it is a floor, and it has two
    reasons:
-     (1) requests are pooled per group, so below it the largest account
+     (1) requests are pooled per group, so below it the largest machine
          routinely holds most of a group's denominator and the "group rate"
-         is really that one account's rate wearing a group label;
+         is really that one machine's rate wearing a group label;
      (2) at n = 5 no single submission is a majority of its group by count.
    Below the floor the group still shows n, requests and losses; only the
    derived rate is withheld. This matters more here than elsewhere on the
-   page: the site's whole argument is that one account cannot separate a
+   page: the site's whole argument is that one machine cannot separate a
    broken environment from a widespread problem, and a rate computed from
    three submissions would put exactly that inference back on screen. */
 var ENV_MIN_N = 5;

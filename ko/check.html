@@ -186,6 +186,8 @@ details.preview pre{margin:0; padding:2px 12px 12px; font-family:ui-monospace,'C
 .store-cmp{margin:13px 0 0; font-size:.85rem; padding:10px 13px; border-left:3px solid var(--amber); background:var(--amber-soft); border-radius:0 6px 6px 0; font-variant-numeric:tabular-nums}
 .sub-warn{font-size:.85rem; margin:0 0 14px; padding:10px 13px; border-left:3px solid var(--amber); background:var(--amber-soft); border-radius:0 6px 6px 0}
 .inc-hint{margin:9px 0 0; font-size:.78rem; color:var(--muted); font-variant-numeric:tabular-nums}
+.sub-identity{font-size:.83rem; line-height:1.6; margin:0 0 14px; padding:10px 13px; border-left:3px solid var(--line); background:var(--bg); border-radius:0 6px 6px 0; color:var(--muted)}
+.sub-identity b{color:var(--ink)}
 .modal-back{position:fixed; inset:0; z-index:100; background:var(--scrim); display:flex; align-items:center; justify-content:center; padding:20px}
 .modal-box{width:100%; max-width:460px; padding:20px 22px; background:var(--surface); color:var(--ink); border:1px solid var(--line); border-radius:10px; box-shadow:0 18px 50px var(--scrim)}
 .modal-box h3{margin:0 0 10px; font-size:1rem; font-weight:700}
@@ -225,7 +227,8 @@ a{color:inherit}
   <h3>돌리기 전에: 이 페이지가 무엇을 하고, 무엇을 하지 않나</h3>
   <ul>
     <li><b>로그 파일은 이 기기를 떠나지 않는다.</b> 읽기·판정·그래프가 전부 이 탭 안에서 끝난다. 2번 카드에서 <b>"이 브라우저에 저장"</b>을 누르지 않으면 탭을 닫는 순간 전부 사라진다. 저장을 누르면 이 컴퓨터의 브라우저 저장 공간에만 기록되고, 서버로는 전송되지 않으며, 버튼 하나로 언제든 지울 수 있다. 진단만 돌리면 네트워크 요청이 <b>0건</b>이다. F12 → Network 탭을 열어둔 채 실행해 직접 확인할 수 있다.</li>
-    <li><b>전송은 3번 카드의 버튼을 눌러야만 일어난다.</b> 그때 나가는 것도 화면에 미리 보여준 집계 숫자(일별 건수·합계)와 직접 입력한 닉네임뿐이다. 대화 내용·파일 경로·세션 ID·시각은 제출 스키마에 아예 없다.</li>
+    <li><b>전송은 3번 카드의 버튼을 눌러야만 일어난다.</b> 그때 나가는 것도 화면에 미리 보여준 집계 숫자(일별 건수·합계), 직접 입력한 닉네임, 그리고 관측소가 이 기계를 같은 제출자로 알아보게 하는 <b>단방향 해시</b> 최대 16개뿐이다. 대화 내용·파일 경로·세션 ID·시각은 제출 스키마에 아예 없다.</li>
+    <li><b>그 해시가 왜 있고, 무엇인가.</b> 관측소는 모든 행을 더한다. 그래서 한 사람이 두 번 제출하면 두 번 세어졌다. 여기엔 로그인이 없으므로, 이 페이지는 로그 안에 이미 들어 있는 request ID로 이 기계의 고정 익명 식별자를 만든다. 정해진 규칙으로 일부를 고르고 각각을 SHA-256으로 해시해서, 다이제스트만 보낸다. request ID 자체는 나가지 않고 해시에서 되돌릴 수도 없으며, 관측소는 받은 다이제스트를 한 번 더 해시해서 저장한다. 그래서 공개 데이터를 읽는 사람이 손에 쥐는 값으로는 아무것도 되돌려 보낼 수 없다. 보낼 목록 전체는 3번 카드의 JSON 미리보기에 그대로 나온다.</li>
     <li><b>빌드 스텝이 없다.</b> 브라우저가 실행하는 코드가 repo에 올라간 파일 그대로다. view-source와 GitHub를 한 줄씩 대조할 수 있다.</li>
     <li><b>로그인도 계정도 없다.</b> Anthropic 계정이나 API와는 어떤 통신도 하지 않고, 로그 파일을 읽기만 한다.</li>
   </ul>
@@ -234,7 +237,8 @@ a{color:inherit}
     <ul class="map">
       <li><span class="mono">assets/parse.js</span>: 유실 판정 엔진. 이 페이지의 모든 숫자가 여기서 나온다. CLI <span class="mono">scripts/check_cache_loss.py</span>와 같은 규칙이며, 두 결과가 같은지 자동 테스트로 대조한다.</li>
       <li><span class="mono">assets/charts.js</span>: 그래프·히트맵 그리기 전용. 판정 계산은 하지 않는다.</li>
-      <li><span class="mono">assets/store.js</span>: 선택적 로컬 저장. 이 컴퓨터의 브라우저 저장 공간만 건드리고 네트워크는 쓰지 않으며, 저장 버튼을 누르고 확인했을 때만 동작한다.</li>
+      <li><span class="mono">assets/store.js</span>: 선택적 로컬 저장. 이 컴퓨터의 브라우저 저장 공간만 건드리고 네트워크는 쓰지 않으며, 저장 버튼을 누르고 확인했을 때만 동작한다. 예외는 3번 카드에서 설명하는 연결 토큰 하나뿐이고, 지문을 만들 수 없었던 제출에서만 저장된다.</li>
+      <li><span class="mono">assets/identity.js</span>: 기계 지문. 불러온 로그에서 request ID를 읽어 16개를 골라 이 자리에서 해시한다. 네트워크를 쓰지 않고 아무것도 저장하지 않는다.</li>
       <li><span class="mono">functions/api/submit.js</span>: 서버에서 도는 유일한 코드. 제출 버튼을 눌렀을 때만 호출되고, 스키마 검증 후 공개 repo에 커밋한다.</li>
       <li><span class="mono">data/submissions.json</span>: 공개 집계 데이터. 제출 1건이 커밋 1건으로 남아 이력 전체를 누구나 감사할 수 있다.</li>
       <li><span class="mono">wrangler.toml</span>: 서버 설정도 repo에 공개. 숨겨진 백엔드가 없다는 뜻이다.</li>
@@ -329,7 +333,7 @@ a{color:inherit}
 
   <div class="store-box" id="storeBox">
     <h3>이 결과를 이 브라우저에 남기기 (선택)</h3>
-    <p class="lead">자동 저장은 없다. 버튼을 누르면 총계·일별 집계·시간대별 요청 수가 <b>이 컴퓨터의 브라우저 저장 공간</b>에 기록된다. 서버로는 가지 않고, "저장된 기록 지우기"를 누르면 즉시 지워진다. 저장해 두면 다음 진단이 마지막 제출 다음 날부터 시작되므로 이미 보낸 기간을 다시 보내지 않아도 된다. 이 카드에 적히는 기간은 모두 <b>UTC</b> 기준으로, 위 그래프가 아니라 제출 카드와 같은 기준이다. <b>공용·공유 컴퓨터에서는 저장하지 말 것.</b></p>
+    <p class="lead">자동 저장은 없다. 버튼을 누르면 총계·일별 집계·시간대별 요청 수·이 기계의 지문 해시가 <b>이 컴퓨터의 브라우저 저장 공간</b>에 기록된다. 서버로는 가지 않고, "저장된 기록 지우기"를 누르면 즉시 지워진다. 저장해 두면 다음 진단이 마지막 제출 다음 날부터 시작되므로 이미 보낸 기간을 다시 보내지 않아도 된다. 이 카드에 적히는 기간은 모두 <b>UTC</b> 기준으로, 위 그래프가 아니라 제출 카드와 같은 기준이다. <b>공용·공유 컴퓨터에서는 저장하지 말 것.</b></p>
     <p class="store-state off" id="storeState">이 브라우저에 저장된 기록이 없다.</p>
     <div class="store-actions">
       <button id="storeSaveBtn" type="button" class="go">이 브라우저에 저장</button>
@@ -340,7 +344,7 @@ a{color:inherit}
 
   <section id="submitSection">
     <h2>3 · 관측소에 집계 공유하기 (선택)</h2>
-    <p class="desc">전송되는 것은 아래 JSON <b>전문 그대로</b>다. 기간·총계·일별 카운트뿐. 로그·파일 경로·세션 내용·건별 상세는 절대 전송되지 않는다. 공유 기간을 좁히면 총계도 그 기간으로 다시 계산된다. <b>이 카드의 날짜는 위 화면과 달리 UTC 기준</b>이다. 여러 나라의 제출을 날짜별로 더하는 자리라, 각자의 현지 날짜로 자르면 전체 일별 합계가 어긋나기 때문이다. 아래 기간 선택도 실제로 전송될 UTC 날짜를 보여 준다.</p>
+    <p class="desc">전송되는 것은 아래 JSON <b>전문 그대로</b>다. 기간·총계·일별 카운트, 그리고 이 기계를 한 행으로 유지하는 단방향 지문 해시뿐. 로그·파일 경로·세션 내용·건별 상세는 절대 전송되지 않는다. 공유 기간을 좁히면 총계도 그 기간으로 다시 계산된다. <b>이 카드의 날짜는 위 화면과 달리 UTC 기준</b>이다. 여러 나라의 제출을 날짜별로 더하는 자리라, 각자의 현지 날짜로 자르면 전체 일별 합계가 어긋나기 때문이다. 아래 기간 선택도 실제로 전송될 UTC 날짜를 보여 준다.</p>
     <div class="card">
       <div class="range-box" id="subRange" hidden>
         <div class="range-head">공유 기간</div>
@@ -364,6 +368,7 @@ a{color:inherit}
         <p class="inc-hint" id="subIncHint" hidden></p>
       </div>
       <div class="sub-warn" id="subOverlap" hidden></div>
+      <p class="sub-identity" id="subIdentity" hidden></p>
       <div class="submit-form">
         <div>
           <label for="subNickname">닉네임 (선택, 최대 20자)</label>
@@ -407,7 +412,7 @@ a{color:inherit}
       </details>
       <div class="submit-actions">
         <button class="btn-primary" id="subBtn" type="button">내 결과 공유</button>
-        <span class="note">POST <span class="mono">/api/submit</span> · 공개 데이터셋에 봇 커밋으로 추가 · 시간당 최대 3회</span>
+        <span class="note">POST <span class="mono">/api/submit</span> · 공개 데이터셋에 봇 커밋으로 기록되고, 이 기계의 행이 이미 있으면 그 행에 합쳐진다 · 시간당 최대 3회</span>
       </div>
       <div class="submit-msg" id="subMsg" hidden></div>
     </div>
@@ -426,7 +431,7 @@ a{color:inherit}
   <div class="modal-box" role="dialog" aria-modal="true" aria-labelledby="saveModalTitle" aria-describedby="saveModalBody">
     <h3 id="saveModalTitle">이 결과를 이 브라우저에 저장할까?</h3>
     <ul id="saveModalBody">
-      <li><b>이 컴퓨터의 이 브라우저에 남는다.</b> 결과가 브라우저 저장 공간에 기록되고, 지울 때까지 그대로 있다. 서버로는 아무것도 보내지 않는다.</li>
+      <li><b>이 컴퓨터의 이 브라우저에 남는다.</b> 결과가 브라우저 저장 공간에 기록되고, 지울 때까지 그대로 있다. 서버로는 아무것도 보내지 않는다. 기계 지문 해시도 함께 저장되므로, 저장분을 나중에 제출해도 두 번째 행이 생기지 않고 본인 행이 갱신된다.</li>
       <li><b>공용·공유 컴퓨터라면 저장하지 말 것.</b> 이 브라우저 프로필을 뒤에 쓰는 사람이 이 페이지를 열어 결과를 볼 수 있다.</li>
       <li><b>언제든 지울 수 있다.</b> "저장된 기록 지우기"를 누르면 즉시, 완전히 삭제된다.</li>
     </ul>
@@ -438,6 +443,7 @@ a{color:inherit}
 </div>
 
 <script src="../assets/parse.js"></script>
+<script src="../assets/identity.js"></script>
 <script src="../assets/store.js"></script>
 <script src="../assets/charts.js"></script>
 <script src="../assets/localtime.js"></script>
@@ -451,6 +457,17 @@ var LAST = null;     // {result, census, source_version}, census null = 붙여�
    그리지 않는다. */
 var VIEW = null;     // {localized, daily, census, evtMap, period, utcPeriod}
 var ZONE = ObservatoryLocalTime.detect("ko-KR");
+
+/* M13: 이 브라우저가 들고 있는 연결 토큰. 관측소가 지문을 만들 수 없었던
+   제출(붙여넣기 경로)에만 존재한다. 읽기는 부수효과가 없다. 시크릿 창이나
+   사이트 데이터 차단은 store.js 자체 가드가 처리한다. LAST를 만드는 모든
+   경로가 이 값을 payload로 실어 나르므로 여기에 둔다. */
+function linkToken(){
+  try{
+    return (window.CacheObservatoryStore && STORE_OK && STATE)
+      ? CacheObservatoryStore.linkTokenOf(STATE) : "";
+  }catch(e){ return ""; }
+}
 
 function fmtInt(n){ return n.toLocaleString("ko-KR"); }
 function fmtTok(n){
@@ -630,8 +647,14 @@ async function processList(list){
     showError("파싱 실패: " + e.message);
     return;
   }
+  // M13: 로그에서 뽑아 이 자리에서 해시한 기계 지문. 나가는 것은 다이제스트뿐이고,
+  // 그것도 제출 버튼을 눌렀을 때만 나간다.
+  setProgress("이 기계의 지문을 로컬에서 계산 중…");
+  var fp = { count: 0, sampled: 0, anchors: [] };
+  try{ fp = await CacheObservatoryIdentity.fingerprint(files); }catch(e){ /* 지문 없이 진행 */ }
   setProgress("완료: 파일 " + files.length + "개 · 요청 " + fmtInt(result.totals.requests) + "건 스캔.");
-  LAST = { result: result, census: census, source_version: null, detail_dropped: false };
+  LAST = { result: result, census: census, source_version: null, detail_dropped: false,
+           anchors: fp.anchors, id_count: fp.count, link_token: linkToken() };
   document.getElementById("pasteSrcNote").hidden = true;
   document.getElementById("storeRestored").hidden = true;
   // Unhide BEFORE drawing: canvases in a hidden section have zero width.
@@ -738,7 +761,10 @@ document.getElementById("pasteBtn").addEventListener("click", function(){
   document.getElementById("parseErr").hidden = true;
   document.getElementById("singleFileNote").hidden = true;
   setProgress("붙여넣은 CLI JSON 렌더 완료: 요청 " + fmtInt(v.result.totals.requests) + "건, " + v.result.daily.length + "일.");
-  LAST = { result: v.result, census: null, source_version: v.version, detail_dropped: false };
+  // 붙여넣은 집계에는 request ID가 없어서 지문을 만들 수 없다. 이 경로는
+  // 연결 토큰으로 대체된다(updateIdentityNote 참고).
+  LAST = { result: v.result, census: null, source_version: v.version, detail_dropped: false,
+           anchors: [], id_count: 0, link_token: linkToken() };
   document.getElementById("storeRestored").hidden = true;
   document.getElementById("pasteSrcNote").hidden = false;
   document.getElementById("results").hidden = false;
@@ -1021,6 +1047,13 @@ function buildSubmitPayload(){
   payload.daily = slice.daily;
   // 붙여넣기 경로의 결과는 CLI 자체 버전 태그(예: cli-2.1)를 가져간다.
   payload.script_version = LAST.source_version || CacheObservatory.SCRIPT_VERSION;
+  /* M13 신원. 둘 다 선택한 기간이 아니라 기계에 대한 값이라, LAST에서 통째로
+     가져오고 기간을 좁혀도 바뀌지 않는다. anchors는 로그를 읽을 때 계산한
+     해시이고, token은 지문을 만들 수 없었던 이전 제출에 관측소가 발급한
+     비밀값이다. 여기서 새로 만들어 내는 값은 없다. 없으면 그냥 없는 것이고,
+     그게 위 카드가 설명하는 정직한 열화다. */
+  if(Array.isArray(LAST.anchors) && LAST.anchors.length) payload.anchors = LAST.anchors.slice(0, 16);
+  if(typeof LAST.link_token === "string" && LAST.link_token) payload.token = LAST.link_token;
   return payload;
 }
 /* SUBMIT-PAYLOAD:END */
@@ -1064,12 +1097,68 @@ function updateTzPayloadNote(){
   el.textContent = text;
 }
 
+/* M13: 이 사람이 어느 경우에 해당하는지를 버튼을 누른 뒤가 아니라 누르기 전에
+   말한다. 페이지가 관측소에 미리 물어볼 수는 없다. 진단은 네트워크 요청 0건이고,
+   그 약속을 미리보기와 바꿀 생각은 없다. 그래서 동작 방식과 이 브라우저가 들고
+   있는 것, 그리고 각 경우가 실패하는 구체적 방식을 적는다. 이번 제출의 실제
+   결과는 전송 후 결과 줄에 나온다. */
+function updateIdentityNote(payload){
+  var el = document.getElementById("subIdentity");
+  if(!payload){
+    el.hidden = true;
+    el.textContent = "";
+    return;
+  }
+  var parts = [];
+  var anchors = payload.anchors ? payload.anchors.length : 0;
+  if(anchors){
+    parts.push("기계 1대 = 행 1개. 이 제출은 본인 로그의 request ID" +
+      (LAST && LAST.id_count ? " " + fmtInt(LAST.id_count) + "개" : "") +
+      "에서 뽑은 단방향 해시 " +
+      anchors + "개를 함께 보낸다. 이 기계가 전에 제출한 적이 있으면 이번 날짜들이 그 행에 " +
+      "합쳐진다. 이미 보낸 날은 이번 측정으로 교체되고, 새 날은 추가되며, 행의 총계는 다시 " +
+      "계산된다. 제출한 적이 없으면 이번에 그 행이 만들어진다.");
+    parts.push("그래도 어긋날 수 있는 지점: 표본은 로그 폴더에서 가장 오래된 요청들에 기대고 " +
+      "있다. 그 파일들이 이미 지워졌다면 연결이 끊겨 새 행이 생길 수 있다. 정리되기 전에 다시 " +
+      "제출해 두면 연결이 이어진다.");
+    if(payload.token){
+      parts.push("이전 붙여넣기 제출 때 이 브라우저가 저장한 연결 토큰도 함께 보낸다. 그렇게 " +
+        "만들어진 행이 있으면 버려두지 않고 그 행을 이어받는다.");
+    }
+  } else if(payload.token){
+    parts.push("붙여넣은 CLI 집계에는 request ID가 없어서 지문을 만들 수 없다. 대신 이전 " +
+      "붙여넣기 제출에 관측소가 발급한 연결 토큰을 이 브라우저가 들고 있고, 그것을 보내면 " +
+      "같은 행이 갱신된다.");
+  } else {
+    parts.push("붙여넣은 CLI 집계에는 request ID가 없다. 지문으로 삼을 것이 없으므로 새 행이 " +
+      "만들어진다.");
+    if(LAST && LAST.source_version === null &&
+       !(window.CacheObservatoryIdentity && CacheObservatoryIdentity.available())){
+      parts.push("이 브라우저는 해시 자체를 계산할 수 없는 상태이기도 하다(보안 컨텍스트가 " +
+        "아니면 SHA-256을 쓸 수 없다). 폴더 스캔에서도 해시가 나오지 않은 이유가 이것이다.");
+    }
+    if(STORE_OK){
+      parts.push("다음 붙여넣기 제출이 또 다른 행을 만들지 않고 이 행을 갱신하도록, 관측소가 " +
+        "연결 토큰을 발급하고 이 브라우저가 그것을 저장한다. 이 페이지가 묻지 않고 저장하는 " +
+        "유일한 값이고, \"저장된 기록 지우기\"로 지워진다.");
+    } else {
+      parts.push("이 브라우저는 로컬 저장을 허용하지 않아 연결 토큰을 남길 수 없다. 다음 " +
+        "제출은 이 행을 갱신하지 않고 또 하나의 행을 만든다. 그래도 제출은 할 수 있다.");
+    }
+  }
+  parts.push("한 행이 세는 것은 사람이 아니라 기계다. 컴퓨터 2대는 행 2개이고, 그 둘이 같은 " +
+    "사람의 것인지는 여기서 알 방법이 없다.");
+  el.hidden = false;
+  el.textContent = parts.join(" ");
+}
+
 function updateSubmitCard(){
   var payload = buildSubmitPayload();
   var pre = document.getElementById("subPreview");
   var btn = document.getElementById("subBtn");
   var hint = document.getElementById("subRangeHint");
   updateTzPayloadNote();
+  updateIdentityNote(payload);
   if(!payload){
     pre.textContent = "(아직 파싱된 결과 없음)";
     hint.textContent = "";
@@ -1170,9 +1259,24 @@ document.getElementById("subBtn").addEventListener("click", async function(){
   SUBMIT_BUSY = false;
   if(res.ok && data && data.ok){
     SUBMIT_DONE = true;
+    var kept = keepLinkToken(data);
     recordSubmission(payload, data);
     updateSubmitCard();
-    submitMsg("ok", "제출 완료. 관측소 반영까지 1~2분(봇 커밋이 재배포를 트리거한다).", [
+    // 둘 중 무엇이 일어났는지, 그리고 행이 이제 어느 기간을 담는지 말한다.
+    // "제출 완료"만 쓰면 M13이 존재하는 이유가 화면에서 사라진다.
+    var period = (data.period_start && data.period_end)
+      ? " 이제 이 행은 " + data.period_start + " ~ " + data.period_end + " 구간을 담는다."
+      : "";
+    submitMsg("ok", (data.merged
+      ? "이 기계의 기존 행에 합쳐졌다. 두 번째 행은 생기지 않았다." + period
+      : "새 행으로 제출됐다." + period + (kept === "stored"
+          ? " 관측소가 발급한 연결 토큰을 이 브라우저가 저장했다. 다음에 붙여넣기로 제출해도" +
+            " 또 하나의 행이 아니라 이 행이 갱신된다."
+          : (kept === "failed"
+              ? " 관측소가 연결 토큰을 발급했지만 이 브라우저가 저장하지 못했다. 다음 제출은" +
+                " 이 행과 연결되지 않는다."
+              : ""))) +
+      " 관측소 반영까지 1~2분(봇 커밋이 재배포를 트리거한다).", [
       { href: data.commit_url || "https://github.com", label: "봇 커밋 보기" },
       { href: "index.html", label: "관측소 열기" }
     ]);
@@ -1268,10 +1372,19 @@ function updateOverlapWarning(payload){
     return s.start === s.end ? s.start : s.start + " ~ " + s.end;
   }).join(", ");
   box.hidden = false;
-  box.textContent = "중복 경고: 선택한 기간 중 " + ov.days + "일(" + spans +
-    ")은 이 브라우저에서 이미 제출한 구간이다. 제출 1건이 행 1개로 쌓이므로 겹치는 날은 " +
-    "관측소 총계에서 두 번 세어진다. 제출을 막지는 않는다. 고친 데이터를 다시 내거나 " +
-    "이전 제출이 되돌려진 경우라면 그대로 보내면 된다.";
+  // M13 이후로 중복은 보통 무해하다. 관측소가 알아본 기계는 겹치는 날이 더해지는
+  // 게 아니라 이번 측정으로 교체된다. 그래서 여기서 "두 번 세어진다"고 쓰면 그게
+  // 거짓말이 된다. 반대로 서버에 묻지 않고는 확인할 수 없는 병합을 장담하는 것도
+  // 거짓말이다(진단 중에는 묻지 않는다). 양쪽을 다 적는다.
+  box.textContent = "중복 안내: 선택한 기간 중 " + ov.days + "일(" + spans +
+    ")은 이 브라우저에서 이미 제출한 구간이다. " +
+    (payload.anchors || payload.token
+      ? "관측소가 이 기계를 알아보면 그 날들은 더해지지 않고 이번 측정으로 덮어써지므로 다시 " +
+        "보내도 안전하다. 알아보지 못하면(아래 안내에 어떤 경우인지 적어 뒀다) 두 번째 행으로 " +
+        "들어가 두 번 세어진다."
+      : "이번 제출에는 기계를 식별할 값이 없으므로, 그 날들은 두 번째 행으로 들어가 관측소 " +
+        "총계에서 두 번 세어진다.") +
+    " 제출을 막지는 않는다.";
 }
 
 function updateStoreCard(){
@@ -1295,7 +1408,12 @@ function updateStoreCard(){
   saveBtn.disabled = !LAST;
   var runs = storedRuns();
   var subs = storedSubmissions();
-  if(!runs.length && !subs.length){
+  // 연결 토큰은 저장된 결과가 하나도 없어도 혼자 존재할 수 있다. 지문을 만들 수
+  // 없었던 붙여넣기 제출이 남기는 값이기 때문이다. 그 경우에도 지우기 버튼이
+  // 보여야 한다. 안 그러면 버튼 하나로 지울 수 있다고 해 놓고 지울 수 없는 값을
+  // 들고 있는 셈이 된다.
+  var token = linkToken();
+  if(!runs.length && !subs.length && !token){
     state.className = "store-state off";
     state.textContent = "이 브라우저에 저장된 기록이 없다.";
     clearBtn.hidden = true;
@@ -1304,6 +1422,11 @@ function updateStoreCard(){
   }
   clearBtn.hidden = false;
   var parts = [];
+  if(token && !runs.length && !subs.length){
+    parts.push("여기 저장된 것은 관측소의 연결 토큰뿐이다(진단 결과는 없음). 다음 붙여넣기 " +
+      "제출이 두 번째 행을 만들지 않고 본인 행을 갱신하게 하는 값이고, 로그에 대해서는 " +
+      "아무것도 말하지 않는다.");
+  }
   if(runs.length){
     var lastRun = runs[runs.length - 1];
     parts.push("저장된 진단 " + runs.length + "건 · 마지막 저장 " + fmtWhen(lastRun.saved_at) +
@@ -1400,7 +1523,10 @@ function doSave(){
   var run = Store.buildRun(LAST.result, LAST.census, {
     saved_at: new Date().toISOString(),
     source: LAST.census ? "folder" : "cli-paste",
-    script_version: LAST.source_version || CacheObservatory.SCRIPT_VERSION
+    script_version: LAST.source_version || CacheObservatory.SCRIPT_VERSION,
+    // request ID가 아니라 해시만. 저장분을 복원해도 이 기계로 알아볼 수 있게
+    // 하는 값이다(M13).
+    anchors: LAST.anchors
   });
   if(!run) return;
   var next = Store.addRun(STATE || Store.emptyState(), run);
@@ -1429,6 +1555,9 @@ document.getElementById("storeClearBtn").addEventListener("click", function(){
   Store.clear();
   STATE = Store.load() || Store.emptyState();
   INC = null;
+  // 연결 토큰도 같은 키에 있으므로 함께 사라진다. payload가 계속 들고 있다고
+  // 주장하면 안 된다.
+  if(LAST) LAST.link_token = "";
   document.getElementById("storeRestored").hidden = true;
   updateStoreCard();
   setupRange();
@@ -1446,7 +1575,12 @@ function restoreRun(run){
     source_version: run.script_version || null,
     // 상세가 없다는 사실만이 아니라 왜 없는지. 저장 용량에 맞추려고 깎인
     // 저장분이고(store.js save()), #tzNote는 CLI를 탓하는 대신 그걸 말해야 한다.
-    detail_dropped: !h.events_saved
+    detail_dropped: !h.events_saved,
+    // 저장분도 지문 해시를 함께 들고 있다(store.js). 그래서 저장분을 다시
+    // 제출해도 두 번째 행이 생기지 않고 이 기계의 행에 합쳐진다(M13).
+    anchors: h.anchors,
+    id_count: 0,
+    link_token: linkToken()
   };
   // 저장분은 엔진의 UTC 버킷에 그대로 묶여 있고, 읽는 사람의 시계는 화면으로
   // 나가는 길목에서 적용된다(renderResults -> rebuildView). 기기를 옮기거나
@@ -1460,6 +1594,23 @@ function restoreRun(run){
   // 그리기 전에 unhide. 숨겨진 섹션의 canvas는 폭이 0이다.
   document.getElementById("results").hidden = false;
   renderResults();
+}
+
+/* M13: 관측소가 발급한 연결 토큰만 저장한다.
+   API는 지문을 만들 수 없었던 제출에만 토큰을 발급하므로, 폴더 스캔 경로에서는
+   이 함수가 아무것도 하지 않는다. 그 경로에는 저장을 요구하지 않는 것이 지문
+   우선 설계의 이유다. 결과 줄이 어느 쪽인지 말할 수 있도록 "stored"·"failed"·
+   ""(발급 없음)을 돌려준다. */
+function keepLinkToken(data){
+  var token = (data && typeof data.token === "string") ? data.token : "";
+  if(!token) return "";
+  if(!Store || !STORE_OK) return "failed";
+  var next = Store.withLinkToken(STATE || Store.emptyState(), token);
+  if(!Store.save(next)) return "failed";
+  STATE = Store.load() || next;
+  if(LAST) LAST.link_token = linkToken();
+  updateStoreCard();
+  return "stored";
 }
 
 function recordSubmission(payload, data){
