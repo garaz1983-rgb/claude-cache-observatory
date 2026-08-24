@@ -16,6 +16,8 @@
  *   - No module-scope mutable state: rate limiting lives in KV (env.RATE_LIMIT).
  *   - No tokens/secrets in code: env.GITHUB_TOKEN / env.GITHUB_REPO only.
  *   - Raw IPs are never stored — sha256(ip) truncated to 16 hex chars.
+ *   - Raw nicknames are never stored — see maskNickname() below. The schema's
+ *     field list is unchanged; only the value written into `nickname` is.
  *   - env.GITHUB_API_BASE overrides the API base for tests
  *     (default https://api.github.com).
  */
@@ -79,6 +81,42 @@ function escapeHtml(s) {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#39;");
+}
+
+/* ---------- nickname masking (M11) ----------
+ *
+ * Masking happens HERE, at storage time, not in the page. data/submissions.json
+ * is a public file in a public repo: hiding a nickname while rendering, with the
+ * raw value sitting one click away in the JSON, is not protection but the
+ * appearance of it. So the raw value reaches neither the stored record, nor the
+ * commit message, nor the API response.
+ *
+ * Rule, applied to the trimmed value over Unicode CODE POINTS (Array.from), so
+ * an emoji or a Hangul syllable is never cut into half a surrogate pair:
+ *   - 0 code points  -> ""      (caller turns this into "anonymous", as before)
+ *   - 1 code point   -> "***"   (keeping it would be keeping the whole value)
+ *   - 2 or more      -> first code point + "***"
+ *
+ * The mask is a FIXED three asterisks, never one per hidden character: a
+ * per-character mask would publish the original length, which the rule is
+ * meant to withhold together with the string itself.
+ *
+ * One code point is the minimum a person needs to spot a row as plausibly
+ * theirs; the reliable route to "which row is mine" is not the nickname at all
+ * but the submission id the browser stored locally (assets/store.js), which the
+ * observatory uses to highlight the row.
+ *
+ * Order matters: mask first, escape after. Escaping first would let the slice
+ * cut an entity such as &amp; in half.
+ * Idempotent: masking "g***" again yields "g***".
+ */
+const NICK_MASK = "***";
+
+function maskNickname(raw) {
+  const cps = Array.from(raw);
+  if (cps.length === 0) return "";
+  if (cps.length === 1) return NICK_MASK;
+  return cps[0] + NICK_MASK;
 }
 
 /* ---------- step 1: whitelist schema validation ---------- */
@@ -299,8 +337,10 @@ function randomHex4() {
 
 function buildSubmission(body, now) {
   const stamp = now.toISOString().slice(0, 19).replace(/[-T:]/g, ""); // yyyymmddHHMMSS
-  const rawNickname = typeof body.nickname === "string" ? body.nickname.trim() : "";
-  const nickname = rawNickname === "" ? "anonymous" : escapeHtml(rawNickname);
+  // The raw nickname is read, masked and dropped. It is never assigned to the
+  // record, so nothing downstream (commit message included) can reach it.
+  const masked = maskNickname(typeof body.nickname === "string" ? body.nickname.trim() : "");
+  const nickname = masked === "" ? "anonymous" : escapeHtml(masked);
   return {
     id: "sub-" + stamp + "-" + randomHex4(),
     submitted_at: now.toISOString().slice(0, 10), // truncated to the day

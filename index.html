@@ -22,7 +22,8 @@
      fill has to carry legible label text, and --crit does not: white on the
      light --crit measures 4.38:1 and on the dark --crit only 2.79:1, both
      under 4.5. So the light theme darkens the red and keeps white, and the
-     dark theme keeps the bright red and puts near-black on it (6.65:1). */
+     dark theme keeps the bright red and puts near-black on it (6.50:1 —
+     measured; this comment said 6.65 until M11, which was wrong). */
   --cta-bg:#B93B3B; --cta-ink:#FFFFFF;
   /* Lift for the floating button. A shadow has to read against the page it
      floats over, so it is a per-theme token like every other colour here:
@@ -57,11 +58,29 @@ body{
   font-size:15px; line-height:1.6;
 }
 .mono{font-family:ui-monospace,'Cascadia Mono',Consolas,monospace}
-/* The bottom padding is not decoration: it is the landing strip the floating
-   button needs. Without it the button sits on the footer once the page is
-   scrolled to the end, and the last line a reader reaches is the one they
-   cannot read. */
-.wrap{max-width:960px; margin:0 auto; padding:24px 20px 104px}
+/* --- Page shell -----------------------------------------------------------
+   Below 1520px the page is an app shell: a scrolling pane with the action bar
+   as a sibling BELOW it, not a layer on top of it. That is the whole point.
+   A position:fixed button — corner pill or full-width bar — covers whatever
+   happens to be at that edge of the viewport at that moment, and a bottom
+   padding only fixes the one scroll position where the page has ended. M9
+   shipped the padding and M11's measurements found the rest: at 390px the
+   button crossed the inline per-event card (167x41px), hid the whole
+   "Re-billed tokens" cell, and covered 76% of a period cell in the submission
+   table, each at a different scroll offset.
+   Taking the bar out of the scrollport is the only arrangement where "the
+   action is always on screen" and "the action never covers the reading" are
+   both true at every scroll offset, because the two boxes no longer share any
+   pixels of the viewport.
+   html gets overflow:hidden explicitly: with a visible root, the body's
+   overflow would propagate to the viewport and the body would stop clipping. */
+html{height:100%; overflow:hidden}
+body{height:100vh; height:100dvh; overflow:hidden; display:flex; flex-direction:column}
+/* min-height:0 lets the pane shrink below its content height, which a flex
+   item otherwise refuses to do — without it the bar is pushed off screen. */
+.pane{flex:1 1 auto; min-height:0; overflow-y:auto}
+.pane:focus-visible{outline:2px solid var(--ink); outline-offset:-2px}
+.wrap{max-width:960px; margin:0 auto; padding:24px 20px 40px}
 .topbar{display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:22px}
 .badge{font-size:.72rem; letter-spacing:.04em; text-transform:uppercase; color:var(--amber); border:1px solid var(--amber); border-radius:99px; padding:2px 10px; white-space:nowrap}
 .lang{font-size:.82rem; color:var(--muted)}
@@ -80,24 +99,35 @@ header .sub .mono{font-size:.82rem}
 .cta{display:inline-block; margin-top:16px; padding:10px 18px; border-radius:8px; background:var(--cta-bg); color:var(--cta-ink); text-decoration:none; font-weight:700; font-size:.95rem}
 .cta:hover{filter:brightness(1.08)}
 .cta:focus-visible{outline:2px solid var(--ink); outline-offset:2px}
-/* Floating diagnosis button. The header CTA scrolls off after the first
-   screen, and everything below it (the history, the preview, the fleet data,
-   the methodology) is exactly the material that talks a reader into acting.
-   The action has to still be on screen when it finally lands.
-   It stays visible at the top of the page too, next to the header CTA: the
-   two occupy different places (one inline in the reading column, one pinned
-   to the corner) rather than stacking, and a scroll-driven fade would add a
-   second piece of scroll state to keep in sync for no reading gain.
-   Layer: z-index 50, deliberately below the 60 that the per-event popover
-   uses in check.html, so any panel on that tier paints above the button
-   instead of under it. This page's own detail panel is now in the document
-   flow, so nothing here competes for the tier.
+/* Always-available diagnosis action. The header CTA scrolls off after the
+   first screen, and everything below it (the history, the preview, the fleet
+   data, the methodology) is exactly the material that talks a reader into
+   acting. The action has to still be reachable when it finally lands.
+   Default = the docked bar: the last flex item of the body, so it sits under
+   the scrolling pane and shares no pixel with it at any scroll offset.
    No transition, transform or animation, so prefers-reduced-motion (already
    handled globally at the end of this stylesheet) has nothing to undo. */
-.cta-float{position:fixed; right:20px; bottom:20px; z-index:50; margin-top:0;
-  box-shadow:var(--float-shadow)}
-@media (max-width:480px){
-  .cta-float{right:12px; bottom:12px; padding:9px 14px; font-size:.88rem}
+.cta-dock{flex:0 0 auto; display:flex; justify-content:center;
+  background:var(--surface); border-top:1px solid var(--line);
+  box-shadow:var(--float-shadow);
+  padding:12px 16px calc(12px + env(safe-area-inset-bottom, 0px))}
+.cta-dock .cta-float{margin-top:0; width:100%; max-width:340px; text-align:center}
+/* Above 1520px the corner pill comes back, because there it is provably
+   outside the reading column rather than merely "usually clear of it": the
+   column is 960px wide, so at 1520px the nearest content edge is at 1220px and
+   the button starts at 1289px: 69px of clearance, measured, with room for a
+   button that renders a third wider under a different font stack. Below that
+   width the two would share pixels again, which is what the bar prevents.
+   z-index 50 is deliberately below the 60 that the per-event popover uses in
+   check.html, so any panel on that tier paints above the button. */
+@media (min-width:1520px){
+  html{height:auto; overflow:visible}
+  body{height:auto; overflow:visible; display:block}
+  .pane{overflow:visible}
+  .wrap{padding-bottom:104px}
+  .cta-dock{display:block; padding:0; background:none; border-top:0; box-shadow:none}
+  .cta-dock .cta-float{position:fixed; right:20px; bottom:20px; z-index:50;
+    width:auto; max-width:none; box-shadow:var(--float-shadow)}
 }
 section{margin-top:36px}
 section h2{font-size:1.02rem; font-weight:700; margin:0 0 2px}
@@ -173,18 +203,68 @@ table.subs th:first-child{text-align:left}
 table.subs td{padding:6px 8px; border-bottom:1px solid var(--grid); font-family:ui-monospace,'Cascadia Mono',Consolas,monospace; font-variant-numeric:tabular-nums; white-space:nowrap; text-align:right}
 table.subs td.nick{font-family:inherit; text-align:left}
 table.subs td.crit{color:var(--crit); font-weight:600}
+/* --- Sortable header (M11) ------------------------------------------------
+   The control is a real <button> inside the <th>, not a click handler on the
+   cell: that is what makes it reachable by Tab, operable by Enter and Space
+   and announced as a control, for free. The th carries aria-sort, which is
+   the part a screen reader reads as the table's current order.
+   The indicator is text (an arrow character), so it survives a forced-colours
+   mode and does not depend on a colour the reader may not perceive. */
+table.subs th .sort-btn{font:inherit; font-size:inherit; letter-spacing:inherit;
+  text-transform:inherit; color:inherit; background:none; border:0; padding:0;
+  margin:0; cursor:pointer; display:inline-flex; align-items:center; gap:4px}
+table.subs th .sort-btn:hover{color:var(--ink)}
+table.subs th .sort-btn:focus-visible{outline:2px solid var(--ink); outline-offset:2px}
+table.subs th[aria-sort="ascending"], table.subs th[aria-sort="descending"]{color:var(--ink)}
+.sort-ind{font-size:.9em; opacity:.55}
+table.subs th[aria-sort="ascending"] .sort-ind,
+table.subs th[aria-sort="descending"] .sort-ind{opacity:1}
+/* --- "this row is mine" (M11) ---------------------------------------------
+   Nicknames are masked at storage time, so a submitter can no longer find
+   their own row by reading it. The browser that submitted has the submission
+   id in its own local storage (assets/store.js), so the row is matched by id
+   instead. Colour alone would not carry it — the tag is a word too, and the
+   word is what a screen reader gets. Nothing renders when there is no local
+   record, which is every visitor who did not submit from this browser. */
+table.subs tr.mine td{background:var(--ok-soft)}
+.mine-tag{display:inline-block; margin-left:6px; padding:1px 7px; border-radius:99px;
+  border:1px solid var(--ok); color:var(--ink); font-family:inherit;
+  font-size:.68rem; font-weight:700; letter-spacing:.04em; vertical-align:1px}
 /* --- Environment breakdown ------------------------------------------------
    Real submissions only. The thin-sample notice is deliberately NOT amber:
    amber is the example-data marker on this page and the two must not read as
    the same thing. */
+/* The axis picker used to be three unlabelled buttons. With one submission in
+   the dataset, pressing them changed a couple of words in a sentence and
+   nothing else, so a reader could neither tell what the control was for nor
+   see it work: "those tabs only change the text a little" was the actual
+   report. The help line says what the control does before it is touched, and
+   below the sample floor the example table under it re-renders per axis, so
+   the press has a visible result. */
+.axis-help{font-size:.83rem; color:var(--muted); margin:0 0 8px}
 .axis-pick{display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:10px}
 .axis-btn{font:inherit; font-size:.8rem; padding:5px 12px; border-radius:99px; border:1px solid var(--line); background:var(--bg); color:var(--muted); cursor:pointer}
 .axis-btn:hover{border-color:var(--muted)}
-.axis-btn[aria-pressed="true"]{border-color:var(--ok); color:var(--ok); font-weight:700}
+.axis-btn:focus-visible{outline:2px solid var(--ink); outline-offset:2px}
+/* The pressed label is --ink, not --ok: --ok on --bg measures 3.34:1, under
+   the 4.5 this page holds text to. The pressed state is still carried by the
+   border colour and the weight, neither of which is the only signal. */
+.axis-btn[aria-pressed="true"]{border-color:var(--ok); color:var(--ink); font-weight:700}
 .axis-filter{font-size:.8rem; color:var(--muted); margin:0 0 10px}
 .axis-filter button{font:inherit; font-size:.76rem; margin-left:8px; padding:2px 9px; border-radius:99px; border:1px solid var(--line); background:var(--surface); color:var(--ink); cursor:pointer}
 .axis-filter button:hover{border-color:var(--muted)}
 .env-thin{font-size:.85rem; padding:12px 14px; border-left:3px solid var(--muted); background:var(--bg); border-radius:0 6px 6px 0; margin-bottom:12px}
+/* --- "what this will look like" example (M11) -----------------------------
+   Shown ONLY below the sample floor, in place of a comparison that cannot
+   honestly be drawn yet. It reuses .demo — the same dashed amber frame, the
+   same amber wash, the same "Example data" badge as the preview section
+   further up — because a second visual language for synthetic numbers is how
+   synthetic numbers get mistaken for observations. The green "Real
+   submissions" badge belongs to the fleet chart, the submission list and the
+   real comparison table; nothing inside this frame ever carries it. */
+.env-demo{margin-bottom:12px}
+.env-demo h3{font-size:.85rem; font-weight:700; margin:0 0 6px}
+.env-demo table{background:var(--surface); border-radius:6px}
 table.env td.grp{font-family:ui-monospace,'Cascadia Mono',Consolas,monospace; text-align:left}
 table.env td.na{color:var(--muted); font-family:inherit}
 table.env tr.pick{cursor:pointer}
@@ -217,6 +297,12 @@ a{color:inherit}
 </style>
 </head>
 <body>
+<!-- The scrolling pane. Everything a reader reads lives in here; the action
+     bar below is its sibling, not its overlay. tabindex is added by script
+     only while this really is the scroll container, so keyboard scrolling has
+     something to focus, and is removed again at the widths where the page
+     scrolls normally (a permanent tabindex would be a dead tab stop there). -->
+<div class="pane" id="pane">
 <div class="wrap">
 
 <div class="topbar">
@@ -305,6 +391,7 @@ a{color:inherit}
   <h2>Breakdown by environment <span class="badge real h2-badge">Real submissions</span></h2>
   <p class="desc">The same submissions, grouped by one self-reported environment field. The sample size is printed on every row, and a group below the floor shows its counts without a rate.</p>
   <div class="card">
+    <p class="axis-help">Pick which self-reported field the submissions are grouped by. The table below regroups on the one you pick; the loss rate is recomputed per group, and the sample size is printed on every row.</p>
     <div class="axis-pick" role="group" aria-label="Breakdown axis">
       <button type="button" class="axis-btn" data-axis="client" aria-pressed="true">Client</button>
       <button type="button" class="axis-btn" data-axis="plan" aria-pressed="false">Plan</button>
@@ -312,6 +399,22 @@ a{color:inherit}
     </div>
     <p class="axis-filter" id="envFilter" hidden></p>
     <div class="env-thin" id="envThin" hidden></div>
+    <!-- Example comparison, shown only while the real sample is under the
+         floor. The honesty markers are static HTML on purpose: the frame, the
+         badge and the disclaimer cannot be lost by a rendering path, and the
+         script only fills the rows. -->
+    <div class="demo env-demo" id="envExample" hidden>
+      <h3>What this section shows once submissions accumulate <span class="badge h2-badge">Example data</span></h3>
+      <p class="demo-note"><b>Not one number in this frame is an observation.</b> It is a fixed, invented illustration of the comparison this section will draw, standing in while the real sample is below the floor. Real data on this page always carries the green <b>Real submissions</b> badge: the fleet chart, the submission list, and this comparison table once it has enough rows to be one.</p>
+      <div class="tbl-scroll">
+        <table class="subs env" id="envExampleTable">
+          <thead><tr>
+            <th>Value <span class="mono">(example)</span></th><th>Submissions (n)</th><th>Requests</th><th>In-TTL losses</th><th>Loss rate</th>
+          </tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
     <div class="tbl-scroll" id="envTableWrap">
       <table class="subs env" id="envTable">
         <thead><tr>
@@ -342,12 +445,20 @@ a{color:inherit}
 
 <section id="secSubs">
   <h2>Submissions <span class="badge real h2-badge">Real submissions</span></h2>
-  <p class="desc">Aggregate totals per submission. No timestamps, no session IDs, no file paths; the schema cannot carry them.</p>
+  <p class="desc">Aggregate totals per submission. No timestamps, no session IDs, no file paths; the schema cannot carry them. Nicknames are stored masked, so the row you submitted is marked from this browser's own record instead. Click a column header to sort: it reorders the rows on screen and changes nothing else on the page.</p>
   <div class="card tbl-scroll">
     <table class="subs" id="subsTable">
       <thead><tr>
-        <th>Nickname</th><th>Period</th><th>Requests</th><th>In-TTL</th><th>Iron</th>
-        <th>Re-billed tokens</th><th>Loss rate</th><th>Plan</th><th>Client</th><th>Sessions</th>
+        <th aria-sort="none"><button type="button" class="sort-btn" data-sort="nickname">Nickname<span class="sort-ind" aria-hidden="true">↕</span></button></th>
+        <th aria-sort="none"><button type="button" class="sort-btn" data-sort="period">Period<span class="sort-ind" aria-hidden="true">↕</span></button></th>
+        <th aria-sort="none"><button type="button" class="sort-btn" data-sort="requests">Requests<span class="sort-ind" aria-hidden="true">↕</span></button></th>
+        <th aria-sort="none"><button type="button" class="sort-btn" data-sort="in_ttl">In-TTL<span class="sort-ind" aria-hidden="true">↕</span></button></th>
+        <th aria-sort="none"><button type="button" class="sort-btn" data-sort="iron">Iron<span class="sort-ind" aria-hidden="true">↕</span></button></th>
+        <th aria-sort="none"><button type="button" class="sort-btn" data-sort="tokens">Re-billed tokens<span class="sort-ind" aria-hidden="true">↕</span></button></th>
+        <th aria-sort="none"><button type="button" class="sort-btn" data-sort="rate">Loss rate<span class="sort-ind" aria-hidden="true">↕</span></button></th>
+        <th aria-sort="none"><button type="button" class="sort-btn" data-sort="plan">Plan<span class="sort-ind" aria-hidden="true">↕</span></button></th>
+        <th aria-sort="none"><button type="button" class="sort-btn" data-sort="client">Client<span class="sort-ind" aria-hidden="true">↕</span></button></th>
+        <th aria-sort="none"><button type="button" class="sort-btn" data-sort="sessions">Sessions<span class="sort-ind" aria-hidden="true">↕</span></button></th>
       </tr></thead>
       <tbody></tbody>
     </table>
@@ -398,14 +509,19 @@ a{color:inherit}
   Community-run observatory — not affiliated with Anthropic. Judgment rules v2.1 (<code>assets/parse.js</code> in the browser, <code>scripts/check_cache_loss.py</code> on the CLI: same rules, verifiable against each other). Maintainer: <a href="https://github.com/garaz1983-rgb">garaz1983-rgb</a>
 </footer>
 
-<!-- Floating action. Last in the tab order on purpose: the same action is
-     already the first focusable thing on the page (the header CTA), so a
-     keyboard user meets it early anyway, and repeating it up front would put
-     two identical links back to back. -->
-<a class="cta cta-float" href="check.html"
-   aria-label="Check your own data: open the diagnosis page">Check your own data →</a>
-
 </div>
+</div>
+<!-- Action dock. Last in the tab order on purpose: the same action is already
+     the first focusable thing on the page (the header CTA), so a keyboard user
+     meets it early anyway, and repeating it up front would put two identical
+     links back to back.
+     It is a sibling of the pane, not a child: that is what keeps it out of the
+     scrollport instead of on top of it. -->
+<div class="cta-dock">
+  <a class="cta cta-float" href="check.html"
+     aria-label="Check your own data: open the diagnosis page">Check your own data →</a>
+</div>
+<script src="assets/store.js"></script>
 <script src="assets/charts.js"></script>
 <script src="assets/demo.js"></script>
 <script>
@@ -470,12 +586,116 @@ function renderLegend(subs){
   }).join("");
 }
 
+/* ===== "which row is mine" ===============================================
+   Nicknames are masked when they are stored (functions/api/submit.js), so the
+   old route — submit, then look for your own name in the list — no longer
+   works. The browser that submitted already holds the id the API returned
+   (assets/store.js writes it on the check page), so the row is matched by that
+   id instead.
+   Read-only, and deliberately not through Store.available(): that probe
+   WRITES a key to prove storage works, and this page has no business writing
+   anything. A missing, blocked or unparsable store yields an empty set and the
+   table renders exactly as it does for every visitor who did not submit. */
+var MINE_IDS = (function(){
+  var out = new Set();
+  try {
+    var S = window.CacheObservatoryStore;
+    if(!S) return out;
+    var st = S.load();
+    if(!st || !Array.isArray(st.submissions)) return out;
+    st.submissions.forEach(function(x){ if(x && x.id) out.add(x.id); });
+  } catch(e){ /* no marker, no error, no console noise */ }
+  return out;
+})();
+
+/* ===== Submission list ordering ==========================================
+   Sorting changes the order of the rows on screen and nothing else. The KPIs,
+   the fleet chart, the legend colours and the environment aggregation all read
+   SUBS (or the filtered array) directly, so the sort works on a COPY: sorting
+   in place would renumber the fleet series and repaint the chart in different
+   colours for a reason no reader asked for.
+
+   Three states per column: a first direction, its reverse, then off — back to
+   submission order, which is the order the dataset was written in. "Off" earns
+   its own press: once a reader has sorted there is otherwise no way back to
+   "the order these arrived in", and that order is itself information.
+
+   A value the page withholds must not order the rows. M8 fixed that rule for
+   the environment table (a group under the sample floor is ordered by n, never
+   by the rate that is being hidden) and envGroups still does exactly that,
+   untouched. The same rule is applied here: a row whose loss rate cannot be
+   computed has a null rate, and null rows are parked at the BOTTOM in both
+   directions rather than being compared as if they were zero. */
+var SORT_KEY = null;   // null = submission order
+var SORT_DIR = 0;      // 1 ascending, -1 descending, 0 off
+
+// Text columns open ascending (A..Z is what a first press means); number
+// columns open descending (the largest number is the question being asked).
+var SORT_KEYS = {
+  nickname: { num:false, get:function(s){ return String(s.nickname || "anonymous").toLowerCase(); } },
+  period:   { num:false, get:function(s){ return String(s.period_start) + "|" + String(s.period_end); } },
+  requests: { num:true,  get:function(s){ return s.totals.requests; } },
+  in_ttl:   { num:true,  get:function(s){ return s.totals.in_ttl_losses; } },
+  iron:     { num:true,  get:function(s){ return s.totals.iron_losses; } },
+  tokens:   { num:true,  get:function(s){ return s.totals.wasted_tokens; } },
+  rate:     { num:true,  get:function(s){ return s.totals.requests > 0 ? 100 * s.totals.in_ttl_losses / s.totals.requests : null; } },
+  plan:     { num:false, get:function(s){ return String(s.plan || "unknown"); } },
+  client:   { num:false, get:function(s){ return String(s.client || "unknown"); } },
+  sessions: { num:false, get:function(s){ return String(s.concurrent_sessions || "unknown"); } }
+};
+
+function sortedForTable(subs){
+  var spec = SORT_KEY ? SORT_KEYS[SORT_KEY] : null;
+  if(!spec || !SORT_DIR) return subs;
+  var rows = subs.slice();
+  rows.sort(function(a, b){
+    var va = spec.get(a), vb = spec.get(b);
+    var na = (va === null || va === undefined), nb = (vb === null || vb === undefined);
+    if(na || nb) return (na && nb) ? 0 : (na ? 1 : -1);
+    if(va === vb) return 0;
+    return (va < vb ? -1 : 1) * SORT_DIR;
+  });
+  return rows;
+}
+
+function updateSortHeaders(){
+  var btns = document.querySelectorAll("#subsTable .sort-btn");
+  Array.prototype.forEach.call(btns, function(b){
+    var on = (b.getAttribute("data-sort") === SORT_KEY && SORT_DIR !== 0);
+    b.parentNode.setAttribute("aria-sort",
+      on ? (SORT_DIR === 1 ? "ascending" : "descending") : "none");
+    var ind = b.querySelector(".sort-ind");
+    if(ind) ind.textContent = on ? (SORT_DIR === 1 ? "↑" : "↓") : "↕";
+  });
+}
+
+function bindSortControls(){
+  var head = document.querySelector("#subsTable thead");
+  if(!head) return;
+  head.addEventListener("click", function(ev){
+    var b = ev.target.closest ? ev.target.closest(".sort-btn") : null;
+    if(!b) return;
+    var key = b.getAttribute("data-sort");
+    if(!SORT_KEYS[key]) return;
+    var first = SORT_KEYS[key].num ? -1 : 1;
+    if(SORT_KEY !== key){ SORT_KEY = key; SORT_DIR = first; }
+    else if(SORT_DIR === first){ SORT_DIR = -first; }
+    else { SORT_KEY = null; SORT_DIR = 0; }
+    updateSortHeaders();
+    // Re-render through the environment filter, so a sort press can never
+    // widen the set of rows the filter narrowed.
+    renderTable(filteredSubs());
+  });
+}
+
 function renderTable(subs){
   var tb = document.querySelector("#subsTable tbody");
-  tb.innerHTML = subs.map(function(s){
+  tb.innerHTML = sortedForTable(subs).map(function(s){
     var rate = s.totals.requests > 0 ? 100 * s.totals.in_ttl_losses / s.totals.requests : 0;
-    return "<tr>" +
-      "<td class='nick'>" + esc(s.nickname || "anonymous") + "</td>" +
+    var mine = MINE_IDS.has(s.id);
+    return "<tr" + (mine ? " class='mine'" : "") + ">" +
+      "<td class='nick'>" + esc(s.nickname || "anonymous") +
+        (mine ? "<span class='mine-tag'>your submission</span>" : "") + "</td>" +
       "<td>" + esc(s.period_start) + " → " + esc(s.period_end) + "</td>" +
       "<td>" + fmtInt(s.totals.requests) + "</td>" +
       "<td class='crit'>" + fmtInt(s.totals.in_ttl_losses) + "</td>" +
@@ -559,6 +779,70 @@ function renderEnvFilter(){
   });
 }
 
+/* --- Example comparison (shown only below the floor) ----------------------
+   Synthetic and hand-written. It is never derived from SUBS, never fetched,
+   never added to any aggregate on this page, and it disappears the moment the
+   real sample reaches the floor.
+
+   Why it exists: below the floor the axis buttons had nothing to change. With
+   one submission the real comparison cannot be drawn, so pressing "Plan"
+   moved a few words in one sentence and the control read as broken — the
+   report was "those tabs only change the text a little". Now a press visibly
+   regroups a table, which is what the control does when there is data.
+
+   Two properties are deliberate. Every row is internally consistent (the rate
+   really is losses / requests) so a reader who checks the arithmetic finds
+   arithmetic rather than noise. And one group per axis sits under the floor,
+   so the example also shows the withholding rule instead of depicting a world
+   where every group happens to have a printable rate. */
+var ENV_EXAMPLE = {
+  client: [
+    { value: "cli",     n: 11, requests: 214000, losses: 388 },
+    { value: "ide",     n: 7,  requests: 96500,  losses: 214 },
+    { value: "mixed",   n: 6,  requests: 132400, losses: 173 },
+    { value: "desktop", n: 3,  requests: 21800,  losses: 47 }
+  ],
+  plan: [
+    { value: "max20x", n: 9, requests: 268000, losses: 502 },
+    { value: "max5x",  n: 6, requests: 88200,  losses: 152 },
+    { value: "pro",    n: 8, requests: 74300,  losses: 118 },
+    { value: "api",    n: 4, requests: 34200,  losses: 50 }
+  ],
+  concurrent_sessions: [
+    { value: "multi",   n: 15, requests: 331000, losses: 664 },
+    { value: "single",  n: 9,  requests: 112500, losses: 128 },
+    { value: "unknown", n: 3,  requests: 21400,  losses: 30 }
+  ]
+};
+
+function renderEnvExample(){
+  var rows = (ENV_EXAMPLE[ENV_AXIS] || []).map(function(g){
+    return {
+      value: g.value, n: g.n, requests: g.requests, losses: g.losses,
+      enough: g.n >= ENV_MIN_N,
+      rate: g.requests > 0 ? 100 * g.losses / g.requests : null
+    };
+  });
+  // Same ordering rule as the real table: a rate that is not printed does not
+  // order anything either.
+  rows.sort(function(a, b){
+    if(a.enough !== b.enough) return a.enough ? -1 : 1;
+    if(a.enough) return b.rate - a.rate;
+    if(b.n !== a.n) return b.n - a.n;
+    return a.value < b.value ? -1 : 1;
+  });
+  document.querySelector("#envExampleTable tbody").innerHTML = rows.map(function(g){
+    return "<tr>" +
+      "<td class='grp'>" + esc(g.value) + "</td>" +
+      "<td>" + fmtInt(g.n) + "</td>" +
+      "<td>" + fmtInt(g.requests) + "</td>" +
+      "<td class='crit'>" + fmtInt(g.losses) + "</td>" +
+      (g.enough ? "<td>" + fmtPct(g.rate) + "</td>"
+                : "<td class='na'>not enough data</td>") +
+      "</tr>";
+  }).join("");
+}
+
 function renderEnv(){
   if(!SUBS) return;
   var axis = ENV_AXIS, total = SUBS.length;
@@ -574,12 +858,18 @@ function renderEnv(){
     thin.hidden = false;
     thin.textContent = "Not enough has been submitted to compare environments yet: " +
       total + " submission" + (total === 1 ? "" : "s") + " in total, against a floor of " +
-      ENV_MIN_N + ". There is no comparison to show here. The raw per-submission " +
-      "values are in the panel below.";
+      ENV_MIN_N + ". There is no comparison to show here, so the framed block " +
+      "below shows what the comparison will look like using invented numbers, " +
+      "and it changes with the axis you pick. The real per-submission values " +
+      "are in the panel under it.";
   } else {
     thin.hidden = true;
   }
   document.getElementById("envTableWrap").hidden = !enoughAxis;
+  // Example and real comparison are mutually exclusive: two tables of the same
+  // shape on screen at once is exactly how an example gets read as data.
+  document.getElementById("envExample").hidden = enoughAxis;
+  if(!enoughAxis) renderEnvExample();
 
   var soft = 0;
   SUBS.forEach(function(s){
@@ -844,21 +1134,36 @@ fetch("data/submissions.json")
     bindEnvControls();
     renderEnv();
     drawAll();
+    syncPaneFocus();
   })
   .catch(function(){
     document.getElementById("loadErr").hidden = false;
   });
 
+/* The scrolling pane is a div, and a div that scrolls needs to be focusable
+   or a keyboard user has nothing to press arrow keys against. It is only
+   focusable while it really is the scroll container: above 1520px the document
+   scrolls again, and a tabindex there would be a tab stop that does nothing. */
+function syncPaneFocus(){
+  var p = document.getElementById("pane");
+  if(!p) return;
+  if(p.scrollHeight - p.clientHeight > 1) p.setAttribute("tabindex", "0");
+  else p.removeAttribute("tabindex");
+}
+
 // The preview is local and static, so it renders immediately and independently
 // of the fleet fetch: a failed submissions.json must not blank the example.
 renderDemoKpis();
 drawDemo();
+bindSortControls();
+updateSortHeaders();
+syncPaneFocus();
 
 var rt;
 window.addEventListener("resize", function(){
   clearDemoSelection();
   clearTimeout(rt);
-  rt = setTimeout(drawAll, 150);
+  rt = setTimeout(function(){ drawAll(); syncPaneFocus(); }, 150);
 });
 if(window.matchMedia){
   window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", drawAll);

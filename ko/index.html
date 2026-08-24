@@ -22,7 +22,8 @@
      읽히게 받쳐야 하는데 --crit이 그걸 못 하기 때문이다. 흰 글자 기준
      라이트 --crit은 4.38:1, 다크 --crit은 2.79:1로 둘 다 4.5 미만이다.
      그래서 라이트는 적색을 한 단계 어둡게 하고 흰 글자를 유지하고,
-     다크는 밝은 적색을 그대로 두고 거의 검정 글자를 얹는다(6.65:1). */
+     다크는 밝은 적색을 그대로 두고 거의 검정 글자를 얹는다(6.50:1, 실측값.
+     M11 전까지 이 주석은 6.65로 적혀 있었고 그건 틀린 값이었다). */
   --cta-bg:#B93B3B; --cta-ink:#FFFFFF;
   /* 플로팅 버튼의 들뜸. 그림자는 자기가 떠 있는 페이지 위에서 읽혀야 하므로
      여기 다른 색들과 마찬가지로 테마별 토큰으로 둔다. 라이트는 옅게, 옅은
@@ -56,10 +57,26 @@ body{
   font-size:15px; line-height:1.6;
 }
 .mono{font-family:ui-monospace,'Cascadia Mono',Consolas,monospace}
-/* 아래쪽 여백은 장식이 아니라 플로팅 버튼이 내려앉을 자리다. 이게 없으면
-   페이지 끝까지 내렸을 때 버튼이 푸터 위에 걸터앉고, 독자가 도달한 마지막
-   줄이 하필 못 읽는 줄이 된다. */
-.wrap{max-width:960px; margin:0 auto; padding:24px 20px 104px}
+/* --- 페이지 셸 ------------------------------------------------------------
+   1520px 미만에서 이 페이지는 앱 셸이다. 스크롤되는 판(pane)이 있고, 행동 바는
+   그 판 "위에 얹힌 층"이 아니라 "아래에 붙은 형제"다. 이게 핵심이다.
+   position:fixed 버튼은 모서리 알약이든 전체 폭 바든, 그 순간 뷰포트 가장자리에
+   와 있는 것을 무엇이든 덮는다. 아래 여백(padding)은 페이지가 끝난 한 지점만
+   해결해 준다. M9가 그 여백을 넣었고, M11 실측이 나머지를 찾아냈다. 390px에서
+   버튼은 인라인 건별 상세 카드와 167x41px 겹쳤고, "재과금 토큰" 셀을 통째로
+   가렸고, 제출 목록 표의 기간 셀을 76% 덮었다. 전부 스크롤 위치가 달랐다.
+   바를 스크롤 영역 밖으로 빼는 것만이 "행동이 항상 화면에 있다"와 "행동이 읽기를
+   절대 덮지 않는다"를 모든 스크롤 위치에서 동시에 성립시킨다. 두 상자가 뷰포트
+   픽셀을 아예 공유하지 않게 되기 때문이다.
+   html에 overflow:hidden을 명시하는 이유: 루트가 visible이면 body의 overflow가
+   뷰포트로 전파되고 body 자신은 클리핑을 그만둔다. */
+html{height:100%; overflow:hidden}
+body{height:100vh; height:100dvh; overflow:hidden; display:flex; flex-direction:column}
+/* min-height:0이 있어야 flex 자식이 내용 높이보다 작아질 수 있다. 없으면 판이
+   줄지 않아서 바가 화면 밖으로 밀려난다. */
+.pane{flex:1 1 auto; min-height:0; overflow-y:auto}
+.pane:focus-visible{outline:2px solid var(--ink); outline-offset:-2px}
+.wrap{max-width:960px; margin:0 auto; padding:24px 20px 40px}
 .topbar{display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:22px}
 .badge{font-size:.72rem; letter-spacing:.04em; color:var(--amber); border:1px solid var(--amber); border-radius:99px; padding:2px 10px; white-space:nowrap}
 .lang{font-size:.82rem; color:var(--muted)}
@@ -78,22 +95,33 @@ header .sub .mono{font-size:.82rem}
 .cta{display:inline-block; margin-top:16px; padding:10px 18px; border-radius:8px; background:var(--cta-bg); color:var(--cta-ink); text-decoration:none; font-weight:700; font-size:.95rem}
 .cta:hover{filter:brightness(1.08)}
 .cta:focus-visible{outline:2px solid var(--ink); outline-offset:2px}
-/* 진단 플로팅 버튼. 상단 CTA는 첫 화면을 지나면 사라지는데, 그 아래에 있는
+/* 항상 닿는 진단 행동. 상단 CTA는 첫 화면을 지나면 사라지는데, 그 아래에 있는
    경위·미리보기·fleet 데이터·방법론이 바로 사람을 움직이게 하는 재료다.
    그게 먹히는 순간에 행동 경로가 화면에 남아 있어야 한다.
-   페이지 최상단에서 상단 CTA와 같이 보이는 것도 그대로 둔다. 둘이 겹쳐
-   쌓이는 게 아니라 자리가 다르고(하나는 읽는 단 안, 하나는 화면 모서리),
-   스크롤 연동 페이드를 넣으면 읽기에 득도 없이 동기화할 스크롤 상태만
-   하나 더 생긴다.
-   층위: z-index 50. check.html의 건별 상세 팝오버가 쓰는 60보다 일부러
-   아래에 둔다. 그 층에 뜨는 패널은 버튼 아래가 아니라 위에 그려져야 한다.
-   이 페이지의 상세 패널은 이제 문서 흐름 안에 있어서 층을 다투지 않는다.
+   기본값은 도크 바다. body의 마지막 flex 항목이라 스크롤 판 아래에 놓이고,
+   어떤 스크롤 위치에서도 판과 픽셀을 공유하지 않는다.
    transition·transform·animation을 쓰지 않으므로 prefers-reduced-motion이
    되돌릴 것도 없다(전역 처리는 이 스타일시트 끝에 있다). */
-.cta-float{position:fixed; right:20px; bottom:20px; z-index:50; margin-top:0;
-  box-shadow:var(--float-shadow)}
-@media (max-width:480px){
-  .cta-float{right:12px; bottom:12px; padding:9px 14px; font-size:.88rem}
+.cta-dock{flex:0 0 auto; display:flex; justify-content:center;
+  background:var(--surface); border-top:1px solid var(--line);
+  box-shadow:var(--float-shadow);
+  padding:12px 16px calc(12px + env(safe-area-inset-bottom, 0px))}
+.cta-dock .cta-float{margin-top:0; width:100%; max-width:340px; text-align:center}
+/* 1520px 이상에서만 모서리 알약이 돌아온다. 거기서는 "대개 안 겹친다"가 아니라
+   읽는 단 밖이라는 게 실측으로 확인되기 때문이다. 단이 960px이라 1520px에서
+   가장 가까운 콘텐츠 모서리는 1220px이고 버튼은 1311px에서 시작한다. 실측
+   여유 91px이고, 폰트가 달라 버튼이 훨씬 넓게 그려져도 견딘다. 그보다 좁으면
+   둘이 다시 픽셀을 공유하고, 그걸 막으려고 바가 있다.
+   z-index 50은 check.html의 건별 상세 팝오버가 쓰는 60보다 일부러 아래다.
+   그 층에 뜨는 패널은 버튼 아래가 아니라 위에 그려져야 한다. */
+@media (min-width:1520px){
+  html{height:auto; overflow:visible}
+  body{height:auto; overflow:visible; display:block}
+  .pane{overflow:visible}
+  .wrap{padding-bottom:104px}
+  .cta-dock{display:block; padding:0; background:none; border-top:0; box-shadow:none}
+  .cta-dock .cta-float{position:fixed; right:20px; bottom:20px; z-index:50;
+    width:auto; max-width:none; box-shadow:var(--float-shadow)}
 }
 section{margin-top:36px}
 section h2{font-size:1.02rem; font-weight:700; margin:0 0 2px}
@@ -165,17 +193,61 @@ table.subs th:first-child{text-align:left}
 table.subs td{padding:6px 8px; border-bottom:1px solid var(--grid); font-family:ui-monospace,'Cascadia Mono',Consolas,monospace; font-variant-numeric:tabular-nums; white-space:nowrap; text-align:right}
 table.subs td.nick{font-family:inherit; text-align:left}
 table.subs td.crit{color:var(--crit); font-weight:600}
+/* --- 정렬 가능한 헤더(M11) ------------------------------------------------
+   조작 대상은 th에 붙인 클릭 핸들러가 아니라 진짜 <button>이다. 그래야 Tab으로
+   닿고 Enter·Space로 눌리고 컨트롤로 읽힌다. 전부 공짜로 따라온다.
+   현재 정렬 상태를 스크린리더가 읽는 부분은 th의 aria-sort다.
+   표시자는 화살표 "글자"라서 강제 색상 모드에서도 살아남고, 독자가 지각하지
+   못할 수도 있는 색에 의존하지 않는다. */
+table.subs th .sort-btn{font:inherit; font-size:inherit; letter-spacing:inherit;
+  color:inherit; background:none; border:0; padding:0; margin:0; cursor:pointer;
+  display:inline-flex; align-items:center; gap:4px}
+table.subs th .sort-btn:hover{color:var(--ink)}
+table.subs th .sort-btn:focus-visible{outline:2px solid var(--ink); outline-offset:2px}
+table.subs th[aria-sort="ascending"], table.subs th[aria-sort="descending"]{color:var(--ink)}
+.sort-ind{font-size:.9em; opacity:.55}
+table.subs th[aria-sort="ascending"] .sort-ind,
+table.subs th[aria-sort="descending"] .sort-ind{opacity:1}
+/* --- "이 행이 내 것"(M11) --------------------------------------------------
+   닉네임은 저장 시점에 마스킹되므로 제출자가 자기 행을 읽어서 찾을 수 없다.
+   제출한 브라우저에는 제출 id가 로컬에 남아 있으니(assets/store.js), 이름 대신
+   그 id로 행을 맞춘다. 색만으로는 전달되지 않으므로 표식에 글자를 같이 넣는다.
+   스크린리더가 받는 것은 그 글자다. 로컬 기록이 없으면 아무것도 그리지 않는다.
+   이 브라우저에서 제출하지 않은 모든 방문자가 그 경우다. */
+table.subs tr.mine td{background:var(--ok-soft)}
+.mine-tag{display:inline-block; margin-left:6px; padding:1px 7px; border-radius:99px;
+  border:1px solid var(--ok); color:var(--ink); font-family:inherit;
+  font-size:.68rem; font-weight:700; letter-spacing:.04em; vertical-align:1px}
 /* 환경별 분해. 실제 제출 데이터 전용이다. 표본 부족 안내는 일부러 앰버를
    쓰지 않는다. 이 페이지에서 앰버는 예시 데이터 표시색이고, 둘이 같은
    것으로 읽히면 안 된다. */
+/* 축 선택기는 그동안 설명 없는 버튼 세 개였다. 제출이 1건인 상태에서는 눌러도
+   문장 몇 글자만 바뀌고 그 외에는 아무 일도 없었다. 그래서 독자는 이게 무엇을
+   하는 컨트롤인지도, 작동하는지도 알 수 없었다. 실제 반응이 "저거 바꿔도 글자만
+   조금 바뀌던데"였다. 도움말 줄이 누르기 전에 용도를 말해 주고, 표본 하한 아래
+   에서는 그 아래 예시 표가 축마다 다시 그려지므로 누른 결과가 눈에 보인다. */
+.axis-help{font-size:.83rem; color:var(--muted); margin:0 0 8px}
 .axis-pick{display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:10px}
 .axis-btn{font:inherit; font-size:.8rem; padding:5px 12px; border-radius:99px; border:1px solid var(--line); background:var(--bg); color:var(--muted); cursor:pointer}
 .axis-btn:hover{border-color:var(--muted)}
-.axis-btn[aria-pressed="true"]{border-color:var(--ok); color:var(--ok); font-weight:700}
+.axis-btn:focus-visible{outline:2px solid var(--ink); outline-offset:2px}
+/* 선택된 버튼의 글자색은 --ok가 아니라 --ink다. --ok는 --bg 위에서 3.34:1이라
+   이 페이지가 글자에 요구하는 4.5에 못 미친다. 선택 상태는 테두리색과 굵기가
+   같이 나르고 있어서 색 하나에만 기대지 않는다. */
+.axis-btn[aria-pressed="true"]{border-color:var(--ok); color:var(--ink); font-weight:700}
 .axis-filter{font-size:.8rem; color:var(--muted); margin:0 0 10px}
 .axis-filter button{font:inherit; font-size:.76rem; margin-left:8px; padding:2px 9px; border-radius:99px; border:1px solid var(--line); background:var(--surface); color:var(--ink); cursor:pointer}
 .axis-filter button:hover{border-color:var(--muted)}
 .env-thin{font-size:.85rem; padding:12px 14px; border-left:3px solid var(--muted); background:var(--bg); border-radius:0 6px 6px 0; margin-bottom:12px}
+/* --- "모이면 이렇게 보인다" 예시(M11) -------------------------------------
+   표본 하한 미만일 때만, 아직 정직하게 그릴 수 없는 비교표 자리에 함께 놓인다.
+   .demo를 그대로 재사용한다. 위 미리보기 섹션과 같은 점선 앰버 테두리, 같은
+   앰버 배경, 같은 "예시 데이터" 배지다. 합성 숫자에 두 번째 시각 언어를 만드는
+   순간 합성 숫자가 관측으로 오인되기 시작한다. 녹색 "실제 제출 데이터" 배지는
+   fleet 차트·제출 목록·진짜 비교표의 것이고, 이 테두리 안에는 절대 붙지 않는다. */
+.env-demo{margin-bottom:12px}
+.env-demo h3{font-size:.85rem; font-weight:700; margin:0 0 6px}
+.env-demo table{background:var(--surface); border-radius:6px}
 table.env td.grp{font-family:ui-monospace,'Cascadia Mono',Consolas,monospace; text-align:left}
 table.env td.na{color:var(--muted); font-family:inherit}
 table.env tr.pick{cursor:pointer}
@@ -208,6 +280,12 @@ a{color:inherit}
 </style>
 </head>
 <body>
+<!-- 스크롤되는 판. 독자가 읽는 것은 전부 이 안에 있고, 아래 행동 바는 이 판의
+     형제이지 이 판을 덮는 층이 아니다. tabindex는 이 요소가 실제로 스크롤
+     컨테이너일 때만 스크립트가 붙인다. 키보드 스크롤이 붙잡을 대상이 필요해서다.
+     문서가 정상 스크롤하는 폭에서는 다시 뗀다. 거기서 tabindex는 아무 일도 하지
+     않는 탭 정거장이 되기 때문이다. -->
+<div class="pane" id="pane">
 <div class="wrap">
 
 <div class="topbar">
@@ -296,6 +374,7 @@ a{color:inherit}
   <h2>환경별 분해 <span class="badge real h2-badge">실제 제출 데이터</span></h2>
   <p class="desc">같은 제출 데이터를 환경 항목 하나로 묶어 본 것이다. 표본 수는 모든 행에 함께 적는다. 기준 미만인 그룹은 건수만 보여주고 유실률은 내지 않는다.</p>
   <div class="card">
+    <p class="axis-help">제출 데이터를 어떤 자기신고 항목으로 묶을지 고르는 버튼이다. 고른 기준으로 아래 표가 다시 묶이고, 그룹마다 유실률을 새로 계산하며, 표본 수는 모든 행에 함께 적는다.</p>
     <div class="axis-pick" role="group" aria-label="분해 축">
       <button type="button" class="axis-btn" data-axis="client" aria-pressed="true">클라이언트</button>
       <button type="button" class="axis-btn" data-axis="plan" aria-pressed="false">플랜</button>
@@ -303,6 +382,21 @@ a{color:inherit}
     </div>
     <p class="axis-filter" id="envFilter" hidden></p>
     <div class="env-thin" id="envThin" hidden></div>
+    <!-- 예시 비교표. 실제 표본이 하한 미만일 때만 나온다. 정직성 표식(테두리·
+         배지·부인 문장)은 일부러 정적 HTML이다. 렌더링 경로가 이걸 빠뜨릴 수
+         없어야 하고, 스크립트는 행만 채운다. -->
+    <div class="demo env-demo" id="envExample" hidden>
+      <h3>제출이 모이면 이 섹션이 보여주는 것 <span class="badge h2-badge">예시 데이터</span></h3>
+      <p class="demo-note"><b>이 테두리 안의 숫자는 단 하나도 관측이 아니다.</b> 이 섹션이 앞으로 그릴 비교가 어떤 모양인지 보여주려고 지어낸 고정 숫자이고, 실제 표본이 하한 미만인 동안만 그 자리에 서 있다. 이 페이지에서 실제 데이터에는 언제나 녹색 <b>실제 제출 데이터</b> 배지가 붙는다. fleet 차트, 제출 목록, 그리고 행이 충분히 모인 뒤의 이 비교표가 그것이다.</p>
+      <div class="tbl-scroll">
+        <table class="subs env" id="envExampleTable">
+          <thead><tr>
+            <th>값 <span class="mono">(예시)</span></th><th>표본 수 (n)</th><th>합산 요청</th><th>in-TTL 유실</th><th>유실률</th>
+          </tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
     <div class="tbl-scroll" id="envTableWrap">
       <table class="subs env" id="envTable">
         <thead><tr>
@@ -333,12 +427,20 @@ a{color:inherit}
 
 <section id="secSubs">
   <h2>제출 목록 <span class="badge real h2-badge">실제 제출 데이터</span></h2>
-  <p class="desc">제출별 집계 합계. 시각·세션 ID·파일 경로는 없다. 스키마 차원에서 담을 수 없다.</p>
+  <p class="desc">제출별 집계 합계. 시각·세션 ID·파일 경로는 없다. 스키마 차원에서 담을 수 없다. 닉네임은 마스킹해서 저장하므로, 본인이 제출한 행은 이 브라우저에 남은 기록으로 표시한다. 열 제목을 누르면 정렬된다. 화면에 보이는 행 순서만 바뀌고 이 페이지의 다른 것은 아무것도 바뀌지 않는다.</p>
   <div class="card tbl-scroll">
     <table class="subs" id="subsTable">
       <thead><tr>
-        <th>닉네임</th><th>기간</th><th>총 요청</th><th>in-TTL</th><th>iron</th>
-        <th>재과금 토큰</th><th>유실률</th><th>플랜</th><th>클라이언트</th><th>동시 세션</th>
+        <th aria-sort="none"><button type="button" class="sort-btn" data-sort="nickname">닉네임<span class="sort-ind" aria-hidden="true">↕</span></button></th>
+        <th aria-sort="none"><button type="button" class="sort-btn" data-sort="period">기간<span class="sort-ind" aria-hidden="true">↕</span></button></th>
+        <th aria-sort="none"><button type="button" class="sort-btn" data-sort="requests">총 요청<span class="sort-ind" aria-hidden="true">↕</span></button></th>
+        <th aria-sort="none"><button type="button" class="sort-btn" data-sort="in_ttl">in-TTL<span class="sort-ind" aria-hidden="true">↕</span></button></th>
+        <th aria-sort="none"><button type="button" class="sort-btn" data-sort="iron">iron<span class="sort-ind" aria-hidden="true">↕</span></button></th>
+        <th aria-sort="none"><button type="button" class="sort-btn" data-sort="tokens">재과금 토큰<span class="sort-ind" aria-hidden="true">↕</span></button></th>
+        <th aria-sort="none"><button type="button" class="sort-btn" data-sort="rate">유실률<span class="sort-ind" aria-hidden="true">↕</span></button></th>
+        <th aria-sort="none"><button type="button" class="sort-btn" data-sort="plan">플랜<span class="sort-ind" aria-hidden="true">↕</span></button></th>
+        <th aria-sort="none"><button type="button" class="sort-btn" data-sort="client">클라이언트<span class="sort-ind" aria-hidden="true">↕</span></button></th>
+        <th aria-sort="none"><button type="button" class="sort-btn" data-sort="sessions">동시 세션<span class="sort-ind" aria-hidden="true">↕</span></button></th>
       </tr></thead>
       <tbody></tbody>
     </table>
@@ -389,13 +491,18 @@ a{color:inherit}
   커뮤니티 운영 관측소, Anthropic과 무관합니다. 판정 규칙 v2.1 (브라우저 <code>assets/parse.js</code> · CLI <code>scripts/check_cache_loss.py</code>, 같은 규칙, 상호 대조 검증 가능). 운영: <a href="https://github.com/garaz1983-rgb">garaz1983-rgb</a>
 </footer>
 
-<!-- 플로팅 버튼. 탭 순서 맨 끝에 두는 건 의도다. 같은 행동이 이미 페이지에서
-     처음 포커스되는 요소(상단 CTA)라 키보드 사용자는 어차피 초반에 만나고,
-     앞쪽에 하나 더 두면 같은 링크가 연달아 두 번 잡힌다. -->
-<a class="cta cta-float" href="check.html"
-   aria-label="내 데이터 진단하기, 진단 페이지 열기">내 데이터 진단하기 →</a>
-
 </div>
+</div>
+<!-- 행동 도크. 탭 순서 맨 끝에 두는 건 의도다. 같은 행동이 이미 페이지에서
+     처음 포커스되는 요소(상단 CTA)라 키보드 사용자는 어차피 초반에 만나고,
+     앞쪽에 하나 더 두면 같은 링크가 연달아 두 번 잡힌다.
+     판의 자식이 아니라 형제다. 그게 이 바를 스크롤 영역 "위"가 아니라 "밖"에
+     두는 장치다. -->
+<div class="cta-dock">
+  <a class="cta cta-float" href="check.html"
+     aria-label="내 데이터 진단하기, 진단 페이지 열기">내 데이터 진단하기 →</a>
+</div>
+<script src="../assets/store.js"></script>
 <script src="../assets/charts.js"></script>
 <script src="../assets/demo.js"></script>
 <script>
@@ -460,12 +567,112 @@ function renderLegend(subs){
   }).join("");
 }
 
+/* ===== "어느 행이 내 것인가" =============================================
+   닉네임은 저장 시점에 마스킹된다(functions/api/submit.js). 그래서 "제출한 뒤
+   목록에서 내 이름을 찾는" 기존 경로는 더 이상 작동하지 않는다. 대신 제출한
+   브라우저에는 API가 돌려준 제출 id가 이미 남아 있으므로(check 페이지에서
+   assets/store.js가 기록한다), 그 id로 행을 맞춘다.
+   읽기 전용이고, 일부러 Store.available()을 쓰지 않는다. 그 함수는 저장이
+   되는지 증명하려고 키를 하나 "쓴다". 이 페이지는 아무것도 쓸 이유가 없다.
+   저장소가 없거나 막혔거나 깨져 있으면 빈 집합이 되고, 표는 이 브라우저에서
+   제출하지 않은 모든 방문자에게 보이는 모습 그대로 그려진다. */
+var MINE_IDS = (function(){
+  var out = new Set();
+  try {
+    var S = window.CacheObservatoryStore;
+    if(!S) return out;
+    var st = S.load();
+    if(!st || !Array.isArray(st.submissions)) return out;
+    st.submissions.forEach(function(x){ if(x && x.id) out.add(x.id); });
+  } catch(e){ /* 표식도 없고 오류도 없고 콘솔 소음도 없다 */ }
+  return out;
+})();
+
+/* ===== 제출 목록 정렬 =====================================================
+   정렬은 화면에 보이는 행 순서만 바꾼다. KPI·fleet 차트·범례 색·환경 분해 집계는
+   전부 SUBS(또는 필터된 배열)를 직접 읽으므로, 정렬은 반드시 "복사본"에서 한다.
+   원본을 정렬하면 fleet 계열 번호가 바뀌어 차트가 아무도 요청하지 않은 색으로
+   다시 칠해진다.
+
+   열마다 3단계다. 첫 방향, 그 반대, 그리고 해제(제출 순서로 복귀. 데이터셋에
+   기록된 순서다). 해제에 클릭 하나를 따로 주는 이유는, 한 번 정렬한 뒤에는
+   "도착한 순서"로 돌아갈 길이 달리 없고 그 순서 자체가 정보이기 때문이다.
+
+   화면에 내지 않기로 한 값은 행 순서도 정하지 않는다. M8이 환경 표에서 세운
+   규칙이고(하한 미만 그룹은 감춘 유실률이 아니라 표본 수로 정렬한다) envGroups는
+   그대로 살아 있다. 여기에도 같은 규칙을 적용한다. 유실률을 계산할 수 없는 행은
+   rate가 null이고, null 행은 0인 것처럼 비교되는 대신 양쪽 방향 모두에서 맨
+   아래에 세운다. */
+var SORT_KEY = null;   // null = 제출 순서
+var SORT_DIR = 0;      // 1 오름, -1 내림, 0 해제
+
+// 문자 열은 오름차순으로 시작한다(첫 클릭의 의미가 ㄱ..ㅎ이다). 숫자 열은
+// 내림차순으로 시작한다(묻고 있는 것이 "가장 큰 값"이기 때문이다).
+var SORT_KEYS = {
+  nickname: { num:false, get:function(s){ return String(s.nickname || "anonymous").toLowerCase(); } },
+  period:   { num:false, get:function(s){ return String(s.period_start) + "|" + String(s.period_end); } },
+  requests: { num:true,  get:function(s){ return s.totals.requests; } },
+  in_ttl:   { num:true,  get:function(s){ return s.totals.in_ttl_losses; } },
+  iron:     { num:true,  get:function(s){ return s.totals.iron_losses; } },
+  tokens:   { num:true,  get:function(s){ return s.totals.wasted_tokens; } },
+  rate:     { num:true,  get:function(s){ return s.totals.requests > 0 ? 100 * s.totals.in_ttl_losses / s.totals.requests : null; } },
+  plan:     { num:false, get:function(s){ return String(s.plan || "unknown"); } },
+  client:   { num:false, get:function(s){ return String(s.client || "unknown"); } },
+  sessions: { num:false, get:function(s){ return String(s.concurrent_sessions || "unknown"); } }
+};
+
+function sortedForTable(subs){
+  var spec = SORT_KEY ? SORT_KEYS[SORT_KEY] : null;
+  if(!spec || !SORT_DIR) return subs;
+  var rows = subs.slice();
+  rows.sort(function(a, b){
+    var va = spec.get(a), vb = spec.get(b);
+    var na = (va === null || va === undefined), nb = (vb === null || vb === undefined);
+    if(na || nb) return (na && nb) ? 0 : (na ? 1 : -1);
+    if(va === vb) return 0;
+    return (va < vb ? -1 : 1) * SORT_DIR;
+  });
+  return rows;
+}
+
+function updateSortHeaders(){
+  var btns = document.querySelectorAll("#subsTable .sort-btn");
+  Array.prototype.forEach.call(btns, function(b){
+    var on = (b.getAttribute("data-sort") === SORT_KEY && SORT_DIR !== 0);
+    b.parentNode.setAttribute("aria-sort",
+      on ? (SORT_DIR === 1 ? "ascending" : "descending") : "none");
+    var ind = b.querySelector(".sort-ind");
+    if(ind) ind.textContent = on ? (SORT_DIR === 1 ? "↑" : "↓") : "↕";
+  });
+}
+
+function bindSortControls(){
+  var head = document.querySelector("#subsTable thead");
+  if(!head) return;
+  head.addEventListener("click", function(ev){
+    var b = ev.target.closest ? ev.target.closest(".sort-btn") : null;
+    if(!b) return;
+    var key = b.getAttribute("data-sort");
+    if(!SORT_KEYS[key]) return;
+    var first = SORT_KEYS[key].num ? -1 : 1;
+    if(SORT_KEY !== key){ SORT_KEY = key; SORT_DIR = first; }
+    else if(SORT_DIR === first){ SORT_DIR = -first; }
+    else { SORT_KEY = null; SORT_DIR = 0; }
+    updateSortHeaders();
+    // 환경 필터를 거쳐 다시 그린다. 정렬 클릭이 필터가 좁혀 둔 행 집합을
+    // 도로 넓히는 일은 있을 수 없어야 한다.
+    renderTable(filteredSubs());
+  });
+}
+
 function renderTable(subs){
   var tb = document.querySelector("#subsTable tbody");
-  tb.innerHTML = subs.map(function(s){
+  tb.innerHTML = sortedForTable(subs).map(function(s){
     var rate = s.totals.requests > 0 ? 100 * s.totals.in_ttl_losses / s.totals.requests : 0;
-    return "<tr>" +
-      "<td class='nick'>" + esc(s.nickname || "anonymous") + "</td>" +
+    var mine = MINE_IDS.has(s.id);
+    return "<tr" + (mine ? " class='mine'" : "") + ">" +
+      "<td class='nick'>" + esc(s.nickname || "anonymous") +
+        (mine ? "<span class='mine-tag'>내 제출</span>" : "") + "</td>" +
       "<td>" + esc(s.period_start) + " ~ " + esc(s.period_end) + "</td>" +
       "<td>" + fmtInt(s.totals.requests) + "</td>" +
       "<td class='crit'>" + fmtInt(s.totals.in_ttl_losses) + "</td>" +
@@ -547,6 +754,66 @@ function renderEnvFilter(){
   });
 }
 
+/* --- 예시 비교표(하한 미만일 때만) ---------------------------------------
+   합성이고 손으로 적은 값이다. SUBS에서 파생하지 않고, fetch하지 않고, 이
+   페이지의 어떤 집계에도 더해지지 않으며, 실제 표본이 하한에 닿는 순간 사라진다.
+
+   왜 두는가: 하한 아래에서는 축 버튼이 바꿀 것이 없었다. 제출 1건으로는 진짜
+   비교를 그릴 수 없으니 "플랜"을 눌러도 문장 몇 단어만 움직였고, 컨트롤이 고장난
+   것처럼 읽혔다. 실제 반응이 "저거 바꿔도 글자만 조금 바뀌던데"였다. 이제 누르면
+   표가 눈에 보이게 다시 묶인다. 데이터가 있을 때 이 컨트롤이 하는 일 그대로다.
+
+   두 가지는 의도적이다. 모든 행이 자체 정합적이다(유실률이 실제로 유실/요청이다).
+   산수를 검산하는 독자가 산수를 발견하지 노이즈를 발견하면 안 된다. 그리고 축마다
+   하한 미만 그룹을 하나씩 넣었다. 모든 그룹이 마침 유실률을 낼 수 있는 세계를
+   그리는 대신, 값을 감추는 규칙까지 예시가 같이 보여주게 하기 위해서다. */
+var ENV_EXAMPLE = {
+  client: [
+    { value: "cli",     n: 11, requests: 214000, losses: 388 },
+    { value: "ide",     n: 7,  requests: 96500,  losses: 214 },
+    { value: "mixed",   n: 6,  requests: 132400, losses: 173 },
+    { value: "desktop", n: 3,  requests: 21800,  losses: 47 }
+  ],
+  plan: [
+    { value: "max20x", n: 9, requests: 268000, losses: 502 },
+    { value: "max5x",  n: 6, requests: 88200,  losses: 152 },
+    { value: "pro",    n: 8, requests: 74300,  losses: 118 },
+    { value: "api",    n: 4, requests: 34200,  losses: 50 }
+  ],
+  concurrent_sessions: [
+    { value: "multi",   n: 15, requests: 331000, losses: 664 },
+    { value: "single",  n: 9,  requests: 112500, losses: 128 },
+    { value: "unknown", n: 3,  requests: 21400,  losses: 30 }
+  ]
+};
+
+function renderEnvExample(){
+  var rows = (ENV_EXAMPLE[ENV_AXIS] || []).map(function(g){
+    return {
+      value: g.value, n: g.n, requests: g.requests, losses: g.losses,
+      enough: g.n >= ENV_MIN_N,
+      rate: g.requests > 0 ? 100 * g.losses / g.requests : null
+    };
+  });
+  // 진짜 표와 같은 정렬 규칙이다. 화면에 내지 않는 유실률은 순서도 정하지 않는다.
+  rows.sort(function(a, b){
+    if(a.enough !== b.enough) return a.enough ? -1 : 1;
+    if(a.enough) return b.rate - a.rate;
+    if(b.n !== a.n) return b.n - a.n;
+    return a.value < b.value ? -1 : 1;
+  });
+  document.querySelector("#envExampleTable tbody").innerHTML = rows.map(function(g){
+    return "<tr>" +
+      "<td class='grp'>" + esc(g.value) + "</td>" +
+      "<td>" + fmtInt(g.n) + "</td>" +
+      "<td>" + fmtInt(g.requests) + "</td>" +
+      "<td class='crit'>" + fmtInt(g.losses) + "</td>" +
+      (g.enough ? "<td>" + fmtPct(g.rate) + "</td>"
+                : "<td class='na'>표본 부족</td>") +
+      "</tr>";
+  }).join("");
+}
+
 function renderEnv(){
   if(!SUBS) return;
   var axis = ENV_AXIS, total = SUBS.length;
@@ -560,12 +827,18 @@ function renderEnv(){
   if(!enoughAxis){
     thin.hidden = false;
     thin.textContent = "아직 환경을 비교할 만큼 모이지 않았다. 지금까지 제출 " +
-      total + "건, 기준은 " + ENV_MIN_N + "건이다. 여기 보여줄 비교 결과가 없다. " +
-      "제출별 원자료는 아래 패널에서 볼 수 있다.";
+      total + "건, 기준은 " + ENV_MIN_N + "건이다. 여기 보여줄 비교 결과가 없어서, " +
+      "아래 테두리 안에는 지어낸 숫자로 그 비교가 어떤 모양이 될지를 대신 띄운다. " +
+      "위 축 버튼을 누르면 그 예시가 축에 맞춰 다시 그려진다. 실제 제출별 원자료는 " +
+      "그 아래 패널에 있다.";
   } else {
     thin.hidden = true;
   }
   document.getElementById("envTableWrap").hidden = !enoughAxis;
+  // 예시와 진짜 비교표는 동시에 뜨지 않는다. 같은 모양의 표 둘이 한 화면에
+  // 있는 것이 바로 예시가 데이터로 읽히는 경로다.
+  document.getElementById("envExample").hidden = enoughAxis;
+  if(!enoughAxis) renderEnvExample();
 
   var soft = 0;
   SUBS.forEach(function(s){
@@ -825,21 +1098,36 @@ fetch("../data/submissions.json")
     bindEnvControls();
     renderEnv();
     drawAll();
+    syncPaneFocus();
   })
   .catch(function(){
     document.getElementById("loadErr").hidden = false;
   });
 
+/* 스크롤되는 판은 div이고, 스크롤되는 div는 포커스를 받을 수 있어야 키보드
+   사용자가 방향키를 누를 대상이 생긴다. 실제로 스크롤 컨테이너인 동안만 붙인다.
+   1520px 이상에서는 문서가 다시 스크롤하므로, 거기서 tabindex는 아무 일도 하지
+   않는 탭 정거장이 된다. */
+function syncPaneFocus(){
+  var p = document.getElementById("pane");
+  if(!p) return;
+  if(p.scrollHeight - p.clientHeight > 1) p.setAttribute("tabindex", "0");
+  else p.removeAttribute("tabindex");
+}
+
 // 미리보기는 로컬 정적 데이터라 fleet fetch와 무관하게 바로 렌더한다.
 // submissions.json이 실패해도 예시가 비어 보이면 안 된다.
 renderDemoKpis();
 drawDemo();
+bindSortControls();
+updateSortHeaders();
+syncPaneFocus();
 
 var rt;
 window.addEventListener("resize", function(){
   clearDemoSelection();
   clearTimeout(rt);
-  rt = setTimeout(drawAll, 150);
+  rt = setTimeout(function(){ drawAll(); syncPaneFocus(); }, 150);
 });
 if(window.matchMedia){
   window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", drawAll);

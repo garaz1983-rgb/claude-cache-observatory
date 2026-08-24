@@ -16,6 +16,11 @@ drives the contract cases:
   case8  GitHub 5xx              -> 502 storage (single PUT, no retry)
   case9  daily []                -> 400 (inflated totals AND all-zero totals)
   case10 daily sums != totals    -> 400 (requests / losses / wasted each)
+  case11 nickname masking        -> the raw nickname reaches neither the stored
+                                    record nor the commit message; boundary
+                                    inputs (1 char, hangul, astral emoji,
+                                    padding, already-masked, HTML, empty,
+                                    whitespace) all survive the rule
 
 All pass -> prints CONTRACT_OK as the last line, exit 0.
 Contract violation -> exit 1. Setup/infra failure -> exit 2 (the mutation
@@ -505,17 +510,22 @@ def run_cases(xff_ip):
                     "period_start", "period_end", "script_version"):
             check(stored.get(key) == payload[key],
                   "case1: stored %s=%r != %r" % (key, stored.get(key), payload[key]))
-        check(stored.get("nickname") == "contract-test", "case1: nickname mismatch")
+        # The nickname is stored masked (M11): first code point + a fixed
+        # three-asterisk mask, so neither the string nor its length survives.
+        check(stored.get("nickname") == "c***",
+              "case1: nickname %r, want the masked 'c***'" % stored.get("nickname"))
         check(stored.get("totals") == payload["totals"], "case1: totals mismatch")
         check(stored.get("daily") == payload["daily"], "case1: daily mismatch")
         extra = set(stored) - {"id", "submitted_at", "nickname", "plan", "client",
                                "concurrent_sessions", "period_start", "period_end",
                                "totals", "daily", "script_version"}
         check(not extra, "case1: undefined fields stored: %r" % extra)
-        want_msg = ("data: submission %s — contract-test, 2026-08-01~2026-08-15, "
+        want_msg = ("data: submission %s — c***, 2026-08-01~2026-08-15, "
                     "10 losses / 1000 req" % sub_id)
         check(MOCK.put_messages[-1] == want_msg,
               "case1: commit message %r != %r" % (MOCK.put_messages[-1], want_msg))
+        check("contract-test" not in MOCK.put_messages[-1],
+              "case1: raw nickname leaked into the commit message")
     print("PASS case1 valid submit -> 200, append + commit message verified")
 
     # -- case7: sha conflict once => re-GET + single retry => 200 ------------
@@ -534,9 +544,12 @@ def run_cases(xff_ip):
               "case7: %d GETs, want 2 (re-GET before the retry)" % (MOCK.get_count - get_before))
         subs = MOCK.doc.get("submissions", [])
         check(len(subs) == 2, "case7: %d submissions stored, want 2" % len(subs))
-        check(subs[-1].get("nickname") == "&lt;b&gt;x&lt;/b&gt;",
-              "case7: nickname not HTML-escaped: %r" % subs[-1].get("nickname"))
-    print("PASS case7 sha conflict -> one retry -> 200, nickname escaped")
+        # Masking runs before escaping, so the escape has to survive the slice:
+        # "<b>x</b>" keeps "<" as its one visible code point and stores it as
+        # the entity. A raw "<" here would be an injection into the public JSON.
+        check(subs[-1].get("nickname") == "&lt;***",
+              "case7: nickname not masked+escaped: %r" % subs[-1].get("nickname"))
+    print("PASS case7 sha conflict -> one retry -> 200, nickname masked + escaped")
 
     # -- case8: GitHub 5xx => 502 storage, no retry --------------------------
     with MOCK.lock:
@@ -572,6 +585,70 @@ def run_cases(xff_ip):
 
     with MOCK.lock:
         check(not MOCK.errors, "mock observed protocol violations: %r" % MOCK.errors)
+
+
+# ---------------------------------------------------------------------------
+# case11: nickname masking (M11)
+# ---------------------------------------------------------------------------
+
+NO_NICKNAME = object()
+
+# (what is submitted, what must be stored, why this input is on the list)
+MASK_CASES = [
+    ("a", "***", "one code point keeps nothing: keeping it would keep the whole value"),
+    ("ab", "a***", "two code points keep only the first"),
+    ("가나다라", "가***", "hangul is masked by code point"),
+    ("\U0001F41B\U0001F41Ex", "\U0001F41B***", "an astral code point survives whole"),
+    ("  padded  ", "p***", "trimmed before masking"),
+    ("g***", "g***", "masking an already masked value is a no-op"),
+    ("<b>x</b>", "&lt;***", "the masked value is HTML-escaped after masking"),
+    (NO_NICKNAME, "anonymous", "an absent nickname stays anonymous"),
+    ("   ", "anonymous", "a whitespace-only nickname is anonymous"),
+]
+
+# Raw values distinctive enough that finding them anywhere is proof of a leak.
+MASK_LEAK_PROBES = ["contract-test", "가나다라",
+                    "\U0001F41B\U0001F41Ex", "padded"]
+
+
+def run_mask_cases():
+    """Every case is a real accepted submission, so they are spread across
+    several IP hashes: 3 per hour per IP is the contract's own limit and the
+    test must not trip it on itself."""
+    submit_url = BASE + "/api/submit"
+    for i, (raw, want, why) in enumerate(MASK_CASES):
+        payload = valid_payload()
+        if raw is NO_NICKNAME:
+            payload.pop("nickname")
+        else:
+            payload["nickname"] = raw
+        status, data = http_json(
+            "POST", submit_url, payload,
+            headers={"X-Forwarded-For": "198.51.100.%d" % (10 + i // 3)})
+        check(status == 200,
+              "case11 (%s): status %s, want 200 (body %r)" % (why, status, data))
+        with MOCK.lock:
+            stored = MOCK.doc["submissions"][-1].get("nickname")
+            msg = MOCK.put_messages[-1]
+        check(stored == want,
+              "case11 (%s): stored %r, want %r" % (why, stored, want))
+        check(("— %s," % want) in msg,
+              "case11 (%s): commit message %r does not carry the masked value"
+              % (why, msg))
+
+    # A per-case check only looks at the last record. Scan the whole stored
+    # document and every commit message the mock ever received: a raw value
+    # that leaked into an earlier field would otherwise pass unnoticed.
+    with MOCK.lock:
+        blob = json.dumps(MOCK.doc, ensure_ascii=False) + "\n".join(MOCK.put_messages)
+    for probe in MASK_LEAK_PROBES:
+        check(probe not in blob,
+              "case11: raw nickname %r survives in the stored data or a commit "
+              "message" % probe)
+    with MOCK.lock:
+        check(not MOCK.errors, "mock observed protocol violations: %r" % MOCK.errors)
+    print("PASS case11 nickname masking (%d boundary inputs, no raw value stored)"
+          % len(MASK_CASES))
 
 
 def main():
@@ -615,6 +692,7 @@ def main():
         wait_ready(proc, log_path)
         print("wrangler ready — running contract cases")
         run_cases(xff_ip)
+        run_mask_cases()
         print("CONTRACT_OK")
         code = 0
     except ContractFail as exc:

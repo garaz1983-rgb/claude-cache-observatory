@@ -30,6 +30,7 @@ Claude Code's local session logs (`~/.claude/projects/**/*.jsonl`) contain a ser
 
 - **Parsing is local.** Your log files are parsed inside your browser tab and never leave your machine. Verify it yourself: open the F12 Network tab while running a diagnosis; no request appears.
 - **Transmission is opt-in and previewed.** Nothing is sent until you press the share button, and what is sent is exactly the aggregate JSON shown in the preview: period, totals, daily counts, optional nickname. The schema cannot carry conversation content, session IDs, file paths or timestamps; undefined fields are rejected with a 400, not dropped.
+- **Nicknames are masked before they are stored.** `functions/api/submit.js` keeps the first character and replaces the rest with a fixed `***` (a one-character nickname keeps nothing), so neither the string nor its length reaches `data/submissions.json`, the bot's commit message or the API response. Masking at storage time rather than at render time is the whole point: the dataset is a public file, so hiding a name only in the page would be the appearance of protection and not protection. Because the row can no longer be found by reading it, the observatory marks *your* row from the submission id your own browser stored (`assets/store.js`); with no local record, nothing is marked.
 - **Local storage is opt-in and stays local.** By default a diagnosis lives only in the open tab. Pressing "Save to this browser" and confirming the modal writes totals, daily rows, the hourly census and the last submission's period into that browser's `localStorage` (`assets/store.js`) — never to a server, and "Clear saved results" removes it immediately. The stored object is built field by field from a whitelist, so file paths, session IDs, requestIds and conversation text cannot enter it, matching the submission schema's exclusions. `tests/storage_test.py` asserts that.
 - **The running code is this repo.** There is no build step, no bundler, no external CDN, no analytics. What is served is byte-for-byte what you can read here. The only server code is `functions/api/submit.js`.
 - **Submission history is commit history.** Every accepted submission is appended to `data/submissions.json` by a bot commit whose message names the submission. Removal of bad data happens by public revert commits, never by history rewrite.
@@ -55,7 +56,7 @@ One submission is one JSON object. Whitelist enforced server-side; anything not 
 
 | Field | Constraint |
 |---|---|
-| `nickname` | optional, string, max 20 chars (the only free text) |
+| `nickname` | optional, string, max 20 chars (the only free text). Validated at full length, then **stored masked**: first code point + `***`, or `***` alone for a single character, or `anonymous` when empty |
 | `plan` / `client` / `concurrent_sessions` | fixed enums (`unknown` allowed everywhere) |
 | `period_start` / `period_end` | `YYYY-MM-DD`, span at most 92 days |
 | `totals` | `requests`, `in_ttl_losses`, `iron_losses`, `wasted_tokens` (non-negative integers, `losses <= requests`, `iron <= losses`) |
@@ -75,5 +76,7 @@ The submit endpoint limits each IP hash to 3 submissions per hour using a Cloudf
 - **Same rules, two engines.** `assets/parse.js` and `scripts/check_cache_loss.py` implement the same v2.1 rules and are held together by `tests/parity_check.py`; if you change one, you must change the other (see CONTRIBUTING).
 
 ## 한국어 요약
+
+닉네임은 저장 시점에 마스킹된다(첫 글자 + 고정 `***`, 한 글자면 `***`, 비우면 `anonymous`). 공개 데이터 파일에 원본이 남으면 화면만 가리는 것은 보호가 아니라 보호하는 시늉이기 때문이다. 그래서 제출 후 자기 행을 찾는 경로는 닉네임이 아니라, 브라우저에 남은 제출 id로 해당 행을 표시하는 방식으로 바뀌었다. 로컬 기록이 없으면 아무 표시도 하지 않는다.
 
 Claude Code 세션 로그에 서버가 직접 남기는 진단 필드(`previous_message_not_found`)를 근거로, 캐시 TTL 안쪽에서 일어난 프롬프트 캐시 유실만 집계하는 자가진단 + 공개 관측소다. 파싱은 전부 브라우저 로컬에서 일어나고 로그 파일은 기기를 떠나지 않는다. 전송되는 것은 사용자가 미리보기로 승인한 집계 숫자(기간·총계·일별 건수·선택 닉네임)뿐이고, 정의되지 않은 필드는 서버가 400으로 거부한다. 빌드 스텝이 없어 실행 코드가 이 repo 파일 그대로이며, 제출 이력 전체가 커밋 이력으로 남는다. 설정은 `wrangler.toml`로 공개돼 있다. CLI는 `python scripts/check_cache_loss.py`(표) 또는 `--json`(붙여넣기용 집계)으로 실행한다. `--json` 플래그는 이 repo 사본에 추가된 것이고 판정 로직은 v2.1 그대로다. rate limit은 KV 카운터 기반의 best-effort라 동시 버스트에서 상한을 넘을 수 있으며, 최종 방어선은 스키마 검증과 공개 revert다. 낱개 파일 드롭은 subagents 폴더 판별이 불가능해 전부 메인 세션(30분 TTL)으로 분류되니 폴더째 드롭을 권장한다. 커뮤니티 도구이며 Anthropic과 무관하다. 논의: [anthropics/claude-code#87966](https://github.com/anthropics/claude-code/issues/87966)
