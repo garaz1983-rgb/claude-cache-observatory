@@ -295,10 +295,24 @@
     }
   }
 
+  /*
+   * Drop the heatmap's selection highlight. Callers that close the detail
+   * popover by a route the table never sees (Esc, outside click, the panel's
+   * own close button, scroll) must call this, otherwise the stale `.sel` cell
+   * desynchronises the table's next click toggle. Safe on a re-rendered table
+   * and safe when nothing is selected.
+   */
+  function clearHeatmapSelection(tableEl) {
+    if (!tableEl || !tableEl.querySelectorAll) return;
+    var sel = tableEl.querySelectorAll("td.hit.sel");
+    for (var i = 0; i < sel.length; i++) sel[i].classList.remove("sel");
+  }
+
   root.ObservatoryCharts = {
     PALETTE: PALETTE,
     renderFleetTrend: renderFleetTrend,
     renderDailyBars: renderDailyBars,
-    renderUsageHeatmap: renderUsageHeatmap
+    renderUsageHeatmap: renderUsageHeatmap,
+    clearHeatmapSelection: clearHeatmapSelection
   };
 })(typeof self !== "undefined" ? self : this);

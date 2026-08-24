@@ -218,8 +218,100 @@
     return { totals: totals, daily: daily, events: events };
   }
 
+  /* ---------- submission range helpers (payload shaping, not judgment) -----
+   * The observatory caps one submission at 92 days (functions/api/submit.js:
+   * MAX_PERIOD_DAYS / MAX_DAILY_ENTRIES). A longer scan is not an error: the
+   * page lets the user pick a window. The payload must then be recomputed for
+   * that window, because the API re-derives every total from daily and
+   * rejects sum(daily) != totals (04_DATA_MODEL.md / 06_FUNCTIONAL_SPEC.md).
+   */
+
+  var MAX_PERIOD_DAYS = 92;
+
+  function isDateKey(v) {
+    return typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v);
+  }
+
+  // Inclusive calendar-day span, matching the API's (end-start)/86400000+1.
+  function daySpan(startIso, endIso) {
+    if (!isDateKey(startIso) || !isDateKey(endIso)) return null;
+    var ms = Date.parse(endIso + "T00:00:00Z") - Date.parse(startIso + "T00:00:00Z");
+    if (isNaN(ms)) return null;
+    return Math.round(ms / 86400000) + 1;
+  }
+
+  // Latest window of at most maxDays calendar days over a list of date keys.
+  // Returns the whole list when it already fits. null when there is no date.
+  function clampRange(dates, maxDays) {
+    if (!Array.isArray(dates)) return null;
+    var keys = dates.filter(isDateKey).sort();
+    if (!keys.length) return null;
+    var cap = (typeof maxDays === "number" && maxDays > 0) ? maxDays : MAX_PERIOD_DAYS;
+    var end = keys[keys.length - 1];
+    var start = end;
+    for (var i = 0; i < keys.length; i++) {
+      if (daySpan(keys[i], end) <= cap) { start = keys[i]; break; }
+    }
+    return { start: start, end: end };
+  }
+
+  // Submission-shaped aggregate over [startIso, endIso] (inclusive).
+  // totals are re-derived from the filtered daily rows so sum(daily)==totals
+  // holds; iron_losses has no daily column and is recounted from events.
+  // Returns null when the window holds no day with traffic.
+  function filterRange(result, startIso, endIso) {
+    if (!isPlainObject(result) || !Array.isArray(result.daily)) return null;
+    var lo = isDateKey(startIso) ? startIso : null;
+    var hi = isDateKey(endIso) ? endIso : null;
+    if (lo !== null && hi !== null && lo > hi) {
+      var swap = lo; lo = hi; hi = swap;
+    }
+    var daily = [];
+    var i, d;
+    for (i = 0; i < result.daily.length; i++) {
+      d = result.daily[i];
+      if (!isPlainObject(d) || !isDateKey(d.date)) continue;
+      if (lo !== null && d.date < lo) continue;
+      if (hi !== null && d.date > hi) continue;
+      daily.push({
+        date: d.date,
+        requests: d.requests,
+        losses: d.losses,
+        wasted_tokens: d.wasted_tokens
+      });
+    }
+    if (!daily.length) return null;
+    daily.sort(function (a, b) {
+      return a.date < b.date ? -1 : (a.date > b.date ? 1 : 0);
+    });
+    var totals = { requests: 0, in_ttl_losses: 0, iron_losses: 0, wasted_tokens: 0 };
+    for (i = 0; i < daily.length; i++) {
+      totals.requests += daily[i].requests;
+      totals.in_ttl_losses += daily[i].losses;
+      totals.wasted_tokens += daily[i].wasted_tokens;
+    }
+    var first = daily[0].date;
+    var last = daily[daily.length - 1].date;
+    // iron is a subset of in-TTL, so recounting it over the same days keeps
+    // the API's iron_losses <= in_ttl_losses invariant automatically. Never
+    // estimate it: a source without events (pasted CLI JSON) must not use
+    // this path at all.
+    var events = Array.isArray(result.events) ? result.events : [];
+    for (i = 0; i < events.length; i++) {
+      var e = events[i];
+      if (!isPlainObject(e) || e.classification !== "iron") continue;
+      if (!isDateKey(e.date) || e.date < first || e.date > last) continue;
+      totals.iron_losses += 1;
+    }
+    return { period_start: first, period_end: last, totals: totals, daily: daily };
+  }
+
   return {
     SCRIPT_VERSION: SCRIPT_VERSION,
-    parseFiles: parseFiles
+    MAX_PERIOD_DAYS: MAX_PERIOD_DAYS,
+    parseFiles: parseFiles,
+    daySpan: daySpan,
+    clampRange: clampRange,
+    filterRange: filterRange
   };
 });

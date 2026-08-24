@@ -105,9 +105,21 @@ table.hm th.day{text-align:right; padding-right:6px; font-size:.72rem}
 table.hm td{width:27px; height:26px; text-align:center; border-radius:4px; background:var(--grid); color:var(--muted)}
 table.hm td.hit{color:#fff; font-weight:600; cursor:pointer}
 table.hm td.hit.sel{outline:2px solid var(--ink); outline-offset:-1px}
-.evt-panel{display:none; margin-top:12px; border:1px solid var(--line); border-radius:6px; padding:10px 14px; background:var(--bg)}
+/* Per-event detail is a popover over the heatmap. Pinned under the table it
+   lands off-screen when a top row is clicked. Placement is done in script,
+   anchored to the clicked cell and clamped into the viewport. */
+.evt-panel{display:none; position:fixed; left:0; top:0; z-index:60;
+  max-width:min(92vw,430px); max-height:min(60vh,420px); overflow:auto;
+  border:1px solid var(--line); border-radius:8px; padding:10px 14px;
+  background:var(--surface); box-shadow:0 10px 30px rgba(0,0,0,.24)}
 .evt-panel.on{display:block}
 .evt-panel h3{font-size:.85rem; margin:0 0 8px; font-weight:700}
+.evt-panel .evt-head{display:flex; align-items:flex-start; gap:10px; justify-content:space-between}
+.evt-panel .evt-head h3{margin:0 0 8px}
+.evt-panel .evt-close{flex:0 0 auto; font:inherit; font-size:.95rem; line-height:1;
+  padding:3px 9px; border-radius:6px; border:1px solid var(--line);
+  background:var(--bg); color:var(--ink); cursor:pointer}
+.evt-panel .evt-close:hover{border-color:var(--muted)}
 .evt-panel table{border-collapse:collapse; font-family:ui-monospace,'Cascadia Mono',Consolas,monospace; font-variant-numeric:tabular-nums; font-size:.78rem}
 .evt-panel td,.evt-panel th{padding:2px 18px 2px 0; text-align:right; border:0}
 .evt-panel th{color:var(--muted); font-weight:500; font-size:.68rem; text-transform:uppercase; letter-spacing:.05em}
@@ -118,6 +130,15 @@ details.criteria .body{padding:0 16px 14px; font-size:.85rem}
 details.criteria .body ul{margin:0; padding-left:20px}
 details.criteria .body li{margin:5px 0}
 .placeholder{margin-top:18px; padding:12px 16px; border:1px dashed var(--line); border-radius:8px; color:var(--muted); font-size:.85rem}
+.range-box{border:1px solid var(--line); border-radius:6px; background:var(--bg); padding:12px 14px; margin:0 0 14px}
+.range-box .range-head{font-size:.7rem; text-transform:uppercase; letter-spacing:.07em; color:var(--muted); font-weight:700; margin-bottom:9px}
+.range-grid{display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:10px; align-items:end}
+.range-grid label{display:block; font-size:.7rem; text-transform:uppercase; letter-spacing:.07em; color:var(--muted); margin-bottom:4px}
+.range-grid select{width:100%; font:inherit; font-size:.88rem; padding:7px 10px; border:1px solid var(--line); border-radius:6px; background:var(--surface); color:var(--ink)}
+.range-grid button{font:inherit; font-size:.82rem; font-weight:600; padding:8px 12px; border-radius:8px; border:1px solid var(--line); background:var(--surface); color:var(--ink); cursor:pointer}
+.range-grid button:hover{border-color:var(--muted)}
+.range-hint{margin:9px 0 0; font-size:.78rem; color:var(--muted); font-variant-numeric:tabular-nums}
+.range-hint.over{color:var(--crit)}
 .submit-form{display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:12px; margin:0 0 14px}
 .submit-form label{display:block; font-size:.7rem; text-transform:uppercase; letter-spacing:.07em; color:var(--muted); margin-bottom:4px}
 .submit-form input,.submit-form select{width:100%; font:inherit; font-size:.88rem; padding:7px 10px; border:1px solid var(--line); border-radius:6px; background:var(--bg); color:var(--ink)}
@@ -234,16 +255,17 @@ a{color:inherit}
 
   <section id="hmSection">
     <h2>Day × hour heatmap: losses against actual usage</h2>
-    <p class="desc">Background blue-grey = request volume that hour (darker = heavier use). Red with a number = in-TTL losses. This separates "zero because idle" from "zero despite heavy use". <b>Click a red cell</b> for per-event detail (time, idle gap, tokens); it stays in your browser.</p>
+    <p class="desc">Background blue-grey = request volume that hour (darker = heavier use). Red with a number = in-TTL losses. This separates "zero because idle" from "zero despite heavy use". <b>Click a red cell</b> for per-event detail (time, idle gap, tokens) in a popover next to the cell; it stays in your browser.</p>
     <div class="card hm-scroll">
       <table class="hm" id="heatmap"></table>
-      <div class="evt-panel" id="evtPanel"></div>
       <div class="legend">
         <span><i class="chip" style="background:var(--grid)"></i>idle (no requests)</span>
         <span><i class="chip" id="lg-use"></i>grey shading = requests that hour (darker = more)</span>
         <span><i class="chip" style="background:var(--crit)"></i>red = losses (number in the cell = count; click for per-event detail)</span>
       </div>
     </div>
+    <!-- Popover (position:fixed). Kept outside the horizontal scroll box so it never clips. -->
+    <div class="evt-panel" id="evtPanel"></div>
   </section>
 
   <details class="criteria">
@@ -261,8 +283,25 @@ a{color:inherit}
 
   <section id="submitSection">
     <h2>3 · Share your aggregate (optional)</h2>
-    <p class="desc">Exactly the JSON shown below is sent: period, totals and daily counts only. Never your logs, file paths, session contents or per-event details.</p>
+    <p class="desc">Exactly the JSON shown below is sent: period, totals and daily counts only. Never your logs, file paths, session contents or per-event details. Narrowing the shared period recomputes the totals for that window.</p>
     <div class="card">
+      <div class="range-box" id="subRange" hidden>
+        <div class="range-head">Shared period</div>
+        <div class="range-grid">
+          <div>
+            <label for="subFrom">From</label>
+            <select id="subFrom"></select>
+          </div>
+          <div>
+            <label for="subTo">To</label>
+            <select id="subTo"></select>
+          </div>
+          <div>
+            <button id="subLast92" type="button">Last 92 days</button>
+          </div>
+        </div>
+        <p class="range-hint" id="subRangeHint"></p>
+      </div>
       <div class="submit-form">
         <div>
           <label for="subNickname">Nickname (optional, max 20 chars)</label>
@@ -639,15 +678,77 @@ function renderResults(){
   document.getElementById("kTokens").textContent = fmtTok(t.wasted_tokens);
   document.getElementById("kRate").textContent = t.requests > 0 ? (100 * t.in_ttl_losses / t.requests).toFixed(2) + "%" : "–";
   drawCharts();
+  setupRange();
   updateSubmitCard();
 }
 
 /* ---------- CHK-3: share the aggregate (opt-in) ---------- */
 var SUBMIT_BUSY = false;
 var SUBMIT_DONE = false;
+var RANGE_READY = false;   // period picker usable for this source
+var RANGE_MSG = false;     // the visible warning is the over-limit one
+var MAX_PERIOD_DAYS = CacheObservatory.MAX_PERIOD_DAYS;
+
+function dailyDates(){
+  if(!LAST || !LAST.result) return [];
+  return LAST.result.daily.map(function(d){ return d.date; });
+}
+
+/* Pasted CLI JSON carries no events, so iron losses cannot be recounted for a
+   sub-range. Rather than estimate them, the period picker is hidden and the
+   whole aggregate is submitted as-is. Only the folder paths (census present)
+   have events as the source of truth. */
+function rangeAvailable(){
+  return !!(LAST && LAST.census && LAST.result &&
+            Array.isArray(LAST.result.events) && LAST.result.daily.length);
+}
+
+function fillDateOptions(sel, dates){
+  sel.textContent = "";
+  var frag = document.createDocumentFragment();
+  dates.forEach(function(d){
+    var o = document.createElement("option");
+    o.value = d;
+    o.textContent = d;
+    frag.appendChild(o);
+  });
+  sel.appendChild(frag);
+}
+
+function setupRange(){
+  var box = document.getElementById("subRange");
+  var from = document.getElementById("subFrom");
+  var to = document.getElementById("subTo");
+  RANGE_READY = false;
+  if(!rangeAvailable()){
+    box.hidden = true;
+    fillDateOptions(from, []);
+    fillDateOptions(to, []);
+    return;
+  }
+  var dates = dailyDates();
+  fillDateOptions(from, dates);
+  fillDateOptions(to, dates);
+  // A longer-than-92-day scan opens pre-narrowed to the last 92 days, so the
+  // card is submittable the moment it appears.
+  var w = CacheObservatory.clampRange(dates, MAX_PERIOD_DAYS);
+  from.value = w.start;
+  to.value = w.end;
+  box.hidden = false;
+  RANGE_READY = true;
+}
+
+function selectedRange(){
+  if(!RANGE_READY) return null;
+  var a = document.getElementById("subFrom").value;
+  var b = document.getElementById("subTo").value;
+  if(!a || !b) return null;
+  return a <= b ? { start: a, end: b } : { start: b, end: a };
+}
 
 /* Aggregates + daily only — per-event detail (LAST.result.events) must never
-   enter this payload. */
+   enter this payload. Narrowing the period recomputes totals from the daily
+   rows inside it: the API rejects sum(daily) != totals. */
 function buildSubmitPayload(){
   if(!LAST || !LAST.result.daily.length) return null;
   var r = LAST.result;
@@ -657,17 +758,28 @@ function buildSubmitPayload(){
   payload.plan = document.getElementById("subPlan").value;
   payload.client = document.getElementById("subClient").value;
   payload.concurrent_sessions = document.getElementById("subSessions").value;
-  payload.period_start = r.daily[0].date;
-  payload.period_end = r.daily[r.daily.length - 1].date;
-  payload.totals = {
-    requests: r.totals.requests,
-    in_ttl_losses: r.totals.in_ttl_losses,
-    iron_losses: r.totals.iron_losses,
-    wasted_tokens: r.totals.wasted_tokens
-  };
-  payload.daily = r.daily.map(function(d){
-    return { date: d.date, requests: d.requests, losses: d.losses, wasted_tokens: d.wasted_tokens };
-  });
+  var range = selectedRange();
+  var slice = range ? CacheObservatory.filterRange(r, range.start, range.end) : null;
+  if(!slice){
+    // No period picker for this source (pasted CLI JSON): send the whole scan.
+    slice = {
+      period_start: r.daily[0].date,
+      period_end: r.daily[r.daily.length - 1].date,
+      totals: {
+        requests: r.totals.requests,
+        in_ttl_losses: r.totals.in_ttl_losses,
+        iron_losses: r.totals.iron_losses,
+        wasted_tokens: r.totals.wasted_tokens
+      },
+      daily: r.daily.map(function(d){
+        return { date: d.date, requests: d.requests, losses: d.losses, wasted_tokens: d.wasted_tokens };
+      })
+    };
+  }
+  payload.period_start = slice.period_start;
+  payload.period_end = slice.period_end;
+  payload.totals = slice.totals;
+  payload.daily = slice.daily;
   // Pasted CLI results carry the CLI's own version tag (e.g. cli-2.1).
   payload.script_version = LAST.source_version || CacheObservatory.SCRIPT_VERSION;
   return payload;
@@ -692,16 +804,43 @@ function updateSubmitCard(){
   var payload = buildSubmitPayload();
   var pre = document.getElementById("subPreview");
   var btn = document.getElementById("subBtn");
+  var hint = document.getElementById("subRangeHint");
   if(!payload){
     pre.textContent = "(no parsed results yet)";
+    hint.textContent = "";
     btn.disabled = true;
     return;
   }
   pre.textContent = JSON.stringify(payload, null, 2);
-  if(payload.daily.length > 92){
+  // The API caps both the calendar span (period_start..period_end) and the
+  // number of daily entries at 92. Idle days carry no daily row, so check both.
+  var span = CacheObservatory.daySpan(payload.period_start, payload.period_end);
+  if(span === null) span = payload.daily.length;
+  var over = span > MAX_PERIOD_DAYS || payload.daily.length > MAX_PERIOD_DAYS;
+  if(RANGE_READY){
+    hint.textContent = "Selected: " + payload.period_start + " to " + payload.period_end +
+      " · " + span + " days (" + payload.daily.length + " with activity) / max " +
+      MAX_PERIOD_DAYS + " days";
+    hint.className = over ? "range-hint over" : "range-hint";
+  } else {
+    hint.textContent = "";
+  }
+  if(over){
     btn.disabled = true;
-    submitMsg("bad", "This scan covers more than 92 days; the observatory accepts at most 92. Re-run on a shorter window to share.");
+    RANGE_MSG = true;
+    submitMsg("bad", RANGE_READY
+      ? "The selected period spans " + span + " days; the observatory accepts at most " +
+        MAX_PERIOD_DAYS + ". Narrow it to " + MAX_PERIOD_DAYS +
+        " days or fewer under “Shared period” above."
+      : "This scan covers more than " + MAX_PERIOD_DAYS +
+        " days; the observatory accepts at most " + MAX_PERIOD_DAYS +
+        ". Re-run the CLI on a shorter window and paste that instead.");
     return;
+  }
+  if(RANGE_MSG){
+    // The warning is stale once the period fits — leaving it up misleads.
+    document.getElementById("subMsg").hidden = true;
+    RANGE_MSG = false;
   }
   btn.disabled = SUBMIT_BUSY || SUBMIT_DONE;
 }
@@ -709,6 +848,26 @@ function updateSubmitCard(){
 ["subNickname", "subPlan", "subClient", "subSessions"].forEach(function(id){
   document.getElementById(id).addEventListener("input", updateSubmitCard);
   document.getElementById(id).addEventListener("change", updateSubmitCard);
+});
+
+/* Picking a start after the end drags the other select along, fixing it at once. */
+document.getElementById("subFrom").addEventListener("change", function(){
+  var to = document.getElementById("subTo");
+  if(this.value > to.value) to.value = this.value;
+  updateSubmitCard();
+});
+document.getElementById("subTo").addEventListener("change", function(){
+  var from = document.getElementById("subFrom");
+  if(this.value < from.value) from.value = this.value;
+  updateSubmitCard();
+});
+document.getElementById("subLast92").addEventListener("click", function(){
+  if(!RANGE_READY) return;
+  var w = CacheObservatory.clampRange(dailyDates(), MAX_PERIOD_DAYS);
+  if(!w) return;
+  document.getElementById("subFrom").value = w.start;
+  document.getElementById("subTo").value = w.end;
+  updateSubmitCard();
 });
 
 document.getElementById("subBtn").addEventListener("click", async function(){
@@ -787,20 +946,53 @@ function drawCharts(){
     cellTitle: function(row, hour, rq, v){
       return row.key + " " + hh(hour) + ":00 · " + rq + " requests · " + v + " losses";
     },
-    onSelect: function(row, hour){ showEvents(row.key, hour); },
+    onSelect: function(row, hour, td){ showEvents(row.key, hour, td); },
     onClear: function(){ hideEvents(); },
     usageLegendEl: document.getElementById("lg-use")
   });
 }
 
-function showEvents(date, hour){
+var EVT_TD = null;    // cell the popover is anchored to
+var EVT_AT = null;    // that cell's viewport position when it opened
+
+function evtPanelOpen(){
+  return document.getElementById("evtPanel").classList.contains("on");
+}
+
+/* Anchor the popover to the clicked cell, clamped inside the viewport. The
+   heatmap is a min-width:760px horizontal scroller, so the right-hand columns
+   would otherwise push the panel off-screen. */
+function placeEvtPanel(p, td){
+  if(!td || !td.getBoundingClientRect) return;
+  var margin = 8;
+  p.style.left = "0px";
+  p.style.top = "0px";
+  var r = td.getBoundingClientRect();
+  var pw = p.offsetWidth, ph = p.offsetHeight;
+  var vw = document.documentElement.clientWidth;
+  var vh = document.documentElement.clientHeight;
+  var top = r.bottom + 6;
+  if(top + ph > vh - margin){
+    var above = r.top - 6 - ph;
+    top = above >= margin ? above : Math.max(margin, vh - margin - ph);
+  }
+  var left = r.left + r.width / 2 - pw / 2;
+  var maxLeft = Math.max(margin, vw - margin - pw);
+  if(left > maxLeft) left = maxLeft;
+  if(left < margin) left = margin;
+  p.style.left = Math.round(left) + "px";
+  p.style.top = Math.round(Math.max(margin, top)) + "px";
+}
+
+function showEvents(date, hour, td){
   var p = document.getElementById("evtPanel");
   var rows = EVT_MAP.get(date + "#" + hour) || [];
   if(!rows.length){ hideEvents(); return; }
   var tot = rows.reduce(function(a, e){ return a + e.tokens; }, 0);
-  var html = "<h3>" + date + " " + hh(hour) + ":00 · " + rows.length +
+  var html = "<div class='evt-head'><h3>" + date + " " + hh(hour) + ":00 · " + rows.length +
     " losses · " + (tot / 1e6).toFixed(2) + "M tokens re-billed " +
-    "<span style='font-weight:400;color:var(--muted)'>(click the cell again to close)</span></h3>";
+    "<span style='font-weight:400;color:var(--muted)'>(close: ×, Esc, click outside, or the cell again)</span></h3>" +
+    "<button type='button' class='evt-close' aria-label='Close detail'>×</button></div>";
   html += "<table><tr><th>Time</th><th>Idle gap</th><th>Tokens re-billed</th><th>Session</th></tr>";
   rows.forEach(function(e){
     html += "<tr><td>" + e.time + "</td><td>" + e.gapMin.toFixed(1) + " min</td><td>" +
@@ -809,15 +1001,54 @@ function showEvents(date, hour){
   html += "</table>";
   p.className = "evt-panel on";
   p.innerHTML = html;
+  var closeBtn = p.querySelector(".evt-close");
+  if(closeBtn) closeBtn.addEventListener("click", hideEvents);
+  placeEvtPanel(p, td);
+  EVT_TD = td || null;
+  EVT_AT = (td && td.getBoundingClientRect) ? td.getBoundingClientRect() : null;
 }
 function hideEvents(){
   var p = document.getElementById("evtPanel");
   p.className = "evt-panel";
   p.innerHTML = "";
+  EVT_TD = null;
+  EVT_AT = null;
+  // Closing by a route the table never sees (×, Esc, outside click, scroll)
+  // would leave a stale .sel cell and desync the next click toggle.
+  if(window.ObservatoryCharts && ObservatoryCharts.clearHeatmapSelection){
+    ObservatoryCharts.clearHeatmapSelection(document.getElementById("heatmap"));
+  }
 }
 
+document.addEventListener("keydown", function(ev){
+  if(ev.key === "Escape" && evtPanelOpen()) hideEvents();
+});
+document.addEventListener("mousedown", function(ev){
+  if(!evtPanelOpen()) return;
+  var t = ev.target;
+  if(document.getElementById("evtPanel").contains(t)) return;
+  // Clicks on heatmap cells are the table's own toggle — closing here desyncs it.
+  if(t && t.closest && t.closest("#heatmap")) return;
+  hideEvents();
+});
+/* Scrolling detaches the popover from its cell (capture: the heatmap's own
+   horizontal scroller counts too) — but only close when the cell really
+   moved. Browsers deliver scroll events late, so clicking a cell right after
+   scrolling it into view would otherwise have the trailing event close the
+   popover the click just opened (observed). */
+window.addEventListener("scroll", function(){
+  if(!evtPanelOpen()) return;
+  if(!EVT_TD || !EVT_AT){ hideEvents(); return; }
+  var r = EVT_TD.getBoundingClientRect();
+  if(Math.abs(r.top - EVT_AT.top) > 1 || Math.abs(r.left - EVT_AT.left) > 1) hideEvents();
+}, true);
+
 var rt;
-window.addEventListener("resize", function(){ clearTimeout(rt); rt = setTimeout(drawCharts, 150); });
+window.addEventListener("resize", function(){
+  hideEvents();
+  clearTimeout(rt);
+  rt = setTimeout(drawCharts, 150);
+});
 if(window.matchMedia){
   window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", drawCharts);
 }

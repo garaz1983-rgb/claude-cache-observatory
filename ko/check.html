@@ -105,9 +105,21 @@ table.hm th.day{text-align:right; padding-right:6px; font-size:.72rem}
 table.hm td{width:27px; height:26px; text-align:center; border-radius:4px; background:var(--grid); color:var(--muted)}
 table.hm td.hit{color:#fff; font-weight:600; cursor:pointer}
 table.hm td.hit.sel{outline:2px solid var(--ink); outline-offset:-1px}
-.evt-panel{display:none; margin-top:12px; border:1px solid var(--line); border-radius:6px; padding:10px 14px; background:var(--bg)}
+/* 건별 상세는 히트맵 위에 뜨는 팝오버다. 표 아래 고정이면 위쪽 행을 눌렀을 때
+   상세가 화면 밖으로 밀려나 바로 확인이 안 된다. 위치는 스크립트가 셀 기준으로
+   잡고 뷰포트 안으로 clamp한다. */
+.evt-panel{display:none; position:fixed; left:0; top:0; z-index:60;
+  max-width:min(92vw,430px); max-height:min(60vh,420px); overflow:auto;
+  border:1px solid var(--line); border-radius:8px; padding:10px 14px;
+  background:var(--surface); box-shadow:0 10px 30px rgba(0,0,0,.24)}
 .evt-panel.on{display:block}
 .evt-panel h3{font-size:.85rem; margin:0 0 8px; font-weight:700}
+.evt-panel .evt-head{display:flex; align-items:flex-start; gap:10px; justify-content:space-between}
+.evt-panel .evt-head h3{margin:0 0 8px}
+.evt-panel .evt-close{flex:0 0 auto; font:inherit; font-size:.95rem; line-height:1;
+  padding:3px 9px; border-radius:6px; border:1px solid var(--line);
+  background:var(--bg); color:var(--ink); cursor:pointer}
+.evt-panel .evt-close:hover{border-color:var(--muted)}
 .evt-panel table{border-collapse:collapse; font-family:ui-monospace,'Cascadia Mono',Consolas,monospace; font-variant-numeric:tabular-nums; font-size:.78rem}
 .evt-panel td,.evt-panel th{padding:2px 18px 2px 0; text-align:right; border:0}
 .evt-panel th{color:var(--muted); font-weight:500; font-size:.68rem; letter-spacing:.05em}
@@ -118,6 +130,15 @@ details.criteria .body{padding:0 16px 14px; font-size:.85rem}
 details.criteria .body ul{margin:0; padding-left:20px}
 details.criteria .body li{margin:5px 0}
 .placeholder{margin-top:18px; padding:12px 16px; border:1px dashed var(--line); border-radius:8px; color:var(--muted); font-size:.85rem}
+.range-box{border:1px solid var(--line); border-radius:6px; background:var(--bg); padding:12px 14px; margin:0 0 14px}
+.range-box .range-head{font-size:.7rem; text-transform:uppercase; letter-spacing:.07em; color:var(--muted); font-weight:700; margin-bottom:9px}
+.range-grid{display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:10px; align-items:end}
+.range-grid label{display:block; font-size:.7rem; text-transform:uppercase; letter-spacing:.07em; color:var(--muted); margin-bottom:4px}
+.range-grid select{width:100%; font:inherit; font-size:.88rem; padding:7px 10px; border:1px solid var(--line); border-radius:6px; background:var(--surface); color:var(--ink)}
+.range-grid button{font:inherit; font-size:.82rem; font-weight:600; padding:8px 12px; border-radius:8px; border:1px solid var(--line); background:var(--surface); color:var(--ink); cursor:pointer}
+.range-grid button:hover{border-color:var(--muted)}
+.range-hint{margin:9px 0 0; font-size:.78rem; color:var(--muted); font-variant-numeric:tabular-nums}
+.range-hint.over{color:var(--crit)}
 .submit-form{display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:12px; margin:0 0 14px}
 .submit-form label{display:block; font-size:.7rem; text-transform:uppercase; letter-spacing:.07em; color:var(--muted); margin-bottom:4px}
 .submit-form input,.submit-form select{width:100%; font:inherit; font-size:.88rem; padding:7px 10px; border:1px solid var(--line); border-radius:6px; background:var(--bg); color:var(--ink)}
@@ -234,16 +255,17 @@ a{color:inherit}
 
   <section id="hmSection">
     <h2>일 × 1시간 히트맵: 사용량 대비 유실</h2>
-    <p class="desc">바탕 회청색 = 그 시간의 요청량(진할수록 많이 사용). 빨강 숫자 = in-TTL 유실 건수. 이렇게 보면 "안 써서 0"과 "많이 썼는데도 0"이 구분된다. <b>빨간 셀을 클릭</b>하면 건별 상세(시각·유휴 간격·토큰)가 열린다. 이 상세도 브라우저 밖으로 나가지 않는다.</p>
+    <p class="desc">바탕 회청색 = 그 시간의 요청량(진할수록 많이 사용). 빨강 숫자 = in-TTL 유실 건수. 이렇게 보면 "안 써서 0"과 "많이 썼는데도 0"이 구분된다. <b>빨간 셀을 클릭</b>하면 건별 상세(시각·유휴 간격·토큰)가 셀 옆 팝오버로 열린다. 이 상세도 브라우저 밖으로 나가지 않는다.</p>
     <div class="card hm-scroll">
       <table class="hm" id="heatmap"></table>
-      <div class="evt-panel" id="evtPanel"></div>
       <div class="legend">
         <span><i class="chip" style="background:var(--grid)"></i>미사용(요청 0)</span>
         <span><i class="chip" id="lg-use"></i>회색 음영 = 그 시간대 요청량(진할수록 많음)</span>
         <span><i class="chip" style="background:var(--crit)"></i>적색 = 유실 건수(셀 안 숫자, 클릭하면 건별 상세)</span>
       </div>
     </div>
+    <!-- 팝오버(position:fixed). 가로 스크롤 컨테이너 밖에 두어 잘림을 막는다. -->
+    <div class="evt-panel" id="evtPanel"></div>
   </section>
 
   <details class="criteria">
@@ -261,8 +283,25 @@ a{color:inherit}
 
   <section id="submitSection">
     <h2>3 · 관측소에 집계 공유하기 (선택)</h2>
-    <p class="desc">전송되는 것은 아래 JSON <b>전문 그대로</b>다. 기간·총계·일별 카운트뿐. 로그·파일 경로·세션 내용·건별 상세는 절대 전송되지 않는다.</p>
+    <p class="desc">전송되는 것은 아래 JSON <b>전문 그대로</b>다. 기간·총계·일별 카운트뿐. 로그·파일 경로·세션 내용·건별 상세는 절대 전송되지 않는다. 공유 기간을 좁히면 총계도 그 기간으로 다시 계산된다.</p>
     <div class="card">
+      <div class="range-box" id="subRange" hidden>
+        <div class="range-head">공유 기간</div>
+        <div class="range-grid">
+          <div>
+            <label for="subFrom">시작일</label>
+            <select id="subFrom"></select>
+          </div>
+          <div>
+            <label for="subTo">종료일</label>
+            <select id="subTo"></select>
+          </div>
+          <div>
+            <button id="subLast92" type="button">최근 92일</button>
+          </div>
+        </div>
+        <p class="range-hint" id="subRangeHint"></p>
+      </div>
       <div class="submit-form">
         <div>
           <label for="subNickname">닉네임 (선택, 최대 20자)</label>
@@ -638,14 +677,75 @@ function renderResults(){
   document.getElementById("kTokens").textContent = fmtTok(t.wasted_tokens);
   document.getElementById("kRate").textContent = t.requests > 0 ? (100 * t.in_ttl_losses / t.requests).toFixed(2) + "%" : "–";
   drawCharts();
+  setupRange();
   updateSubmitCard();
 }
 
 /* ---------- CHK-3: 집계 공유 (opt-in) ---------- */
 var SUBMIT_BUSY = false;
 var SUBMIT_DONE = false;
+var RANGE_READY = false;   // 기간 선택 UI 사용 가능 여부
+var RANGE_MSG = false;     // 지금 떠 있는 경고가 기간 초과 경고인가
+var MAX_PERIOD_DAYS = CacheObservatory.MAX_PERIOD_DAYS;
 
-/* 집계 + 일별만. 건별 상세(LAST.result.events)는 이 payload에 절대 넣지 않는다. */
+function dailyDates(){
+  if(!LAST || !LAST.result) return [];
+  return LAST.result.daily.map(function(d){ return d.date; });
+}
+
+/* 붙여넣은 CLI JSON에는 events가 없어 iron 유실을 범위별로 다시 셀 수 없다.
+   추정치로 채우는 대신 기간 선택 UI 자체를 숨기고 전체만 제출하게 둔다.
+   census가 있는 경로(폴더 드롭·폴더 선택)에서만 events가 SSOT로 존재한다. */
+function rangeAvailable(){
+  return !!(LAST && LAST.census && LAST.result &&
+            Array.isArray(LAST.result.events) && LAST.result.daily.length);
+}
+
+function fillDateOptions(sel, dates){
+  sel.textContent = "";
+  var frag = document.createDocumentFragment();
+  dates.forEach(function(d){
+    var o = document.createElement("option");
+    o.value = d;
+    o.textContent = d;
+    frag.appendChild(o);
+  });
+  sel.appendChild(frag);
+}
+
+function setupRange(){
+  var box = document.getElementById("subRange");
+  var from = document.getElementById("subFrom");
+  var to = document.getElementById("subTo");
+  RANGE_READY = false;
+  if(!rangeAvailable()){
+    box.hidden = true;
+    fillDateOptions(from, []);
+    fillDateOptions(to, []);
+    return;
+  }
+  var dates = dailyDates();
+  fillDateOptions(from, dates);
+  fillDateOptions(to, dates);
+  // 92일을 넘는 로그는 열자마자 제출 가능하도록 최근 92일로 맞춰 둔다.
+  var w = CacheObservatory.clampRange(dates, MAX_PERIOD_DAYS);
+  from.value = w.start;
+  to.value = w.end;
+  box.hidden = false;
+  RANGE_READY = true;
+}
+
+function selectedRange(){
+  if(!RANGE_READY) return null;
+  var a = document.getElementById("subFrom").value;
+  var b = document.getElementById("subTo").value;
+  if(!a || !b) return null;
+  return a <= b ? { start: a, end: b } : { start: b, end: a };
+}
+
+/* 집계 + 일별만. 건별 상세(LAST.result.events)는 이 payload에 절대 넣지 않는다.
+   기간을 좁히면 totals를 그 기간의 daily 합으로 다시 계산한다. 서버가
+   sum(daily) == totals를 검증하므로 전체 totals를 그대로 두면 400이 난다. */
 function buildSubmitPayload(){
   if(!LAST || !LAST.result.daily.length) return null;
   var r = LAST.result;
@@ -655,17 +755,28 @@ function buildSubmitPayload(){
   payload.plan = document.getElementById("subPlan").value;
   payload.client = document.getElementById("subClient").value;
   payload.concurrent_sessions = document.getElementById("subSessions").value;
-  payload.period_start = r.daily[0].date;
-  payload.period_end = r.daily[r.daily.length - 1].date;
-  payload.totals = {
-    requests: r.totals.requests,
-    in_ttl_losses: r.totals.in_ttl_losses,
-    iron_losses: r.totals.iron_losses,
-    wasted_tokens: r.totals.wasted_tokens
-  };
-  payload.daily = r.daily.map(function(d){
-    return { date: d.date, requests: d.requests, losses: d.losses, wasted_tokens: d.wasted_tokens };
-  });
+  var range = selectedRange();
+  var slice = range ? CacheObservatory.filterRange(r, range.start, range.end) : null;
+  if(!slice){
+    // 기간 선택이 없는 경로(붙여넣은 CLI JSON): 파싱된 전체를 그대로 보낸다.
+    slice = {
+      period_start: r.daily[0].date,
+      period_end: r.daily[r.daily.length - 1].date,
+      totals: {
+        requests: r.totals.requests,
+        in_ttl_losses: r.totals.in_ttl_losses,
+        iron_losses: r.totals.iron_losses,
+        wasted_tokens: r.totals.wasted_tokens
+      },
+      daily: r.daily.map(function(d){
+        return { date: d.date, requests: d.requests, losses: d.losses, wasted_tokens: d.wasted_tokens };
+      })
+    };
+  }
+  payload.period_start = slice.period_start;
+  payload.period_end = slice.period_end;
+  payload.totals = slice.totals;
+  payload.daily = slice.daily;
   // 붙여넣기 경로의 결과는 CLI 자체 버전 태그(예: cli-2.1)를 가져간다.
   payload.script_version = LAST.source_version || CacheObservatory.SCRIPT_VERSION;
   return payload;
@@ -690,16 +801,41 @@ function updateSubmitCard(){
   var payload = buildSubmitPayload();
   var pre = document.getElementById("subPreview");
   var btn = document.getElementById("subBtn");
+  var hint = document.getElementById("subRangeHint");
   if(!payload){
     pre.textContent = "(아직 파싱된 결과 없음)";
+    hint.textContent = "";
     btn.disabled = true;
     return;
   }
   pre.textContent = JSON.stringify(payload, null, 2);
-  if(payload.daily.length > 92){
+  // 서버는 달력 기준 기간(period_start~period_end)과 daily 항목 수를 둘 다
+  // 92로 제한한다. 활동이 없던 날은 daily에 없으므로 둘을 함께 본다.
+  var span = CacheObservatory.daySpan(payload.period_start, payload.period_end);
+  if(span === null) span = payload.daily.length;
+  var over = span > MAX_PERIOD_DAYS || payload.daily.length > MAX_PERIOD_DAYS;
+  if(RANGE_READY){
+    hint.textContent = "선택: " + payload.period_start + " ~ " + payload.period_end +
+      " · " + span + "일 (기록 있는 날 " + payload.daily.length + "일) / 최대 " +
+      MAX_PERIOD_DAYS + "일";
+    hint.className = over ? "range-hint over" : "range-hint";
+  } else {
+    hint.textContent = "";
+  }
+  if(over){
     btn.disabled = true;
-    submitMsg("bad", "스캔 기간이 92일을 넘는다. 관측소는 최대 92일까지 받는다. 더 짧은 범위로 다시 돌려서 공유할 것.");
+    RANGE_MSG = true;
+    submitMsg("bad", RANGE_READY
+      ? "선택한 기간이 " + span + "일이다. 관측소는 최대 " + MAX_PERIOD_DAYS +
+        "일까지 받는다. 위 '공유 기간'에서 " + MAX_PERIOD_DAYS + "일 이내로 좁혀 달라."
+      : "스캔 기간이 " + MAX_PERIOD_DAYS + "일을 넘는다. 관측소는 최대 " +
+        MAX_PERIOD_DAYS + "일까지 받는다. CLI에서 더 짧은 기간으로 다시 뽑아 붙여넣어 달라.");
     return;
+  }
+  if(RANGE_MSG){
+    // 기간을 좁혀 해소된 경고는 그대로 두면 오해를 부른다.
+    document.getElementById("subMsg").hidden = true;
+    RANGE_MSG = false;
   }
   btn.disabled = SUBMIT_BUSY || SUBMIT_DONE;
 }
@@ -707,6 +843,26 @@ function updateSubmitCard(){
 ["subNickname", "subPlan", "subClient", "subSessions"].forEach(function(id){
   document.getElementById(id).addEventListener("input", updateSubmitCard);
   document.getElementById(id).addEventListener("change", updateSubmitCard);
+});
+
+/* 시작 > 끝을 고르면 상대 select를 따라 움직여 즉시 교정한다. */
+document.getElementById("subFrom").addEventListener("change", function(){
+  var to = document.getElementById("subTo");
+  if(this.value > to.value) to.value = this.value;
+  updateSubmitCard();
+});
+document.getElementById("subTo").addEventListener("change", function(){
+  var from = document.getElementById("subFrom");
+  if(this.value < from.value) from.value = this.value;
+  updateSubmitCard();
+});
+document.getElementById("subLast92").addEventListener("click", function(){
+  if(!RANGE_READY) return;
+  var w = CacheObservatory.clampRange(dailyDates(), MAX_PERIOD_DAYS);
+  if(!w) return;
+  document.getElementById("subFrom").value = w.start;
+  document.getElementById("subTo").value = w.end;
+  updateSubmitCard();
 });
 
 document.getElementById("subBtn").addEventListener("click", async function(){
@@ -785,20 +941,52 @@ function drawCharts(){
     cellTitle: function(row, hour, rq, v){
       return row.key + " " + hh(hour) + ":00 · 요청 " + rq + "건 · 유실 " + v + "건";
     },
-    onSelect: function(row, hour){ showEvents(row.key, hour); },
+    onSelect: function(row, hour, td){ showEvents(row.key, hour, td); },
     onClear: function(){ hideEvents(); },
     usageLegendEl: document.getElementById("lg-use")
   });
 }
 
-function showEvents(date, hour){
+var EVT_TD = null;    // 팝오버가 물려 있는 셀
+var EVT_AT = null;    // 열릴 때 그 셀의 화면 위치
+
+function evtPanelOpen(){
+  return document.getElementById("evtPanel").classList.contains("on");
+}
+
+/* 셀 기준으로 팝오버를 놓되 뷰포트 밖으로 나가지 않게 clamp한다. 히트맵은
+   min-width 760px의 가로 스크롤 표라 오른쪽 열에서 특히 잘리기 쉽다. */
+function placeEvtPanel(p, td){
+  if(!td || !td.getBoundingClientRect) return;
+  var margin = 8;
+  p.style.left = "0px";
+  p.style.top = "0px";
+  var r = td.getBoundingClientRect();
+  var pw = p.offsetWidth, ph = p.offsetHeight;
+  var vw = document.documentElement.clientWidth;
+  var vh = document.documentElement.clientHeight;
+  var top = r.bottom + 6;
+  if(top + ph > vh - margin){
+    var above = r.top - 6 - ph;
+    top = above >= margin ? above : Math.max(margin, vh - margin - ph);
+  }
+  var left = r.left + r.width / 2 - pw / 2;
+  var maxLeft = Math.max(margin, vw - margin - pw);
+  if(left > maxLeft) left = maxLeft;
+  if(left < margin) left = margin;
+  p.style.left = Math.round(left) + "px";
+  p.style.top = Math.round(Math.max(margin, top)) + "px";
+}
+
+function showEvents(date, hour, td){
   var p = document.getElementById("evtPanel");
   var rows = EVT_MAP.get(date + "#" + hour) || [];
   if(!rows.length){ hideEvents(); return; }
   var tot = rows.reduce(function(a, e){ return a + e.tokens; }, 0);
-  var html = "<h3>" + date + " " + hh(hour) + "시 · 유실 " + rows.length +
+  var html = "<div class='evt-head'><h3>" + date + " " + hh(hour) + "시 · 유실 " + rows.length +
     "건 · 재과금 " + (tot / 1e6).toFixed(2) + "M 토큰 " +
-    "<span style='font-weight:400;color:var(--muted)'>(셀을 다시 클릭하면 닫힘)</span></h3>";
+    "<span style='font-weight:400;color:var(--muted)'>(닫기: ×, ESC, 바깥 클릭, 셀 다시 클릭)</span></h3>" +
+    "<button type='button' class='evt-close' aria-label='상세 닫기'>×</button></div>";
   html += "<table><tr><th>시각</th><th>직전 요청과의 간격</th><th>재과금 토큰</th><th>세션</th></tr>";
   rows.forEach(function(e){
     html += "<tr><td>" + e.time + "</td><td>" + e.gapMin.toFixed(1) + "분</td><td>" +
@@ -807,15 +995,53 @@ function showEvents(date, hour){
   html += "</table>";
   p.className = "evt-panel on";
   p.innerHTML = html;
+  var closeBtn = p.querySelector(".evt-close");
+  if(closeBtn) closeBtn.addEventListener("click", hideEvents);
+  placeEvtPanel(p, td);
+  EVT_TD = td || null;
+  EVT_AT = (td && td.getBoundingClientRect) ? td.getBoundingClientRect() : null;
 }
 function hideEvents(){
   var p = document.getElementById("evtPanel");
   p.className = "evt-panel";
   p.innerHTML = "";
+  EVT_TD = null;
+  EVT_AT = null;
+  // 표를 거치지 않는 닫기 경로(×·ESC·바깥 클릭·스크롤)에서 선택 하이라이트가
+  // 남으면 다음 클릭 토글이 어긋난다. 반드시 같이 해제한다.
+  if(window.ObservatoryCharts && ObservatoryCharts.clearHeatmapSelection){
+    ObservatoryCharts.clearHeatmapSelection(document.getElementById("heatmap"));
+  }
 }
 
+document.addEventListener("keydown", function(ev){
+  if(ev.key === "Escape" && evtPanelOpen()) hideEvents();
+});
+document.addEventListener("mousedown", function(ev){
+  if(!evtPanelOpen()) return;
+  var t = ev.target;
+  if(document.getElementById("evtPanel").contains(t)) return;
+  // 히트맵 셀 클릭은 표 자신의 토글 로직이 처리한다(여기서 닫으면 어긋난다).
+  if(t && t.closest && t.closest("#heatmap")) return;
+  hideEvents();
+});
+/* 스크롤하면 셀과 팝오버가 어긋나므로 닫는다(캡처: 히트맵 가로 스크롤 포함).
+   단 셀이 실제로 움직였을 때만 닫는다. 브라우저는 scroll 이벤트를 뒤늦게
+   보내므로, 셀을 화면 안으로 스크롤한 직후의 클릭이면 그 잔여 이벤트가
+   방금 연 팝오버를 바로 닫아버린다(실측). */
+window.addEventListener("scroll", function(){
+  if(!evtPanelOpen()) return;
+  if(!EVT_TD || !EVT_AT){ hideEvents(); return; }
+  var r = EVT_TD.getBoundingClientRect();
+  if(Math.abs(r.top - EVT_AT.top) > 1 || Math.abs(r.left - EVT_AT.left) > 1) hideEvents();
+}, true);
+
 var rt;
-window.addEventListener("resize", function(){ clearTimeout(rt); rt = setTimeout(drawCharts, 150); });
+window.addEventListener("resize", function(){
+  hideEvents();
+  clearTimeout(rt);
+  rt = setTimeout(drawCharts, 150);
+});
 if(window.matchMedia){
   window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", drawCharts);
 }
