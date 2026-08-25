@@ -4,11 +4,23 @@
 Targets:
   - assets/parse.js          — judged by tests/parity_check.py (M01..M15, M22)
   - functions/api/submit.js  — judged by tests/submit_contract_test.py
-                               (S16..S21, S23..S24, S39..S47, S52..S67)
-  - assets/localtime.js      — judged by tests/localtime_test.py (L25..L28)
+                               (S16..S21, S23..S24, S39..S47, S52..S67,
+                                S68..S82)
+  - tests/dataset_validate.py — judged by tests/submit_contract_test.py (V83)
+  - assets/localtime.js      — judged by tests/localtime_test.py (L25..L29)
   - check.html, ko/check.html — judged by tests/localtime_test.py
-                               (C29..C30, C48..C51)
+                               (C30..C33, C48..C51)
   - assets/identity.js       — judged by tests/identity_test.py (I34..I38)
+
+🔴 About the ids, because a comment in this file described them wrongly until
+M14.2 audited them. The NUMBER is a single counter shared by every target and
+the letter only names which file the mutant edits, so the counter does not
+restart per prefix: 48..51 are C48..C51, which is the whole reason no S48..S51
+exists. Two numbers, 56 and 60, are used by nothing at all — a historical gap
+with no surviving explanation, not a truncated list. So no id sequence here can
+be read as a count of anything: `len(MUTATIONS)` is the only count that means
+something, every anchor is verified to occur exactly once before any mutant is
+applied, and both numbers are printed at the top of every run.
 
 M14 added the S52..S62 block and M14.1 the S63..S67 one. Those guard the split
 of the public dataset into an index, an identity map, a fleet-wide daily series
@@ -18,6 +30,22 @@ recomputes the fleet series from scratch on the live path (it is a delta, on
 purpose — recomputing it would restore the cost the milestone removed), and
 nothing re-reads a commit to confirm all four files were in it. Both therefore
 have to be proven by mutants that die.
+
+M14.2 added S68..S82 and V83, and most of them exist because an independent
+verifier found that mutating those lines changed nothing any suite could see.
+The reason was the same in every case: the mock could fail exactly one thing, a
+blob POST. So a mutant that treated a failed root-tree GET as "this repository
+is empty" — and would therefore have written an index containing only the new
+row, wiping every other submitter's — survived the whole suite, and so did a
+commit-POST failure branch whose meaning is "tell the submitter their data was
+saved when no ref was ever updated". The mock can now fail tree listings by
+position, truncate them, fail the commit POST, and hold the branch contended,
+which is what makes S68..S73 and S80..S82 observable at all.
+
+V83 is a different kind: the id regex in tests/dataset_validate.py claims to
+mirror SUB_ID_RE in the worker and did not, because Python's `$` matches before
+a trailing newline. A validator more lenient than the write path blesses rows
+that can never be written again.
 
 M13 added the identity target and the S39..S47 block. Those two groups guard an
 AUTHORISATION surface that did not exist before: matchIndex decides which
@@ -65,6 +93,7 @@ LOCALTIME_JS_REL = "assets/localtime.js"
 IDENTITY_JS_REL = "assets/identity.js"
 CHECK_HTML_REL = "check.html"
 CHECK_HTML_KO_REL = "ko/check.html"
+VALIDATE_PY_REL = "tests/dataset_validate.py"
 
 NODE_FALLBACKS = [
     r"C:\Program Files\nodejs\node.exe",
@@ -150,13 +179,14 @@ MUTATIONS = [
     ("S20_nickname_length_widened", SUBMIT_JS_REL,
      "nickname.length > MAX_NICKNAME",
      "nickname.length > MAX_NICKNAME + 1", "contract"),
-    # M14 moved storage onto the Git Data API, so the single retry is no longer
-    # a 409 on a PUT but a 422 on the ref update. Same property, new anchor:
-    # a branch that moved under the read must earn one re-read, and giving up
-    # instead loses the submission.
+    # M14 moved storage onto the Git Data API, so the retry is no longer a 409
+    # on a PUT but a 422 on the ref update. Same property, new anchor: a branch
+    # that moved under the read must earn a re-read, and giving up instead loses
+    # the submission. M14.2 turned the single retry into a budget, so the mutant
+    # is now "give up on the first conflict" rather than "do not loop".
     ("S21_ref_retry_disabled", SUBMIT_JS_REL,
-     "if (written.moved) continue;",
-     "if (written.moved) break;", "contract"),
+     "      if (attempt >= COMMIT_MAX_ATTEMPTS ||",
+     "      if (true ||", "contract"),
 
     # -- M3.1 codex-review fixes ------------------------------------------
     ("M22_cc_coercion_removed", PARSE_JS_REL,
@@ -293,10 +323,12 @@ MUTATIONS = [
     # put at risk. S52/S53 are the split itself: a submission that quietly stops
     # writing one of the three files leaves a dataset whose files disagree, and
     # every one of those disagreements is a number on the page that no longer
-    # adds up. S54/S55/S56 are the fleet series, which is maintained as a DELTA
+    # adds up. S54/S55 are the fleet series, which is maintained as a DELTA
     # and is therefore the one number on the site that can drift silently:
     # nothing recomputes it from scratch in production, so the mutants that make
-    # it drift have to die in the test. S61/S62 are the atomicity: a commit that
+    # it drift have to die in the test. (M14.2 note: this sentence named a
+    # non-existent S56 until the id gaps were audited — see the header.)
+    # S61/S62 are the atomicity: a commit that
     # is not chained to the tree and the head the read came from is not "one
     # commit" at all, it is a race with a nicer name.
     ("S52_detail_file_not_written", SUBMIT_JS_REL,
@@ -378,6 +410,95 @@ MUTATIONS = [
     # teaches the next reader to tolerate survivors. That half of the relation
     # is proven instead by run_validator_cases() in the contract test, which
     # hands the validator an orphan directly.
+
+    # -- M14.2: the read guards, the retry budget and the honest refusal ------
+    # 🔴 S68/S69 are the two the verifier's run named first. Both are one-line
+    # status checks whose removal turns a FAILED read into a confident wrong
+    # answer: `root` not being 200 means the walk never reaches data/, so the
+    # write proceeds against an index it believes is empty and publishes one
+    # containing only the new row — every other submitter's row gone, the fleet
+    # series and the identity map replaced, every detail file orphaned. It is
+    # the single most destructive thing this endpoint can do and nothing tested
+    # it, because the mock could only fail blob POSTs.
+    ("S68_root_tree_status_unchecked", SUBMIT_JS_REL,
+     "  const root = await ghJson(api + \"/git/trees/\" + rootTreeSha, token);\n"
+     "  if (root.status !== 200) return null;",
+     "  const root = await ghJson(api + \"/git/trees/\" + rootTreeSha, token);",
+     "contract"),
+    ("S69_data_tree_status_unchecked", SUBMIT_JS_REL,
+     "    if (dataTree.status !== 200) return null;",
+     "    if (false) return null;", "contract"),
+    ("S70_subs_tree_status_unchecked", SUBMIT_JS_REL,
+     "  if (listing.status !== 200) return null;",
+     "  if (false) return null;", "contract"),
+    # "Tell the submitter their data was saved when no ref was ever updated."
+    ("S71_commit_post_failure_is_success", SUBMIT_JS_REL,
+     "  if (commit.status !== 200 && commit.status !== 201) return null;",
+     '  if (commit.status !== 200 && commit.status !== 201) return { url: "" };',
+     "contract"),
+    # Reachable by two ordinary submissions: machine A reports June, machine B
+    # then reports May. Without the sort the public file reads
+    # ["2026-06-01", "2026-05-01"] and tests/dataset_validate.py rejects it.
+    ("S72_fleet_series_not_sorted", SUBMIT_JS_REL,
+     "  out.sort(function (a, b) { return a.date < b.date ? -1 : "
+     "(a.date > b.date ? 1 : 0); });\n  return { schema_version: "
+     "FLEET_SCHEMA_VERSION, days: out };",
+     "  return { schema_version: FLEET_SCHEMA_VERSION, days: out };",
+     "contract"),
+    # 🔴 D2: one hand-edited row used to make this API PUBLISH a dataset that
+    # did not add up — mergeRecord drops a malformed row and applyFleetDelta
+    # could not read a `.date` off it, so the date left the detail file and
+    # stayed in the fleet series. Seven of eight shapes returned 200; the eighth
+    # threw and escaped as a 500.
+    ("S73_detail_row_shape_unchecked", SUBMIT_JS_REL,
+     "    const row = dailyRowOf(detail.daily[i]);\n    if (!row) return null;",
+     "    const row = detail.daily[i];", "contract"),
+    ("S74_empty_detail_daily_allowed", SUBMIT_JS_REL,
+     "  if (!detail.daily.length) return null;   // a row with no history is not one",
+     "  void 0;", "contract"),
+    # GitHub truncates a tree listing at 100,000 entries and the reply still
+    # looks complete, so ignoring the flag is a read that is wrong in the one
+    # direction that then writes.
+    ("S75_tree_truncation_ignored", SUBMIT_JS_REL,
+     "  return !!(body && body.truncated === true);",
+     "  return false;", "contract"),
+    # 🔴 D1: one retry means exactly one loser of any race gets a second chance,
+    # so a burst of ten accepted two. The budget is a contract; halving it is
+    # not a refactor.
+    ("S76_retry_budget_back_to_one", SUBMIT_JS_REL,
+     "const COMMIT_MAX_ATTEMPTS = 6;",
+     "const COMMIT_MAX_ATTEMPTS = 2;", "contract"),
+    # A lost race is not an outage. Saying "storage" makes it indistinguishable
+    # from GitHub being down, which is what the page used to tell people.
+    ("S77_conflict_reported_as_storage", SUBMIT_JS_REL,
+     "  return { ok: false, conflict: conflicts > 0 };",
+     "  return { ok: false };", "contract"),
+    ("S78_conflict_409_not_recognised", SUBMIT_JS_REL,
+     "  if (res.status === 422 || res.status === 409) return true;",
+     "  if (res.status === 422) return true;", "contract"),
+    ("S79_conflict_message_ignored", SUBMIT_JS_REL,
+     "  return message.indexOf(\"fast forward\") !== -1 ||\n"
+     "    message.indexOf(\"fast-forward\") !== -1;",
+     "  return false;", "contract"),
+    # The two the harness had recorded as equivalent. They ARE unreachable by
+    # any sequence of submissions — the merge unions dates and never removes one
+    # — but data/daily.json is a file in a public repository and an admin can
+    # edit it, which is the universe these guards were written for. case31
+    # reaches them, so they are covered instead of argued about.
+    ("S80_fleet_phantom_day_kept", SUBMIT_JS_REL,
+     "    if (d.machines <= 0) return;",
+     "    if (false) return;", "contract"),
+    ("S81_fleet_requests_not_clamped", SUBMIT_JS_REL,
+     "      requests: Math.max(0, d.requests),",
+     "      requests: d.requests,", "contract"),
+    ("S82_fleet_losses_not_clamped", SUBMIT_JS_REL,
+     "      losses: Math.max(0, d.losses),",
+     "      losses: d.losses,", "contract"),
+    # -- M14.2: the validator must not be more lenient than the write path ----
+    # Python's `$` matches before a trailing newline and JavaScript's does not.
+    ("V83_id_regex_allows_trailing_newline", VALIDATE_PY_REL,
+     'SUB_ID_RE = re.compile(r"^sub-[0-9]{14}-[0-9a-f]{4}\\Z")',
+     'SUB_ID_RE = re.compile(r"^sub-[0-9]{14}-[0-9a-f]{4}$")', "contract"),
 
     ("C50_payload_drops_token", CHECK_HTML_REL,
      '  if(typeof LAST.link_token === "string" && LAST.link_token) payload.token = LAST.link_token;',

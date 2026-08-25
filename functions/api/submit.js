@@ -8,8 +8,13 @@
  *   1. schema whitelist validation  -> 400 {ok:false, error:"schema", detail}
  *   2. sanity validation            -> 400 (same shape)
  *   3. rate limit (KV only)         -> 429 {ok:false, error:"rate_limited", retry_after}
- *   4. bot commit via GitHub Git Data API (ref moved => re-read + one retry)
- *                                   -> 502 {ok:false, error:"storage"} on failure
+ *   4. bot commit via GitHub Git Data API (a moved ref earns a re-read and a
+ *      jittered retry, up to COMMIT_MAX_ATTEMPTS times)
+ *                                   -> 502 {ok:false, error:"storage"} if the
+ *                                      store could not be read or written
+ *                                   -> 409 {ok:false, error:"conflict",
+ *                                      retry_after} if it could, and the branch
+ *                                      was taken every time
  *   5. 200 {ok:true, id, commit_url, merged, period_start, period_end[, token]}
  *
  * Hard rules:
@@ -91,8 +96,16 @@
  * Storage moved off the Contents API onto the Git Data API (blob -> tree ->
  * commit -> ref) for two reasons, both required:
  *
- *   - the blob endpoint has no 1 MB inline cap, so the wall is gone rather
- *     than pushed further away;
+ *   - the blob endpoint has no 1 MB inline cap, so THAT wall is gone. It is not
+ *     true that there is no wall: GitHub truncates a tree listing at 100,000
+ *     entries, and data/subs/ grows one file per submitter, so 100,000
+ *     submitters is where the read path stops being able to find an existing
+ *     detail file. Since M14.2 that limit is DETECTED (readState and
+ *     readDetailDaily refuse a listing GitHub marked `truncated`) rather than
+ *     walked past silently, which is the difference between "returning
+ *     submitters start failing and nobody knows why" and "the write path
+ *     refuses and says so". Sharding data/subs/ by an id prefix would move the
+ *     ceiling to ~25 M; it is not done here — see readDetailDaily();
  *   - a submission writes SEVERAL files and they must land TOGETHER. Sequential
  *     Contents-API PUTs would be one commit each with no atomicity, and a
  *     failure between them leaves the fleet series counting a submission the
@@ -134,10 +147,10 @@
  * the row committed before M13 has no identity to move, and a row can only ever
  * be merged into by the machine that owns it, never by the absence of a key.
  *
- * The single retry is unchanged in spirit: a ref that moved under us (422 on
- * the ref update, the equivalent of the old 409) earns one re-read, and the
- * match, the merge, the identity resolution and the fleet delta all re-run
- * against the FRESH content. Nothing is merged against a stale read.
+ * The retry is unchanged in spirit: a ref that moved under us (422 on the ref
+ * update, the equivalent of the old 409) earns a re-read, and the match, the
+ * merge, the identity resolution and the fleet delta all re-run against the
+ * FRESH content. Nothing is merged against a stale read.
  *
  * 🔴 Whatever a file claims must add up inside itself, and they must agree with
  * each other: the index row's totals equal the sum of its own detail file,
@@ -145,6 +158,53 @@
  * data/identity.json belongs to a row the index lists.
  * tests/dataset_validate.py is the single definition of that, and the contract
  * test runs it after every accepted submission.
+ *
+ * ---------- M14.2: several people submitting at the same moment ----------
+ *
+ * M14 gave the branch a compare-and-swap and exactly ONE retry, which means
+ * exactly one loser of any race gets a second chance. Measured through the mock
+ * with barrier-released threads, that produced the same answer at every burst
+ * size, because each round has one CAS winner and there were only ever two
+ * rounds:
+ *
+ *     simultaneous   accepted   refused
+ *          3            2          1 x 502
+ *          5            2          3 x 502
+ *         10            2          8 x 502     <- 80% of the submissions lost
+ *
+ * and the refusal said "storage", which is what a GitHub outage says. Three
+ * things were wrong and all three are fixed here.
+ *
+ *   1. THE WINDOW WAS LONGER THAN IT NEEDED TO BE. The read was 9 strictly
+ *      sequential round trips and the write 7, with nothing overlapping: 13
+ *      calls for a new row and 16 for a merge, ~1.6 s against real GitHub at
+ *      ~100 ms a call, essentially all of it inside the conflict window. The
+ *      three blob READS are independent of each other and so are the four blob
+ *      POSTs, so both now go out as one batch each — 7 calls become 2 waits.
+ *      Nothing about atomicity changes: a blob is an unreferenced object until
+ *      a commit points at it, so posting four at once cannot publish anything
+ *      partial, and the tree, the commit and the ref update stay strictly
+ *      ordered because each one needs the sha the previous returned.
+ *
+ *   2. ONE RETRY IS NOT A BUDGET. It is now COMMIT_MAX_ATTEMPTS with a jittered
+ *      wait between attempts, so retriers do not come back in lockstep and
+ *      collide again. The wait is scaled by how long the failed attempt ITSELF
+ *      took, because that duration is the width of the window they are
+ *      colliding inside — a fixed millisecond figure would be far too long
+ *      against a fast store and far too short against a slow one. See
+ *      backoffDelayMs() for why the bound is where it is.
+ *
+ *   3. A LOST RACE IS NOT AN OUTAGE. Running out of attempts now answers
+ *      409 {ok:false, error:"conflict", retry_after} instead of borrowing the
+ *      502 that means "the store did not answer". The distinction is not
+ *      cosmetic: one of them is worth retrying immediately and the other is
+ *      not, and the check page now retries a 409 once on its own before it
+ *      tells a person anything.
+ *
+ * 🔴 What did NOT change: the ref CAS with force:false. Atomicity rests
+ * entirely on it. Every attempt still re-reads all four files and re-resolves
+ * everything against that fresh read, and a submission still lands as one
+ * commit or not at all.
  */
 
 const MAX_BODY_BYTES = 64 * 1024;
@@ -198,6 +258,33 @@ const DETAIL_SCHEMA_VERSION = 1;
 const IDENTITY_SCHEMA_VERSION = 1;
 const SUB_ID_RE = /^sub-[0-9]{14}-[0-9a-f]{4}$/;
 const DEFAULT_BRANCH = "master";
+
+/* M14.2. How many times one submission may re-read and try again after losing
+   the branch to somebody else's commit.
+   Six, and the reasoning is arithmetic rather than taste. One CAS winner exists
+   per round, so N simultaneous submissions need N rounds unless the losers
+   spread themselves out; the jitter below widens by one attempt-duration per
+   round, so round k can fit about k winners, and 1+1+2+3+4+5 = 16 covers a
+   burst of ten with room over. The cost of the bound is what a submitter waits
+   in the worst case: six attempts plus their waits, which the deadline caps.
+   Raising it further buys less each time (the sum grows quadratically while the
+   waiting grows linearly) and a browser at the other end is not patient. */
+const COMMIT_MAX_ATTEMPTS = 6;
+/* Nothing above this, however slow the store is: a wait longer than this is
+   worse for the person than being told to press the button again. */
+const BACKOFF_CAP_MS = 6000;
+/* And nothing below this, however fast it is: at zero the retriers would come
+   back in the same lockstep that made them collide. */
+const BACKOFF_FLOOR_MS = 25;
+/* Stop retrying once the whole commit stage has cost this much, even with
+   attempts left. Cloudflare bills CPU rather than wall clock and awaiting a
+   fetch costs none, so this bound is about the person waiting, not the platform. */
+const CONFLICT_DEADLINE_MS = 25000;
+/* Seconds a conflict-exhausted caller is told to wait. Randomised for the same
+   reason the backoff is: several callers exhausted by the same burst must not
+   all come back together. */
+const CONFLICT_RETRY_AFTER_MIN = 2;
+const CONFLICT_RETRY_AFTER_MAX = 6;
 const BLOB_MODE = "100644";
 const DETAIL_ROW_KEYS = ["date", "requests", "losses", "wasted_tokens"];
 const FLEET_ROW_KEYS = ["date", "requests", "losses", "wasted_tokens", "machines"];
@@ -513,6 +600,49 @@ function randomHex(bytes) {
   return Array.from(buf)
     .map(function (b) { return b.toString(16).padStart(2, "0"); })
     .join("");
+}
+
+/* ---------- M14.2: backing off after losing the branch ---------- */
+
+/* crypto rather than Math.random, because this jitter is the only thing keeping
+   simultaneous retriers from re-colliding, and Math.random carries no promise
+   about being independent across concurrent invocations of a Worker. */
+function randomFraction() {
+  const buf = new Uint32Array(1);
+  crypto.getRandomValues(buf);
+  return buf[0] / 4294967296;
+}
+
+function sleep(ms) {
+  if (!(ms > 0)) return Promise.resolve();
+  return new Promise(function (resolve) { setTimeout(resolve, ms); });
+}
+
+/* How long to wait before attempt number `attempt + 1`.
+ *
+ * FULL jitter — uniform over [0, window) rather than window/2 ± something —
+ * because the point is to spread callers out, and a narrow band around a fixed
+ * delay just moves the pile-up rather than removing it.
+ *
+ * The window is scaled by how long the attempt that just failed actually took,
+ * not by a constant. That duration IS the width of the window two submissions
+ * can collide inside: a caller wins only if nobody else's ref update lands
+ * between its own read and its own PATCH. So a window of `elapsed` makes room
+ * for about one more winner, `2 x elapsed` for about two, and the schedule
+ * widens by one attempt-duration per round. It also means this code needs no
+ * idea whether it is talking to a store that answers in 1 ms or in 200 ms —
+ * against the mock the waits are milliseconds and against GitHub they are
+ * seconds, from the same arithmetic.
+ */
+function backoffDelayMs(attempt, elapsedMs) {
+  const unit = Math.max(BACKOFF_FLOOR_MS, elapsedMs);
+  const spread = Math.min(BACKOFF_CAP_MS, unit * attempt);
+  return Math.floor(randomFraction() * spread);
+}
+
+function conflictRetryAfter() {
+  const span = CONFLICT_RETRY_AFTER_MAX - CONFLICT_RETRY_AFTER_MIN + 1;
+  return CONFLICT_RETRY_AFTER_MIN + Math.floor(randomFraction() * span);
 }
 
 function newSubmissionId(now) {
@@ -917,8 +1047,21 @@ function applyFleetDelta(fleet, oldDaily, newDaily) {
     if (!row) continue;            // a hand-edited file must not poison the series
     byDate.set(row.date, row);
   }
-  for (let i = 0; i < oldDaily.length; i++) {
-    const r = oldDaily[i];
+  /* 🔴 M14.2: the SAME filter mergeRecord() puts these rows through. They used
+     to arrive raw here, so the two functions disagreed about which rows exist —
+     one dropped a hand-edited row and the other tried to read a `.date` off it,
+     which skipped the subtraction on seven malformed shapes and threw outright
+     on a literal null. readDetailDaily() now refuses such a file before it ever
+     reaches this point (a lost date cannot be subtracted, so refusing is the
+     only honest answer), which makes this filter unreachable from the write
+     path. It stays because this function's contract is the same as
+     fleetRowOf()'s directly below the loop above: hand-edited input must not
+     poison the series, and a guard that depends on a caller's diligence is not
+     a guard. */
+  const outgoing = Array.isArray(oldDaily) ? oldDaily : [];
+  for (let i = 0; i < outgoing.length; i++) {
+    const r = dailyRowOf(outgoing[i]);
+    if (!r) continue;              // a hand-edited file must not poison the series
     const cur = byDate.get(r.date);
     if (!cur) continue;            // never covered by the series; nothing to take out
     cur.requests -= r.requests;
@@ -997,6 +1140,24 @@ function treeEntry(tree, name, type) {
   return null;
 }
 
+/* 🔴 M14.2. GitHub truncates a tree listing at 100,000 entries and says so with
+   this flag, and the reply still LOOKS complete: it is a well-formed list of
+   entries, just not all of them. A caller that ignores the flag therefore never
+   sees an error — it sees treeEntry() return null and concludes the file is not
+   there. In readState that would mean "this repository has no dataset" and in
+   readDetailDaily "this submitter has no history", and both of those are wrong
+   answers that write. So a truncated listing is treated as a failed read.
+
+   The ceiling this puts on the design is real and worth stating plainly:
+   data/subs/ holds one file per submitter, so it is ~100,000 submitters. Below
+   it nothing changes; at it every returning submitter is refused with a 502
+   until someone shards the directory. That is a far better failure than the one
+   this replaces, but it is not "no limit", and the M14 note that the wall was
+   "gone" was only ever true of the 1 MB inline-content cap. */
+function treeTruncated(body) {
+  return !!(body && body.truncated === true);
+}
+
 /* A blob, parsed. `null` means "should be there and is not readable", which is
    always a hard failure; a caller that can tolerate absence checks the sha
    before calling. The blob endpoint carries content up to 100 MB, which is the
@@ -1035,12 +1196,14 @@ async function readState(api, token, branch) {
 
   const root = await ghJson(api + "/git/trees/" + rootTreeSha, token);
   if (root.status !== 200) return null;
+  if (treeTruncated(root.body)) return null;
 
   let indexSha = "", fleetSha = "", identitySha = "", subsSha = "";
   const dataDir = treeEntry(root.body, "data", "tree");
   if (dataDir) {
     const dataTree = await ghJson(api + "/git/trees/" + dataDir.sha, token);
     if (dataTree.status !== 200) return null;
+    if (treeTruncated(dataTree.body)) return null;
     const i = treeEntry(dataTree.body, "submissions.json", "blob");
     const f = treeEntry(dataTree.body, "daily.json", "blob");
     const n = treeEntry(dataTree.body, "identity.json", "blob");
@@ -1051,14 +1214,26 @@ async function readState(api, token, branch) {
     if (s) subsSha = s.sha;
   }
 
+  /* 🔴 M14.2: the three blobs are read TOGETHER. Their shas are all known by
+     now and none of them is derived from another, so reading them one after the
+     other was three sequential round trips of pure waiting — and every one of
+     them was time this submission spent inside the window somebody else can
+     move the branch in. Nothing else about the read changes: the guards below
+     are the same guards, applied to the same three answers. */
+  const [indexBlob, fleetBlob, identityBlob] = await Promise.all([
+    indexSha ? readJsonBlob(api, token, indexSha) : null,
+    fleetSha ? readJsonBlob(api, token, fleetSha) : null,
+    identitySha ? readJsonBlob(api, token, identitySha) : null
+  ]);
+
   let index = { schema_version: INDEX_SCHEMA_VERSION, submissions: [] };
   if (indexSha) {
-    index = await readJsonBlob(api, token, indexSha);
+    index = indexBlob;
     if (!isPlainObject(index) || !Array.isArray(index.submissions)) return null;
   }
   let fleet = { schema_version: FLEET_SCHEMA_VERSION, days: [] };
   if (fleetSha) {
-    fleet = await readJsonBlob(api, token, fleetSha);
+    fleet = fleetBlob;
     if (!isPlainObject(fleet) || !Array.isArray(fleet.days)) return null;
   }
   /* Absent => nobody has an identity yet, which is a valid dataset and the one
@@ -1068,7 +1243,7 @@ async function readState(api, token, branch) {
      already has one, and then overwrite the file that would have said so. */
   let identities = {};
   if (identitySha) {
-    const doc = await readJsonBlob(api, token, identitySha);
+    const doc = identityBlob;
     if (!isPlainObject(doc) || !isPlainObject(doc.identities)) return null;
     identities = doc.identities;
   }
@@ -1084,21 +1259,55 @@ async function readState(api, token, branch) {
 
 /* The daily rows of the row being merged into. Returns null on ANY doubt —
    missing directory, missing file, unreadable file, an id that is not the id
-   the file claims. The caller turns null into a 502 instead of merging, because
-   a merge against daily rows that failed to load would recompute the row's
-   totals from the incoming submission alone and silently delete that machine's
-   history from a public file. */
+   the file claims, a listing GitHub truncated, or a row that is not a daily
+   row. The caller turns null into a 502 instead of merging, because a merge
+   against daily rows that failed to load would recompute the row's totals from
+   the incoming submission alone and silently delete that machine's history from
+   a public file.
+
+   🔴 M14.2 added the last two of those, and the row check is the one that
+   matters most. Before it, a single hand-edited row was enough to make this API
+   PUBLISH an inconsistent dataset: mergeRecord() drops a malformed row (it runs
+   every row through dailyRowOf) but applyFleetDelta received the same array raw
+   and could not read a `.date` off it, so the date left the detail file and
+   stayed in data/daily.json — measured across eight malformed shapes, seven of
+   which returned HTTP 200 over a dataset that no longer added up, while the
+   eighth (a literal null) threw and escaped as a 500. Making the two agree
+   after the fact is not enough either: once a row's date is unreadable, WHICH
+   day to take back out of the fleet series is simply not recoverable from the
+   file. So the honest answer is the same one a missing detail file already got
+   — refuse the write, publish nothing, and leave the hand-edit for a human,
+   with tests/dataset_validate.py to find it.
+
+   The `truncated` guard is where the 100,000-submitter ceiling lands, and
+   sharding this directory (data/subs/<first 2 hex of the id's suffix>/<id>.json,
+   256 buckets, ~25 M) is the obvious way to remove it. Deliberately NOT done
+   here: `detail` is a published path in every existing index row, so sharding
+   is a migration of the public dataset plus a permanent second shape for old
+   rows, and it adds one more sequential tree GET to the read path — the exact
+   cost M14.2 spent its effort removing. At one submitter, buying a 25 M ceiling
+   with a slower and more contended write path is the wrong trade; the point of
+   detecting truncation is that whoever eventually approaches it will be told,
+   rather than watching returning submitters fail for no visible reason. */
 async function readDetailDaily(api, token, subsSha, id) {
   if (!subsSha) return null;
   const listing = await ghJson(api + "/git/trees/" + subsSha, token);
   if (listing.status !== 200) return null;
+  if (treeTruncated(listing.body)) return null;
   const entry = treeEntry(listing.body, id + ".json", "blob");
   if (!entry) return null;
   const detail = await readJsonBlob(api, token, entry.sha);
   if (!isPlainObject(detail) || detail.id !== id || !Array.isArray(detail.daily)) {
     return null;
   }
-  return detail.daily;
+  if (!detail.daily.length) return null;   // a row with no history is not one
+  const rows = [];
+  for (let i = 0; i < detail.daily.length; i++) {
+    const row = dailyRowOf(detail.daily[i]);
+    if (!row) return null;
+    rows.push(row);
+  }
+  return rows;
 }
 
 /* blobs -> tree -> commit -> ref, in that order, which is what makes every file
@@ -1107,17 +1316,27 @@ async function readDetailDaily(api, token, subsSha, id) {
    this commit does not mention is carried over unchanged and GitHub resolves
    the nested directories for us.
    Returns {url} on success, {moved:true} when the ref moved under us (the
-   caller's one retry), or null for any other failure. */
+   caller's retry), or null for any other failure. */
 async function writeCommit(api, token, branch, state, files, message) {
-  const entries = [];
-  for (let i = 0; i < files.length; i++) {
-    const blob = await ghJson(api + "/git/blobs", token, {
+  /* 🔴 M14.2: the four blobs are POSTed TOGETHER. A blob is a content-addressed
+     object that no tree, commit or branch points at until the three ordered
+     calls below say so, so writing four at once cannot publish anything partial
+     — it is the same four objects arriving in a different order. What follows
+     stays strictly sequential because it has to: each call needs the sha the
+     previous one returned, and the ref update is the compare-and-swap the whole
+     design rests on. */
+  const posted = await Promise.all(files.map(function (file) {
+    return ghJson(api + "/git/blobs", token, {
       method: "POST",
       body: JSON.stringify({
-        content: b64EncodeUtf8(files[i].text),
+        content: b64EncodeUtf8(file.text),
         encoding: "base64"
       })
     });
+  }));
+  const entries = [];
+  for (let i = 0; i < files.length; i++) {
+    const blob = posted[i];
     if (blob.status !== 200 && blob.status !== 201) return null;
     if (!blob.body || typeof blob.body.sha !== "string") return null;
     entries.push({
@@ -1157,8 +1376,33 @@ async function writeCommit(api, token, branch, state, files, message) {
   if (upd.status === 200) {
     return { url: typeof commit.body.html_url === "string" ? commit.body.html_url : "" };
   }
-  if (upd.status === 422) return { moved: true };
+  if (isRefConflict(upd)) return { moved: true };
   return null;
+}
+
+/* Did the ref update fail because somebody else got there first?
+ *
+ * The entire retry hangs off this one answer, and the mapping it rests on —
+ * GitHub returns 422 with "Update is not a fast forward" — has never been
+ * exercised against the live API. The contract test pins it, but what the test
+ * pins is the MOCK's definition of it, so pinning it narrowly would only prove
+ * the mock agrees with itself.
+ *
+ * So the recognition is deliberately wider than the one status the mock
+ * returns: 409 is the other status a git host plausibly uses for this refusal
+ * (it is the one the Contents API used before M14), and the message is checked
+ * on its own so a host that changes the status while keeping the sentence still
+ * earns a retry. The two directions of being wrong are not symmetric. Treating
+ * some other failure as a conflict costs a wasted re-read and ends in the same
+ * refusal. Treating a real conflict as a hard failure loses the submission and
+ * tells the person a storage outage happened — which is precisely the defect
+ * this milestone exists to fix. */
+function isRefConflict(res) {
+  if (res.status === 422 || res.status === 409) return true;
+  const message = res.body && typeof res.body.message === "string"
+    ? res.body.message.toLowerCase() : "";
+  return message.indexOf("fast forward") !== -1 ||
+    message.indexOf("fast-forward") !== -1;
 }
 
 /* The read, the match, the merge, the identity map, the fleet delta and the
@@ -1167,7 +1411,12 @@ async function writeCommit(api, token, branch, state, files, message) {
    this machine already have a row" — and what that row contains, and which
    identity entries exist — may all have changed. Nothing computed before the
    conflict is carried across it; readState() re-reads all four files and every
-   line below re-resolves against that fresh read. */
+   line below re-resolves against that fresh read.
+
+   Returns {ok:true, …} · {ok:false, conflict:true} when the branch was taken
+   every time (the store answered; this submission simply never got its turn) ·
+   {ok:false} for everything else. The caller renders those as three different
+   things, because they are three different things. */
 async function commitSubmission(env, incoming, ident, issued, now) {
   const token = env.GITHUB_TOKEN;
   const repo = env.GITHUB_REPO;
@@ -1176,9 +1425,11 @@ async function commitSubmission(env, incoming, ident, issued, now) {
   const api = base + "/repos/" + repo;
   const branch = env.GITHUB_BRANCH || DEFAULT_BRANCH;
   const today = now.toISOString().slice(0, 10); // truncated to the day
+  const startedAt = Date.now();
+  let conflicts = 0;
 
-  // attempt 0 = normal path; attempt 1 = the single re-read retry.
-  for (let attempt = 0; attempt < 2; attempt++) {
+  for (let attempt = 1; attempt <= COMMIT_MAX_ATTEMPTS; attempt++) {
+    const attemptStarted = Date.now();
     const state = await readState(api, token, branch);
     if (!state) return { ok: false };
     const doc = state.index;
@@ -1267,7 +1518,19 @@ async function commitSubmission(env, incoming, ident, issued, now) {
     const written = await writeCommit(api, token, branch, state, files,
       commitMessage(record, merged));
     if (written === null) return { ok: false };
-    if (written.moved) continue;      // re-read, re-resolve, re-merge, write once more
+    if (written.moved) {
+      // Somebody else's commit landed between our read and our PATCH. Nothing
+      // of ours was published — the blobs and the commit exist as unreferenced
+      // objects that no branch points at — so waiting and starting over is
+      // safe, and it is the only thing that is: everything computed above was
+      // resolved against a state that is now stale.
+      conflicts++;
+      const elapsed = Date.now() - attemptStarted;
+      if (attempt >= COMMIT_MAX_ATTEMPTS ||
+          Date.now() - startedAt + elapsed > CONFLICT_DEADLINE_MS) break;
+      await sleep(backoffDelayMs(attempt, elapsed));
+      continue;      // re-read, re-resolve, re-merge, write once more
+    }
     return {
       ok: true,
       commitUrl: written.url,
@@ -1278,12 +1541,30 @@ async function commitSubmission(env, incoming, ident, issued, now) {
       token: needsToken ? issued.token : ""
     };
   }
-  return { ok: false };
+  return { ok: false, conflict: conflicts > 0 };
 }
 
 /* ---------- entry point ---------- */
 
+/* 🔴 M14.2. Nothing below may reach a caller as an unhandled throw. It used to
+   be able to: neither this function nor commitSubmission() had a try/catch, so
+   one malformed row in a hand-edited detail file (a literal `null`, which
+   `.date` cannot be read off) escaped as HTTP 500 with a stack instead of the
+   502 the contract documents. The specific throw is fixed at its source, but a
+   handler whose failure mode depends on nobody ever writing another one is not
+   a contract. So the whole request is wrapped, and an unexpected throw fails
+   CLOSED — into the documented storage refusal, having published nothing,
+   because every write in here is gated behind a ref update that either happened
+   or did not. */
 export async function onRequestPost(context) {
+  try {
+    return await handleSubmit(context);
+  } catch (e) {
+    return jsonResponse(502, { ok: false, error: "storage" });
+  }
+}
+
+async function handleSubmit(context) {
   const request = context.request;
   const env = context.env;
 
@@ -1328,6 +1609,15 @@ export async function onRequestPost(context) {
 
   const commit = await commitSubmission(env, incoming, ident, issued, now);
   if (!commit.ok) {
+    /* Two different failures, and they were one status until M14.2. A caller
+       told "storage" has no reason to try again soon and no way to tell this
+       apart from GitHub being down; a caller told "conflict" knows the store
+       answered every time, that nothing was written, and roughly how long to
+       wait. The check page acts on exactly that difference. */
+    if (commit.conflict) {
+      return jsonResponse(409, { ok: false, error: "conflict",
+                                 retry_after: conflictRetryAfter() });
+    }
     return jsonResponse(502, { ok: false, error: "storage" });
   }
   const out = {

@@ -1281,6 +1281,19 @@ document.getElementById("subFullRange").addEventListener("click", function(){
   updateSubmitCard();
 });
 
+/* One POST, parsed. Split out of the click handler so the 409 below can send
+   the same payload a second time without duplicating any of it. */
+async function postSubmission(payload){
+  var res = await fetch("/api/submit", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  });
+  var data = null;
+  try{ data = await res.json(); }catch(e){ data = null; }
+  return { res: res, data: data };
+}
+
 document.getElementById("subBtn").addEventListener("click", async function(){
   var payload = buildSubmitPayload();
   if(!payload || SUBMIT_BUSY || SUBMIT_DONE) return;
@@ -1289,12 +1302,21 @@ document.getElementById("subBtn").addEventListener("click", async function(){
   submitMsg("ok", "Sending…");
   var res = null, data = null;
   try{
-    res = await fetch("/api/submit", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload)
-    });
-    try{ data = await res.json(); }catch(e){ data = null; }
+    var got = await postSubmission(payload);
+    /* 409 means several submissions were writing at the same moment and this
+       one never got its turn on the branch. The server already retried; what it
+       is saying is that nothing was written, which makes sending the same
+       payload again completely safe. Doing that here rather than asking a
+       person to press the button again is the whole reason this status exists
+       and is not the 502 that means "the store did not answer". */
+    if(got.res.status === 409){
+      var wait = Math.min(10, Math.max(1, (got.data && got.data.retry_after) || 3));
+      submitMsg("ok", "Several submissions arrived at the same moment. Retrying in " + wait + " s…");
+      await new Promise(function(r){ setTimeout(r, wait * 1000); });
+      got = await postSubmission(payload);
+    }
+    res = got.res;
+    data = got.data;
   }catch(e){
     SUBMIT_BUSY = false;
     updateSubmitCard();
@@ -1338,6 +1360,13 @@ document.getElementById("subBtn").addEventListener("click", async function(){
     updateSubmitCard();
     var mins = Math.max(1, Math.ceil(((data && data.retry_after) || 3600) / 60));
     submitMsg("bad", "Too many submissions from this connection. Try again in about " + mins + " min.");
+  } else if(res.status === 409){
+    // Twice in a row, so several other submissions really are landing right
+    // now. Say what happened rather than blaming storage: nothing was saved,
+    // nothing was damaged, and pressing the button again is the fix.
+    updateSubmitCard();
+    submitMsg("bad", "Several submissions are landing at once and this one could not get its turn. " +
+      "Nothing was saved and nothing was lost — press the button again in a moment.");
   } else {
     updateSubmitCard();
     submitMsg("bad", "Storage is temporarily unavailable. Please try again in a moment. (Browsing the observatory is unaffected.)");

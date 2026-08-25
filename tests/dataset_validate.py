@@ -68,15 +68,27 @@ DAILY_SCHEMA_VERSION = 1
 DETAIL_SCHEMA_VERSION = 1
 IDENTITY_SCHEMA_VERSION = 1
 
+# 🔴 Every pattern here ends in \Z, not $, and that is not style.
+#
+# Python's `$` matches at the end of the string OR just before a trailing
+# newline; JavaScript's does not. So `SUB_ID_RE.match("sub-20260824115135-75fb\n")`
+# used to SUCCEED here while the SUB_ID_RE it claims to mirror in
+# functions/api/submit.js correctly refused the same string. The two are meant
+# to be the same rule, and a validator that is more lenient than the write path
+# blesses rows the write path will refuse forever with a 502 — the failure is
+# quiet in exactly the direction a validator exists to make loud. `\Z` is the
+# end of the string and nothing else, which is what the JavaScript means.
+#
 # Mirrors MAX_ANCHORS / HEX64_RE in functions/api/submit.js.
 MAX_ANCHORS = 16
-HEX64_RE = re.compile(r"^[0-9a-f]{64}$")
+HEX64_RE = re.compile(r"^[0-9a-f]{64}\Z")
 
 # Mirrors SUB_ID_RE in functions/api/submit.js. The id becomes a file NAME, so
 # anything outside this alphabet is refused rather than sanitised: a lenient id
 # is a path-traversal primitive in the one code path that writes files.
-SUB_ID_RE = re.compile(r"^sub-[0-9]{14}-[0-9a-f]{4}$")
-DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+SUB_ID_RE = re.compile(r"^sub-[0-9]{14}-[0-9a-f]{4}\Z")
+# Mirrors parseDay()'s shape test in functions/api/submit.js, same \Z reasoning.
+DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}\Z")
 
 TOTALS_FIELDS = ("requests", "in_ttl_losses", "iron_losses", "wasted_tokens")
 DAILY_FIELDS = ("requests", "losses", "wasted_tokens")

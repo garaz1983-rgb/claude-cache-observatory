@@ -82,6 +82,32 @@ M14.1 (the digests leave the index) adds:
                                     an error, proven by handing the validator
                                     one, because the write path cannot make one
 
+M14.2 (simultaneous submissions, and the failures the mock could not make) adds:
+
+  case25 a hand-edited detail row -> a row that is not a daily row makes the
+                                    whole file unmergeable: 502, nothing
+                                    committed. Before this, seven malformed
+                                    shapes returned 200 over a dataset that no
+                                    longer added up and an eighth escaped as 500
+  case26 the branch never free   -> 409 {ok:false, error:"conflict",
+                                    retry_after} after the full retry budget,
+                                    NOT the 502 that means "storage is down";
+                                    and 409 is honoured as a conflict status
+                                    alongside GitHub's 422, so a contract
+                                    difference degrades into a retry
+  case27 a tree listing fails    -> 502. Removing either tree status guard used
+                                    to survive every suite while turning a
+                                    failed read into "this repository is empty"
+  case28 the commit POST fails   -> 502, and the ref is never updated
+  case29 June, then May          -> a submitter whose logs are older than the
+                                    series leaves it in date order
+  case30 a truncated listing     -> 502. GitHub truncates a tree at 100,000
+                                    entries and data/subs/ is one file per
+                                    submitter
+  case31 a hand-edited series    -> a machines:0 day is dropped and a negative
+                                    delta is clamped, so no public file carries
+                                    a count below zero
+
 🔴 After every accepted submission the whole dataset is re-checked with
 tests/dataset_validate.py — the same validator that runs against the committed
 files in data/. An index row's totals must equal the sum of its own detail
@@ -256,8 +282,34 @@ class MockState(object):
         self.tree_files = {}          # tree sha -> {path: text} (flat snapshot)
         self.commits = {}             # commit sha -> {tree, parents, message}
         self.head = None              # commit sha at refs/heads/master
-        self.mode = "normal"          # normal | conflict_once | server_error
+        # normal | conflict_once | conflict_always | server_error
+        self.mode = "normal"
         self.conflict_fired = False
+        # M14.2. The mock could previously fail exactly one thing: a blob POST
+        # (`server_error`). Two guards in the read path and one in the write
+        # path therefore had nothing that could exercise them, and the mutation
+        # harness measured them as survivors. These four dials are what a real
+        # GitHub can do and this mock could not:
+        #   fail_tree      -> GET /git/trees/<sha> answers 500 for the root, the
+        #                     data/ tree or the data/subs/ tree, by position
+        #   truncate_tree  -> the same listing comes back with truncated:true,
+        #                     which is what GitHub does past 100,000 entries and
+        #                     which means "entries are MISSING from this reply"
+        #   fail_commit_post -> POST /git/commits answers 500
+        #   conflict_status  -> the status a non-fast-forward PATCH answers with
+        #                     (GitHub's is 422; 409 is the plausible alternative
+        #                     the write path must also tolerate)
+        self.fail_tree = None         # None | "root" | "data" | "subs"
+        self.truncate_tree = None     # None | "root" | "data" | "subs"
+        self.fail_commit_post = False
+        self.conflict_status = 422
+        self.conflict_message = "Update is not a fast forward"
+        # Emulated per-call network latency. Applied OUTSIDE the state lock, so
+        # concurrent submissions really do overlap; a sleep inside the lock
+        # would serialise the very thing being measured. 0 = localhost speed,
+        # which understates the conflict window by ~100x against real GitHub.
+        self.latency_ms = 0
+        self.requests = 0             # every HTTP call the worker made
         self.ref_gets = 0             # GET /git/ref  (one per read attempt)
         self.blob_posts = 0           # POST /git/blobs
         self.ref_patches = 0          # PATCH /git/refs
@@ -397,11 +449,73 @@ def _land_foreign_commit():
           [INDEX_PATH, FLEET_PATH, "data/subs/%s.json" % FOREIGN_ID])
 
 
+def _tree_role(sha):
+    """Which of the three tree listings the read path walks this sha is, so a
+    test can fail or truncate one of them by NAME instead of by guessing a hash.
+    Called with MOCK.lock held."""
+    if MOCK.head is None:
+        return None
+    root = MOCK.commits[MOCK.head]["tree"]
+    if sha == root:
+        return "root"
+    data = (MOCK.trees.get(root) or {}).get("data")
+    if not data or data[0] != "tree":
+        return None
+    if sha == data[1]:
+        return "data"
+    subs = (MOCK.trees.get(data[1]) or {}).get("subs")
+    if subs and subs[0] == "tree" and sha == subs[1]:
+        return "subs"
+    return None
+
+
+EMPTY_DAILY = object()
+
+
+def corrupt_detail_row(sub_id, shape):
+    """Replace the FIRST daily row of a landed detail file with `shape` (or
+    empty the array, for EMPTY_DAILY) and re-land the branch tip, so the tree
+    the worker reads really carries it.
+
+    Only a repository admin can do this. The question the tests around it ask is
+    not whether the edit is possible but what the API does with it: a row whose
+    date is unreadable cannot be taken back OUT of the fleet series, so a write
+    that proceeds publishes a dataset that no longer adds up."""
+    path = "data/subs/%s.json" % sub_id
+    with MOCK.lock:
+        detail = json.loads(MOCK.files[path])
+        if shape is EMPTY_DAILY:
+            detail["daily"] = []
+        else:
+            detail["daily"][0] = shape
+        files = dict(MOCK.files)
+        files[path] = json.dumps(detail, indent=2) + "\n"
+        _land(files, "admin: hand-edit a detail row", [path])
+
+
+def land_fleet_days(days, why):
+    """Hand-edit data/daily.json and re-land the tip. Same premise: a repo admin
+    can, and the delta the write path applies has to survive it."""
+    with MOCK.lock:
+        fleet = json.loads(MOCK.files[FLEET_PATH])
+        fleet["days"] = days
+        files = dict(MOCK.files)
+        files[FLEET_PATH] = json.dumps(fleet, indent=2) + "\n"
+        _land(files, "admin: " + why, [FLEET_PATH])
+
+
 class MockHandler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
     def log_message(self, fmt, *args):  # silence
         pass
+
+    def _delay(self):
+        """Emulated network latency, taken BEFORE the state lock so simultaneous
+        submissions overlap instead of queueing behind each other."""
+        ms = MOCK.latency_ms
+        if ms:
+            time.sleep(ms / 1000.0)
 
     def _send(self, status, obj):
         body = json.dumps(obj).encode("utf-8")
@@ -412,6 +526,7 @@ class MockHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def _check_common(self):
+        MOCK.requests += 1
         auth = self.headers.get("Authorization", "")
         if auth != "Bearer " + MOCK_TOKEN:
             MOCK.errors.append("bad Authorization header: %r" % auth)
@@ -431,6 +546,7 @@ class MockHandler(BaseHTTPRequestHandler):
         return self.path[len(REPO_PREFIX):]
 
     def do_GET(self):
+        self._delay()
         with MOCK.lock:
             self._check_common()
             rel = self._rel()
@@ -460,7 +576,19 @@ class MockHandler(BaseHTTPRequestHandler):
                 if t is None:
                     self._send(404, {"message": "Not Found"})
                     return
-                self._send(200, {"sha": sha, "truncated": False, "tree": [
+                role = _tree_role(sha)
+                if MOCK.fail_tree is not None and role == MOCK.fail_tree:
+                    self._send(500, {"message": "boom"})
+                    return
+                # 🔴 GitHub truncates a tree listing at 100,000 entries and says
+                # so in this flag. The entries themselves are still returned —
+                # just NOT all of them — which is why a client that ignores the
+                # flag does not see an error, it sees a file that is not there.
+                # The mock reproduces exactly that: a complete-looking listing
+                # with the flag set.
+                truncated = (MOCK.truncate_tree is not None and
+                             role == MOCK.truncate_tree)
+                self._send(200, {"sha": sha, "truncated": truncated, "tree": [
                     {"path": name, "type": typ, "sha": s,
                      "mode": "040000" if typ == "tree" else "100644"}
                     for name, (typ, s) in sorted(t.items())]})
@@ -483,6 +611,7 @@ class MockHandler(BaseHTTPRequestHandler):
             self._send(404, {"message": "Not Found"})
 
     def do_POST(self):
+        self._delay()
         with MOCK.lock:
             self._check_common()
             rel = self._rel()
@@ -528,6 +657,9 @@ class MockHandler(BaseHTTPRequestHandler):
                 self._send(201, {"sha": sha})
                 return
             if rel == "/git/commits":
+                if MOCK.fail_commit_post:
+                    self._send(500, {"message": "boom"})
+                    return
                 tree = body.get("tree")
                 if tree not in MOCK.tree_files:
                     self._send(422, {"message": "unknown tree"})
@@ -547,6 +679,7 @@ class MockHandler(BaseHTTPRequestHandler):
             self._send(404, {"message": "Not Found"})
 
     def do_PATCH(self):
+        self._delay()
         with MOCK.lock:
             self._check_common()
             rel = self._rel()
@@ -560,6 +693,14 @@ class MockHandler(BaseHTTPRequestHandler):
                 _land_foreign_commit()   # the branch really moves under the caller
             if body.get("force") is True:
                 MOCK.errors.append("ref update asked for force")
+            # A branch that is permanently contended: every update is refused as
+            # a non-fast-forward, which is what the losers of a large burst see
+            # until their budget runs out. Nothing lands, so the files stay
+            # exactly as they were.
+            if MOCK.mode == "conflict_always":
+                self._send(MOCK.conflict_status,
+                           {"message": MOCK.conflict_message})
+                return
             sha = body.get("sha")
             commit = MOCK.commits.get(sha)
             if commit is None:
@@ -567,7 +708,8 @@ class MockHandler(BaseHTTPRequestHandler):
                 return
             # fast-forward only: the parent must still be the branch tip
             if (commit["parents"] or [None])[0] != MOCK.head:
-                self._send(422, {"message": "Update is not a fast forward"})
+                self._send(MOCK.conflict_status,
+                           {"message": "Update is not a fast forward"})
                 return
             paths = [p for p, text in MOCK.tree_files[commit["tree"]].items()
                      if MOCK.files.get(p) != text]
@@ -1091,9 +1233,13 @@ def run_cases(xff_ip):
           "case8: body %r, want {ok:false, error:'storage'}" % (data,))
     check(commit_delta == 0, "case8: %d commits landed on a 5xx" % commit_delta)
     check(files_after == files_before, "case8: a 5xx still changed the files")
-    check(blob_delta == 1,
-          "case8: %d blob writes attempted, want 1 (a 5xx earns no retry)"
-          % blob_delta)
+    # M14.2 posts the four blobs as ONE batch instead of four sequential calls,
+    # so the count that proves "a 5xx earns no retry" is now 4 rather than 1: a
+    # retry would send a second batch and make it 8. The property is unchanged
+    # and the number is stronger, because it also pins the batching.
+    check(blob_delta == 4,
+          "case8: %d blob writes attempted, want 4 (one batch, and a 5xx earns "
+          "no retry — a retry would make it 8)" % blob_delta)
     print("PASS case8 storage 5xx -> 502, nothing committed, no retry")
 
     # -- case6: 4th rate-limited submission from the same IP => 429 ----------
@@ -1733,6 +1879,315 @@ def run_fleet_cases():
 
 
 # ---------------------------------------------------------------------------
+# M14.2: the retry budget, and the failures the mock could not previously make
+# ---------------------------------------------------------------------------
+#
+# Every case below exists because something in the write path had no test that
+# could reach it. Three of them were measured as surviving mutants: the two tree
+# status guards (the mock could only fail blob POSTs, so a mutant that treated a
+# failed root-tree GET as "this repository is empty" — and would have written an
+# index containing one row, wiping every other submitter's — passed every
+# suite), and the commit-POST failure branch (a mutant returning {url:""} says
+# "your data was saved" when no ref was ever updated). The rest are the D1/D2
+# defects: a burst that lost 80% of its submissions and called it a storage
+# outage, and one hand-edited row that made the API publish a dataset that did
+# not add up.
+
+# Mirrors COMMIT_MAX_ATTEMPTS in functions/api/submit.js. Stated here as a
+# number rather than read out of the source on purpose: the budget is part of
+# what the endpoint promises, so changing it should have to be written down
+# twice. A budget nothing pins is a budget that can quietly go back to one.
+EXPECTED_COMMIT_ATTEMPTS = 6
+
+MALFORMED_ROWS = [
+    ("a literal null", None),
+    ("no date key", {"requests": 10, "losses": 0, "wasted_tokens": 0}),
+    ("a number instead of a row", 5),
+    ("a date that is not a date",
+     {"date": "not-a-date", "requests": 10, "losses": 0, "wasted_tokens": 0}),
+    ("an emptied daily array", EMPTY_DAILY),
+]
+
+
+def repo_snapshot():
+    """The public files and the commit count. Every refusal below has to leave
+    both exactly as it found them."""
+    with MOCK.lock:
+        return dict(MOCK.files), MOCK.commit_count
+
+
+def expect_refused(name, status, data, snapshot,
+                   want_status=502, want_error="storage"):
+    files_before, commits_before = snapshot
+    check(status == want_status,
+          "%s: status %s, want %d (body %r)" % (name, status, want_status, data))
+    check(isinstance(data, dict) and data.get("ok") is False and
+          data.get("error") == want_error,
+          "%s: body %r, want {ok:false, error:%r}" % (name, data, want_error))
+    with MOCK.lock:
+        landed = MOCK.commit_count - commits_before
+        changed = dict(MOCK.files) != files_before
+    check(landed == 0,
+          "🔴 %s: %d commit(s) landed on a refused submission" % (name, landed))
+    check(not changed,
+          "🔴 %s: a refused submission still changed the public files" % name)
+
+
+def run_m142_cases():
+    # -- case25: one hand-edited daily row is not a mergeable history ---------
+    # Measured before the fix, over HTTP, against eight malformed shapes: seven
+    # returned 200 and published a fleet series carrying a day no submission
+    # covered, and the eighth (a literal null) threw out of applyFleetDelta and
+    # escaped as HTTP 500. The date of a malformed row cannot be recovered, so
+    # it cannot be subtracted; refusing is the only answer that leaves the
+    # dataset no worse than the admin left it.
+    for i, (why, shape) in enumerate(MALFORMED_ROWS):
+        reset_doc()
+        ip = "198.51.100.%d" % (70 + i)
+        a = anchor_set("machine-malformed-%d" % i, 16, 0)
+        status, data = submit(
+            scan_payload("2026-05-01", 2, 10, 0, 0, 0, anchors=a), ip)
+        data = expect_ok("case25 base (%s)" % why, status, data)
+        check_file_arithmetic("case25 base (%s)" % why)
+        corrupt_detail_row(data["id"], shape)
+        snapshot = repo_snapshot()
+        status, data = submit(
+            scan_payload("2026-05-20", 2, 10, 0, 0, 0, anchors=a), ip)
+        expect_refused("case25 (%s)" % why, status, data, snapshot)
+    print("PASS case25 %d malformed detail rows -> 502, nothing committed "
+          "(a literal null no longer escapes as a 500)" % len(MALFORMED_ROWS))
+
+    # -- case26: losing the branch every time is a conflict, not an outage ----
+    # Three shapes of the same refusal, because the write path must recognise it
+    # by status OR by message. GitHub's answer is 422 + "Update is not a fast
+    # forward" and that has never been exercised against the live API, so the
+    # second leg proves a host that uses 409 still earns retries, and the third
+    # proves a host that changes the status while keeping the sentence does too.
+    # Getting this wrong in that direction is what turns every conflict into a
+    # hard failure.
+    reset_doc()
+    conflict_shapes = [
+        (422, "Update is not a fast forward"),      # GitHub, as documented
+        (409, "Reference cannot be updated"),       # recognised by status alone
+        (400, "Update is not a fast forward"),      # recognised by message alone
+    ]
+    for n, (conflict_status, conflict_message) in enumerate(conflict_shapes):
+        with MOCK.lock:
+            MOCK.mode = "conflict_always"
+            MOCK.conflict_status = conflict_status
+            MOCK.conflict_message = conflict_message
+            patches_before = MOCK.ref_patches
+            refgets_before = MOCK.ref_gets
+        snapshot = repo_snapshot()
+        status, data = submit(
+            scan_payload("2026-08-01", 2, 10, 0, 0, 0,
+                         anchors=anchor_set("machine-busy-%d" % n, 16, 0)),
+            "198.51.100.%d" % (80 + n))
+        with MOCK.lock:
+            MOCK.mode = "normal"
+            MOCK.conflict_status = 422
+            MOCK.conflict_message = "Update is not a fast forward"
+            patch_delta = MOCK.ref_patches - patches_before
+            refget_delta = MOCK.ref_gets - refgets_before
+        name = "case26 (%d %r forever)" % (conflict_status, conflict_message)
+        expect_refused(name, status, data, snapshot,
+                       want_status=409, want_error="conflict")
+        check(isinstance(data.get("retry_after"), int) and
+              0 < data["retry_after"] <= 60,
+              "%s: retry_after %r is not a small second count"
+              % (name, data.get("retry_after")))
+        check(patch_delta == EXPECTED_COMMIT_ATTEMPTS,
+              "🔴 %s: %d ref updates attempted, want %d — one retry is not a "
+              "budget, and at ten simultaneous submissions it accepted two"
+              % (name, patch_delta, EXPECTED_COMMIT_ATTEMPTS))
+        check(refget_delta == EXPECTED_COMMIT_ATTEMPTS,
+              "%s: %d ref reads, want %d (every attempt must re-read HEAD)"
+              % (name, refget_delta, EXPECTED_COMMIT_ATTEMPTS))
+    # …and 409 is tolerated as the conflict itself, not only as the exhaustion.
+    # The suite used to pin the retry to the ONE status the mock returns, which
+    # proves the mock agrees with itself and nothing about GitHub.
+    with MOCK.lock:
+        MOCK.mode = "conflict_once"
+        MOCK.conflict_fired = False
+        MOCK.conflict_status = 409
+        commits_before = MOCK.commit_count
+    status, data = submit(
+        scan_payload("2026-08-01", 2, 10, 0, 0, 0,
+                     anchors=anchor_set("machine-409", 16, 0)),
+        "198.51.100.82")
+    with MOCK.lock:
+        MOCK.mode = "normal"
+        MOCK.conflict_status = 422
+        commit_delta = MOCK.commit_count - commits_before
+    expect_ok("case26 409 conflict", status, data)
+    check(commit_delta == 2,
+          "case26: %d commits after a 409 conflict, want 2 (the third party's "
+          "and ours) — a host that answers 409 instead of 422 must earn a "
+          "retry, not a hard failure" % commit_delta)
+    check_file_arithmetic("case26 409 retry")
+    print("PASS case26 conflict exhaustion -> 409 {error:conflict, retry_after} "
+          "after %d attempts, nothing committed; 409 and 422 both retry"
+          % EXPECTED_COMMIT_ATTEMPTS)
+
+    # -- case27: a tree listing that fails is not an empty repository ---------
+    # 🔴 The mutant this exists for: drop `if (root.status !== 200) return null`
+    # and a failed root-tree GET reads as "there is no data/ here", so the write
+    # produces an index containing ONLY the new row — every other submitter's
+    # row gone, data/daily.json and data/identity.json replaced, every detail
+    # file orphaned. It survived every suite because the mock could only fail
+    # blob POSTs.
+    reset_doc()
+    a = anchor_set("machine-tree", 16, 0)
+    status, data = submit(
+        scan_payload("2026-04-01", 2, 10, 0, 0, 0, anchors=a), "198.51.100.83")
+    expect_ok("case27 base", status, data)
+    check_file_arithmetic("case27 base")
+    for n, role in enumerate(("root", "data", "subs")):
+        with MOCK.lock:
+            MOCK.fail_tree = role
+        snapshot = repo_snapshot()
+        status, data = submit(
+            scan_payload("2026-04-10", 2, 10, 0, 0, 0, anchors=a),
+            "198.51.100.%d" % (84 + n))
+        with MOCK.lock:
+            MOCK.fail_tree = None
+        expect_refused("case27 (%s tree GET fails)" % role, status, data, snapshot)
+    print("PASS case27 a failing tree listing (root / data / subs) -> 502, "
+          "nothing committed, no row wiped")
+
+    # -- case28: a commit POST that fails never becomes a success ------------
+    # The mutant: return {url:""} instead of null, which tells the submitter
+    # their data was saved when no ref was ever updated.
+    with MOCK.lock:
+        MOCK.fail_commit_post = True
+        blobs_before = MOCK.blob_posts
+        patches_before = MOCK.ref_patches
+    snapshot = repo_snapshot()
+    status, data = submit(
+        scan_payload("2026-04-20", 2, 10, 0, 0, 0, anchors=a), "198.51.100.87")
+    with MOCK.lock:
+        MOCK.fail_commit_post = False
+        blob_delta = MOCK.blob_posts - blobs_before
+        patch_delta = MOCK.ref_patches - patches_before
+    expect_refused("case28 (commit POST fails)", status, data, snapshot)
+    check(blob_delta == 4,
+          "case28: %d blobs posted, want 4 (the batch goes out, the commit is "
+          "what fails)" % blob_delta)
+    check(patch_delta == 0,
+          "🔴 case28: the ref was updated %d time(s) after the commit POST "
+          "failed" % patch_delta)
+    print("PASS case28 a failing commit POST -> 502, ref untouched, nothing "
+          "published")
+
+    # -- case29: a new submitter whose logs are OLDER than the series --------
+    # Machine A reports June, machine B then reports May. Nothing in the
+    # contract test had ever submitted a window earlier than one already in the
+    # fleet series, which is an ordinary thing for a new submitter with older
+    # logs — and without the sort in applyFleetDelta the public file reads
+    # ["2026-06-01", "2026-05-01"].
+    reset_doc()
+    status, data = submit(
+        scan_payload("2026-06-01", 3, 100, 2, 500, 1,
+                     anchors=anchor_set("machine-june", 16, 0)), "198.51.100.88")
+    expect_ok("case29 June", status, data)
+    status, data = submit(
+        scan_payload("2026-05-01", 3, 50, 1, 200, 0,
+                     anchors=anchor_set("machine-may", 16, 0)), "198.51.100.89")
+    expect_ok("case29 May", status, data)
+    check_file_arithmetic("case29")
+    dates = [d["date"] for d in fleet_doc()["days"]]
+    check(dates == sorted(dates),
+          "🔴 case29: the fleet series is out of date order after an earlier "
+          "window was submitted second: %r" % dates)
+    check(dates[0] == "2026-05-01" and dates[-1] == "2026-06-03",
+          "case29: fleet series spans %r..%r, want 2026-05-01..2026-06-03"
+          % (dates[0], dates[-1]))
+    print("PASS case29 June then May -> the fleet series is sorted (%s..%s, "
+          "%d days)" % (dates[0], dates[-1], len(dates)))
+
+    # -- case30: a tree listing GitHub truncated is a failed read ------------
+    # GitHub truncates at 100,000 entries and data/subs/ holds one file per
+    # submitter. The reply still looks like a complete listing, so ignoring the
+    # flag means treeEntry() returns null and the write path decides a returning
+    # submitter has no detail file — the read that is wrong in the one direction
+    # that then writes.
+    reset_doc()
+    a = anchor_set("machine-trunc", 16, 0)
+    status, data = submit(
+        scan_payload("2026-03-01", 2, 10, 0, 0, 0, anchors=a), "198.51.100.90")
+    expect_ok("case30 base", status, data)
+    for n, role in enumerate(("root", "data", "subs")):
+        with MOCK.lock:
+            MOCK.truncate_tree = role
+        snapshot = repo_snapshot()
+        status, data = submit(
+            scan_payload("2026-03-10", 2, 10, 0, 0, 0, anchors=a),
+            "198.51.100.%d" % (91 + n))
+        with MOCK.lock:
+            MOCK.truncate_tree = None
+        expect_refused("case30 (%s listing truncated)" % role, status, data,
+                       snapshot)
+    print("PASS case30 a truncated tree listing -> 502 (the 100,000-entry "
+          "ceiling fails loudly instead of losing a file)")
+
+    # -- case31: the two guards a hand-edited data/daily.json reaches --------
+    # Both were recorded as equivalent mutants "for the submission-only
+    # universe", which is true and is not the whole universe: data/daily.json is
+    # a file in a public repository and an admin can edit it. These two cases
+    # reach them, so they are covered rather than argued about.
+    reset_doc()
+    ip = "198.51.100.94"
+    a = anchor_set("machine-phantom", 16, 0)
+    status, data = submit(
+        scan_payload("2026-09-01", 3, 100, 5, 700, 2, anchors=a), ip)
+    expect_ok("case31 phantom base", status, data)
+    land_fleet_days(fleet_doc()["days"] +
+                    [{"date": "2026-01-15", "requests": 0, "losses": 0,
+                      "wasted_tokens": 0, "machines": 0}],
+                    "a fleet row no submission covers")
+    status, data = submit(
+        scan_payload("2026-09-04", 2, 10, 1, 20, 0, anchors=a), ip)
+    expect_ok("case31 phantom", status, data)
+    check_file_arithmetic("case31 phantom")
+    check("2026-01-15" not in [d["date"] for d in fleet_doc()["days"]],
+          "🔴 case31: a day with machines:0 survived into the published series "
+          "— a row reading '0 requests, 0 machines' is a claim about a day "
+          "nobody observed")
+
+    # …and a series hand-edited BELOW the detail files behind it, which drives
+    # the delta negative. The dataset is invalid either way here — that is the
+    # admin's edit, not something the write path can repair — so what is
+    # asserted is the narrow thing the clamps promise: a public file never
+    # carries a negative count.
+    reset_doc()
+    ip = "198.51.100.95"
+    a = anchor_set("machine-clamp", 16, 0)
+    status, data = submit(
+        scan_payload("2026-09-01", 3, 100, 5, 700, 2, anchors=a), ip)
+    expect_ok("case31 clamp base", status, data)
+    days = [dict(d) for d in fleet_doc()["days"]]
+    for d in days:
+        if d["date"] == "2026-09-01":
+            d["requests"], d["losses"], d["wasted_tokens"] = 5, 0, 1
+    land_fleet_days(days, "a fleet row smaller than the detail file behind it")
+    status, data = submit(
+        scan_payload("2026-09-01", 3, 3, 1, 2, 0, anchors=a), ip)
+    expect_ok("case31 clamp", status, data)
+    for d in fleet_doc()["days"]:
+        for col in ("requests", "losses", "wasted_tokens", "machines"):
+            check(isinstance(d[col], int) and d[col] >= 0,
+                  "🔴 case31: %s on %s is %r — a hand-edited series drove the "
+                  "delta negative and a NEGATIVE count reached a public file"
+                  % (col, d["date"], d[col]))
+    reset_doc()   # that dataset is deliberately inconsistent; do not leave it
+    print("PASS case31 a hand-edited fleet series: a machines:0 day is dropped "
+          "and a negative delta is clamped, never published")
+
+    with MOCK.lock:
+        check(not MOCK.errors, "mock observed protocol violations: %r" % MOCK.errors)
+
+
+# ---------------------------------------------------------------------------
 # M14.1: the two sides of index <-> identity, one of which no live path can reach
 # ---------------------------------------------------------------------------
 
@@ -1833,9 +2288,46 @@ def run_validator_cases():
         check(any(needle in e for e in errs),
               "validator (%s): no violation mentions %r: %r" % (why, needle, errs))
 
+    # 🔴 M14.2. The validator's regexes must mean what the worker's mean.
+    # Python's `$` matches before a trailing newline and JavaScript's does not,
+    # so `sub-20260824115135-75fb\n` used to pass SUB_ID_RE here while
+    # functions/api/submit.js refused the identical string. No traversal follows
+    # from it — the worker is the one that builds paths — but the validator
+    # would bless a row the write path will refuse forever with a 502, which is
+    # the one direction a validator must never be wrong in.
+    newline_cases = []
+
+    _sid, index, fleet, details, doc = _mini_dataset({})
+    index["submissions"][0]["id"] = sub_id + "\n"
+    newline_cases.append(("an id with a trailing newline",
+                          dataset_validate.validate(index, fleet, details, doc),
+                          "is not sub-"))
+
+    _sid, index, fleet, details, doc = _mini_dataset({})
+    details[sub_id]["daily"][0]["date"] = "2026-08-24\n"
+    newline_cases.append(("a daily date with a trailing newline",
+                          dataset_validate.validate(index, fleet, details, doc),
+                          "no valid date"))
+
+    _sid, index, fleet, details, _doc = _mini_dataset({})
+    doc = {"schema_version": 1,
+           "identities": {sub_id: {"anchor_hashes": [anchors[0] + "\n"]}}}
+    newline_cases.append(("an anchor digest with a trailing newline",
+                          dataset_validate.validate(index, fleet, details, doc),
+                          "lowercase sha-256"))
+
+    for why, errs, needle in newline_cases:
+        check(errs, "🔴 validator: accepted %s — Python's $ matches before a "
+                    "trailing newline and JavaScript's does not, so this "
+                    "validator is more lenient than the write path it mirrors"
+                    % why)
+        check(any(needle in e for e in errs),
+              "validator (%s): no violation mentions %r: %r" % (why, needle, errs))
+
     print("PASS validator %d valid + %d invalid identity datasets, including "
-          "'index row with no identity' (valid) and 'identity entry with no "
-          "index row' (error)" % (len(ok_cases), len(bad_cases) + 4))
+          "'index row with no identity' (valid), 'identity entry with no "
+          "index row' (error) and %d trailing-newline shapes the worker refuses"
+          % (len(ok_cases), len(bad_cases) + 4, len(newline_cases)))
 
 
 def main():
@@ -1890,6 +2382,7 @@ def main():
         run_cases(xff_ip)
         run_mask_cases()
         run_identity_cases()
+        run_m142_cases()
         print("CONTRACT_OK")
         code = 0
     except ContractFail as exc:
