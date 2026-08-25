@@ -45,10 +45,20 @@
  *
  * Reading the lines
  *   By regex over the raw text, not JSON.parse: this module needs an opaque
- *   stable string and an instant, never the record's meaning, and the folder
- *   scan already parses every line twice (engine + census). The prefilter is
+ *   stable string and an instant, never the record's meaning. The prefilter is
  *   the engine's own ('"usage"'), so the sample is drawn from the requests the
  *   engine counted.
+ *
+ *   Since M16 the page does not hand this module an array of files at all. It
+ *   opens a collector and feeds it the lines assets/parse.js is already
+ *   walking, so one pass over a file serves the engine, the heatmap census and
+ *   this module together. The RULES below did not move and must not: the
+ *   engine takes any `message.id` as a fallback id while this module takes
+ *   only an `msg_`-prefixed one, so deriving the sample from the engine's
+ *   parsed records would quietly change which ids are hashed — and a
+ *   fingerprint that shifts is a returning submitter who stops matching their
+ *   own row. collect() is now a wrapper over the same collector, which is what
+ *   keeps tests/identity_test.py testing the path the page runs.
  *
  * UMD: Node -> module.exports, browser -> window.CacheObservatoryIdentity.
  * No dependencies, no network, no DOM, no storage.
@@ -124,12 +134,45 @@
     return isNaN(ms) ? null : ms;
   }
 
+  /* A line-at-a-time collector (M16). addLine() applies THIS module's rules
+     and nothing else, so it does not matter whether the lines arrive from
+     collect() below or from the engine's own walk — the sample is the same
+     either way, which tests/identity_test.py holds as an equality. */
+  function createCollector() {
+    var seen = Object.create(null);
+    var rows = [];
+    return {
+      addLine: function (line) {
+        if (typeof line !== "string" || line.length === 0) return;
+        if (line.indexOf('"usage"') === -1) return;
+        var m = RID_RE.exec(line);
+        if (!m) m = MSG_ID_RE.exec(line);
+        if (!m) return;
+        var id = m[1];
+        if (seen[id] !== undefined) return;
+        var t = TS_RE.exec(line);
+        var ms = t ? instantOf(t[1]) : null;
+        if (ms === null) return;   // unorderable: leaving it out stays deterministic
+        seen[id] = 1;
+        rows.push({ id: id, ms: ms });
+      },
+      count: function () { return rows.length; },
+      ids: function () {
+        var ordered = rows.slice();
+        ordered.sort(function (a, b) {
+          if (a.ms !== b.ms) return a.ms - b.ms;
+          return a.id < b.id ? -1 : (a.id > b.id ? 1 : 0);
+        });
+        return ordered.map(function (r) { return r.id; });
+      }
+    };
+  }
+
   /* Every request id in the scan, deduped, ordered by instant then id.
      files: [{name, text}] — the same array the engine is handed. */
   function collect(files) {
-    var seen = Object.create(null);
-    var rows = [];
     if (!Array.isArray(files)) return [];
+    var collector = createCollector();
     for (var f = 0; f < files.length; f++) {
       var file = files[f];
       var text = (file && typeof file.text === "string") ? file.text : "";
@@ -139,27 +182,11 @@
       while (start <= len) {
         var nl = text.indexOf("\n", start);
         var end = nl === -1 ? len : nl;
-        var line = text.slice(start, end);
+        collector.addLine(text.slice(start, end));
         if (nl === -1) start = len + 1; else start = nl + 1;
-        if (line.length === 0) continue;
-        if (line.indexOf('"usage"') === -1) continue;
-        var m = RID_RE.exec(line);
-        if (!m) m = MSG_ID_RE.exec(line);
-        if (!m) continue;
-        var id = m[1];
-        if (seen[id] !== undefined) continue;
-        var t = TS_RE.exec(line);
-        var ms = t ? instantOf(t[1]) : null;
-        if (ms === null) continue;   // unorderable: leaving it out stays deterministic
-        seen[id] = 1;
-        rows.push({ id: id, ms: ms });
       }
     }
-    rows.sort(function (a, b) {
-      if (a.ms !== b.ms) return a.ms - b.ms;
-      return a.id < b.id ? -1 : (a.id > b.id ? 1 : 0);
-    });
-    return rows.map(function (r) { return r.id; });
+    return collector.ids();
   }
 
   /* HEAD_COUNT earliest + an even spread over the whole scan, deduped.
@@ -191,17 +218,12 @@
     }));
   }
 
-  /* The one call the page makes. Resolves to {count, sampled, anchors};
-     anchors is [] when this environment cannot hash, which the page discloses
-     rather than papering over. Never rejects: a missing fingerprint is a
-     degraded submission, not a failed diagnosis. */
-  function fingerprint(files) {
-    var ids;
-    try {
-      ids = collect(files);
-    } catch (e) {
-      ids = [];
-    }
+  /* Resolves to {count, sampled, anchors}; anchors is [] when this
+     environment cannot hash, which the page discloses rather than papering
+     over. Never rejects: a missing fingerprint is a degraded submission, not a
+     failed diagnosis. */
+  function fingerprintFromIds(ids) {
+    if (!Array.isArray(ids)) ids = [];
     if (!ids.length || !available()) {
       return Promise.resolve({ count: ids.length, sampled: 0, anchors: [] });
     }
@@ -210,6 +232,18 @@
     }, function () {
       return { count: ids.length, sampled: 0, anchors: [] };
     });
+  }
+
+  /* The whole-array form. The streaming page calls fingerprintFromIds() with
+     a collector's ids() instead; both land in the same place. */
+  function fingerprint(files) {
+    var ids;
+    try {
+      ids = collect(files);
+    } catch (e) {
+      ids = [];
+    }
+    return fingerprintFromIds(ids);
   }
 
   // Whitelist for anything read back from storage or handed in from a page.
@@ -229,9 +263,11 @@
     available: available,
     sha256Hex: sha256Hex,
     collect: collect,
+    createCollector: createCollector,
     sample: sample,
     anchorsOf: anchorsOf,
     fingerprint: fingerprint,
+    fingerprintFromIds: fingerprintFromIds,
     sanitizeAnchors: sanitizeAnchors
   };
 });

@@ -584,6 +584,45 @@ MUTATIONS = [
     ("D16_merge_keeps_the_old_vocabulary", SUBMIT_JS_REL,
      "    detector: incoming.detector",
      "    detector: existing.detector || incoming.detector", "contract"),
+    # -- M16: one pass over each file. The engine now also builds the heatmap
+    # census and hands every line to assets/identity.js, so the two jobs that
+    # used to have their own passes are only correct if this one is.
+    # "Re-shade the heatmap while looking exactly like a faster page."
+    ("E01_census_hour_shifted", PARSE_JS_REL,
+     "          hourRow[localDate.getUTCHours()] += 1;",
+     "          hourRow[(localDate.getUTCHours() + 1) % 24] += 1;", "localtime"),
+    ("E02_census_option_ignored", PARSE_JS_REL,
+     "    var hourly = opts.census === true ? new Map() : null;",
+     "    var hourly = null;", "localtime"),
+    # The census must be cut on the record's own offset, like dateKeyOf(), or a
+    # cell and the daily row above it stop sitting on the same grid.
+    ("E03_census_drops_record_offset", PARSE_JS_REL,
+     "          var localDate = new Date(ts.epochMs + ts.offsetMinutes * 60000);",
+     "          var localDate = new Date(ts.epochMs);", "localtime"),
+    # "Silently stop fingerprinting: /api/submit accepts an anchorless
+    # submission and simply opens a second row for a returning machine."
+    ("E04_line_hook_dropped", PARSE_JS_REL,
+     "        if (onLine) onLine(line);", "        void 0;", "identity"),
+
+    # -- M16: assets/identity.js, now a line-at-a-time collector --------------
+    ("E05_collector_dedup_disabled", IDENTITY_JS_REL,
+     "        if (seen[id] !== undefined) return;",
+     "        if (false) return;", "identity"),
+    ("E06_collector_order_ignores_instant", IDENTITY_JS_REL,
+     "          if (a.ms !== b.ms) return a.ms - b.ms;",
+     "          if (false) return a.ms - b.ms;", "identity"),
+
+    # -- M16: saving is the default, and the default is one boolean ----------
+    # An inverted default is the difference between a documented behaviour and
+    # a page whose own notice is false. Absent must mean on.
+    ("C52_autosave_defaults_off", CHECK_HTML_REL,
+     '  try{ return window.localStorage.getItem(AUTOSAVE_KEY) !== "off"; }',
+     '  try{ return window.localStorage.getItem(AUTOSAVE_KEY) === "on"; }',
+     "localtime"),
+    ("C53_autosave_defaults_off_ko", CHECK_HTML_KO_REL,
+     '  try{ return window.localStorage.getItem(AUTOSAVE_KEY) !== "off"; }',
+     '  try{ return window.localStorage.getItem(AUTOSAVE_KEY) === "on"; }',
+     "localtime"),
 ]
 
 

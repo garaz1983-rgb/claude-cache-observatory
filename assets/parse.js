@@ -31,6 +31,25 @@
  * Output: {totals, daily, events} — totals/daily follow 04_DATA_MODEL.md;
  *         events is render-only detail that never leaves the browser.
  *
+ * Incremental scanning (M16). parseFiles() wants every file's text in memory
+ * at once, and on a real log folder that is ~100 MB of strings held while
+ * three separate passes walk them. createScan() is the same engine driven one
+ * file at a time, so a caller can read a file, feed it, and drop the text
+ * before reading the next. parseFiles() is now a thin loop over createScan(),
+ * which is what keeps the refactor honest: every existing test and every
+ * mutant still runs the code the page runs.
+ *
+ * Two optional jobs ride along on the SAME line walk rather than paying for
+ * their own pass:
+ *   census : the day x hour request tally the heatmap shades with. It used to
+ *            be a second JSON.parse pass living in check.html.
+ *   onLine : called with every non-empty line. assets/identity.js uses it to
+ *            collect request ids by its OWN rules. This file must never derive
+ *            the fingerprint itself: the two disagree on which id to take
+ *            (identity.js requires an `msg_` prefix on the fallback, the engine
+ *            takes any id), and a fingerprint that shifts is a returning
+ *            submitter who stops matching their own row.
+ *
  * UMD: Node -> module.exports, browser -> window.CacheObservatory.
  * No dependencies, no network, no DOM.
  */
@@ -139,10 +158,20 @@
     return out;
   }
 
-  function parseFiles(files) {
-    if (!Array.isArray(files)) {
-      throw new TypeError("parseFiles expects an array of {name, text}");
-    }
+  /* The engine as a stream. Feed it one file at a time, then call finish()
+     once. The state below is exactly what parseFiles() used to build in one
+     go — the requestId dedup set in particular stays global across files,
+     matching the CLI's single `seen`.
+
+     options.census : also build the day x hour request tally (a Map of
+                      date -> 24 counts) on this same walk.
+     options.onLine : called with every non-empty line, BEFORE this engine's
+                      own prefilter, so a caller's collector can never be
+                      starved by a filter it did not ask for. */
+  function createScan(options) {
+    var opts = isPlainObject(options) ? options : {};
+    var hourly = opts.census === true ? new Map() : null;
+    var onLine = typeof opts.onLine === "function" ? opts.onLine : null;
 
     // requestId dedup is global across files (CLI parity: one `seen` set).
     var seen = new Set();
@@ -152,16 +181,18 @@
     var reasonCensus = new Map();
     var versionCensus = new Map();
     var detector = { diagnosed_requests: 0, unknown_reasons: 0, cold_writes: 0 };
+    var fileCount = 0;
 
-    for (var fi = 0; fi < files.length; fi++) {
-      var file = isPlainObject(files[fi]) ? files[fi] : {};
-      var name = typeof file.name === "string" ? file.name : "";
-      var text = typeof file.text === "string" ? file.text : "";
+    function addFile(fileName, fileText) {
+      var name = typeof fileName === "string" ? fileName : "";
+      var text = typeof fileText === "string" ? fileText : "";
+      fileCount += 1;
       var isSubByName = /(^|[\\/])subagents[\\/]/.test(name);
       // Per-file map (CLI parity: reason back-fill is same-file only).
       var byrid = new Map();
 
       forEachLine(text, function (line) {
+        if (onLine) onLine(line);
         // Cheap prefilter, same as the CLI: only usage-bearing lines matter.
         if (line.indexOf('"usage"') === -1) return;
         var o;
@@ -193,6 +224,20 @@
         seen.add(rid);
         var ts = parseTimestamp(typeof o.timestamp === "string" ? o.timestamp : "");
         if (!ts) return;
+        /* Volume counting for the heatmap's shading, never loss judgment. Cut
+           on the record's own offset, exactly like dateKeyOf() below, so a
+           cell and the daily row above it sit on the same grid. */
+        if (hourly) {
+          var localDate = new Date(ts.epochMs + ts.offsetMinutes * 60000);
+          var hourKey = localDate.toISOString().slice(0, 10);
+          var hourRow = hourly.get(hourKey);
+          if (!hourRow) {
+            hourRow = new Array(24);
+            for (var h = 0; h < 24; h++) hourRow[h] = 0;
+            hourly.set(hourKey, hourRow);
+          }
+          hourRow[localDate.getUTCHours()] += 1;
+        }
         // Coerce to a finite non-negative number — a hostile JSONL could
         // smuggle a string here and ride it into the DOM (XSS vector).
         var cc = u.cache_creation_input_tokens;
@@ -287,13 +332,54 @@
       }
     }
 
-    var daily = Array.from(dailyMap.values()).sort(function (a, b) {
-      return a.date < b.date ? -1 : (a.date > b.date ? 1 : 0);
-    });
+    function finish() {
+      var daily = Array.from(dailyMap.values()).sort(function (a, b) {
+        return a.date < b.date ? -1 : (a.date > b.date ? 1 : 0);
+      });
 
-    detector.reasons = censusOut(reasonCensus);
-    detector.versions = censusOut(versionCensus);
-    return { totals: totals, daily: daily, events: events, detector: detector };
+      detector.reasons = censusOut(reasonCensus);
+      detector.versions = censusOut(versionCensus);
+      var out = { totals: totals, daily: daily, events: events,
+                  detector: detector, files: fileCount };
+      // Only when asked for, so parseFiles()'s result shape is unchanged and
+      // nothing that consumed it before has a new key to reason about.
+      if (hourly) out.census = hourly;
+      return out;
+    }
+
+    /* A running tally, for a caller that wants to show progress that means
+       something. Deliberately a copy: a page holding a live reference to the
+       engine's own totals object could mutate the result it is about to
+       render. Reading it never changes the scan. */
+    function stats() {
+      return {
+        files: fileCount,
+        requests: totals.requests,
+        in_ttl_losses: totals.in_ttl_losses,
+        iron_losses: totals.iron_losses,
+        wasted_tokens: totals.wasted_tokens
+      };
+    }
+
+    return { addFile: addFile, finish: finish, stats: stats };
+  }
+
+  /* The whole-array form, kept because the CLI parity harness, the mutation
+     harness and every test drive the engine this way. It is a loop over
+     createScan() and nothing else, so "the tests exercise what the page runs"
+     stays true now that M16 has put the page on the streaming path. */
+  function parseFiles(files) {
+    if (!Array.isArray(files)) {
+      throw new TypeError("parseFiles expects an array of {name, text}");
+    }
+    var scan = createScan();
+    for (var fi = 0; fi < files.length; fi++) {
+      var file = isPlainObject(files[fi]) ? files[fi] : {};
+      scan.addFile(file.name, file.text);
+    }
+    var result = scan.finish();
+    delete result.files;
+    return result;
   }
 
   /* ---------- submission range helpers (payload shaping, not judgment) -----
@@ -388,6 +474,7 @@
     SCRIPT_VERSION: SCRIPT_VERSION,
     MAX_PERIOD_DAYS: MAX_PERIOD_DAYS,
     parseFiles: parseFiles,
+    createScan: createScan,
     daySpan: daySpan,
     clampRange: clampRange,
     filterRange: filterRange

@@ -72,7 +72,9 @@ The check page's paste fallback consumes the CLI's `--json` output (`script_vers
 
 - **M13 adds exactly two identity values, and no third.** `run.anchors` (the machine's sha-256 digests, so a restored run is still recognisable as this machine and M10's increment path keeps working) and `state.link_token`. Both are validated on the way in and on the way out. `link_token` is the one value the page writes without being asked, only on the pasted-CLI path, and `clear()` deletes it with everything else — which is why the check page shows the Clear button when a token exists even with nothing else saved.
 
-Saving is opt-in: it happens only after the user presses the save button **and** confirms the modal. The confirmation is a custom modal, never `confirm()`/`alert()` (theme, translation, and headless testability).
+Saving is **on by default** since M16: a finished scan is written to `localStorage` without a press. The switch lives in its own key (`cco.autosave.v1`, absent = on) rather than inside the run store, so that "do not keep my results" outlives the button that clears the run store — and that button turns saving off too, or it would be a gesture undone by the next scan.
+
+If you change this default, **change the copy in the same commit**. Eight places on the two check pages, the front pages' FAQ and this file assert what is and is not kept; a default that disagrees with them turns the site's own trust claim into a false statement, which is worse than either behaviour on its own. The manual save button and its confirmation modal still exist for when the box is unchecked; the confirmation is a custom modal, never `confirm()`/`alert()` (theme, translation, and headless testability).
 
 A stored run keeps the **engine's own UTC buckets**. It must never freeze a local date at save time: the machine's timezone can change and the same profile can be read elsewhere, so the reader's clock is applied on the way to the screen instead (see below).
 

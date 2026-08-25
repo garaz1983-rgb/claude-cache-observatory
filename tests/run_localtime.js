@@ -196,6 +196,62 @@ function labelsOf(rel, view, zone) {
   return make(lt, view, zone, hh2);
 }
 
+/* M16: the local-save default, lifted out of the page and driven against a
+   stub storage. It is one boolean, and it decides whether a stranger's
+   diagnosis is left behind on a shared computer, so it gets a test rather than
+   a screenshot. */
+function autosaveOf(rel) {
+  var body = pageBlock(rel, "AUTOSAVE");
+  function withStore(store) {
+    var make = new Function("window",
+      body + "\nreturn { autoSaveOn: autoSaveOn, setAutoSave: setAutoSave, KEY: AUTOSAVE_KEY };");
+    return make({ localStorage: store });
+  }
+  function memStore() {
+    var m = Object.create(null);
+    return {
+      _m: m,
+      getItem: function (k) { return k in m ? m[k] : null; },
+      setItem: function (k, v) { m[k] = String(v); },
+      removeItem: function (k) { delete m[k]; }
+    };
+  }
+  var fresh = memStore();
+  var a = withStore(fresh);
+  var out = { key: a.KEY, fresh_is_on: a.autoSaveOn() };
+
+  var off = memStore();
+  off.setItem(a.KEY, "off");
+  out.off_is_off = withStore(off).autoSaveOn() === false;
+
+  var w = memStore();
+  var b = withStore(w);
+  b.setAutoSave(false);
+  out.set_false_writes_off = w.getItem(a.KEY) === "off" && b.autoSaveOn() === false;
+  b.setAutoSave(true);
+  out.set_true_clears = w.getItem(a.KEY) === null && b.autoSaveOn() === true;
+
+  // A browser that refuses storage cannot keep anything, so claiming saving is
+  // on would be the one lie this card must not tell.
+  var throwing = {
+    getItem: function () { throw new Error("blocked"); },
+    setItem: function () { throw new Error("blocked"); },
+    removeItem: function () { throw new Error("blocked"); }
+  };
+  var c = withStore(throwing);
+  out.blocked_is_off = c.autoSaveOn() === false;
+  var threw = false;
+  try { c.setAutoSave(false); } catch (e) { threw = true; }
+  out.blocked_set_survives = !threw;
+
+  // Anything other than the exact string "off" means on: a half-written or
+  // hand-edited value must not silently disable a documented default.
+  var junk = memStore();
+  junk.setItem(a.KEY, "OFF");
+  out.junk_is_on = withStore(junk).autoSaveOn() === true;
+  return out;
+}
+
 function payloadOf(rel, last, view, fields, rangeReady) {
   var body = pageBlock(rel, "SUBMIT-PAYLOAD");
   var doc = {
@@ -253,6 +309,25 @@ var offsets = JSON.parse(process.argv[3] || "[0]");
 var files = collect(root, "", []);
 var result = engine.parseFiles(files);
 var census = usageCensus(files);
+
+/* M16: the hourly census moved into assets/parse.js so the folder scan walks
+   each file once instead of three times. usageCensus() above stays here as an
+   INDEPENDENT implementation of the same rule — keeping it is the only reason
+   this comparison means anything. */
+var engineCensus = (function () {
+  var scan = engine.createScan({ census: true });
+  for (var i = 0; i < files.length; i++) scan.addFile(files[i].name, files[i].text);
+  return scan.finish().census;
+})();
+function censusEqual(a, b) {
+  var ka = Array.from(a.keys()).sort();
+  var kb = Array.from(b.keys()).sort();
+  if (JSON.stringify(ka) !== JSON.stringify(kb)) return false;
+  for (var i = 0; i < ka.length; i++) {
+    if (JSON.stringify(a.get(ka[i])) !== JSON.stringify(b.get(ka[i]))) return false;
+  }
+  return true;
+}
 
 /* live views, one per requested offset */
 var views = {};
@@ -427,6 +502,22 @@ process.stdout.write(JSON.stringify({
   },
   page_payload: pagePayload,
   probe_identity: probeIdentity,
+  autosave: ["check.html", "ko/check.html"].reduce(function (a, rel) {
+    a[rel] = autosaveOf(rel);
+    return a;
+  }, {}),
+  // M16: page-independent census vs the engine's, on the same files.
+  census_move: {
+    equal: censusEqual(census, engineCensus),
+    days_page: census.size,
+    days_engine: engineCensus.size,
+    total_page: Array.from(census.values()).reduce(function (a, r) {
+      return a + r.reduce(function (x, y) { return x + y; }, 0);
+    }, 0),
+    total_engine: Array.from(engineCensus.values()).reduce(function (a, r) {
+      return a + r.reduce(function (x, y) { return x + y; }, 0);
+    }, 0)
+  },
   // M15: what the page's payload block must derive from the engine's census.
   // Sorted key lists, no counts — the same shape /api/submit accepts.
   detector_vocab: {

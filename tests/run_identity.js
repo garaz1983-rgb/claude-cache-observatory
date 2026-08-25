@@ -107,6 +107,43 @@ function overlap(a, b) {
 }
 
 /* ---- the scans ---- */
+/* Drive the collector from the ENGINE's line walk and compare with the
+   whole-array collect(). The engine strips a trailing \r and collect() does
+   not, so a CRLF file is included on purpose rather than assumed harmless. */
+function streamingProbe() {
+  var sets = {
+    plain: filesOf(makeRecords("S", 300, T0, STEP, 4242), 5, "stream"),
+    crlf: null,
+    ragged: [
+      { name: "a.jsonl", text: "" },
+      { name: "b.jsonl", text: "\n\n\n" },
+      { name: "sub/subagents/c.jsonl", text: null },
+      { name: "d.jsonl", text: "garbage\n{\"usage\":1}\n" }
+    ]
+  };
+  sets.crlf = sets.plain.map(function (f) {
+    return { name: f.name, text: f.text.replace(/\n/g, "\r\n") };
+  });
+  var out = {};
+  Object.keys(sets).forEach(function (key) {
+    var files = sets[key];
+    var collector = identity.createCollector();
+    var scan = engine.createScan({ onLine: collector.addLine });
+    for (var i = 0; i < files.length; i++) scan.addFile(files[i].name, files[i].text);
+    scan.finish();
+    var viaEngine = collector.ids();
+    var viaFiles = identity.collect(files);
+    out[key] = {
+      equal: JSON.stringify(viaEngine) === JSON.stringify(viaFiles),
+      n_engine: viaEngine.length,
+      n_files: viaFiles.length,
+      anchors_equal: JSON.stringify(anchorsSync(identity.sample(viaEngine))) ===
+                     JSON.stringify(anchorsSync(identity.sample(viaFiles)))
+    };
+  });
+  return out;
+}
+
 var DAY = 86400000;
 var T0 = Date.parse("2026-05-01T00:00:00.000Z");
 var STEP = 3 * 3600000;                       // one record every 3 hours
@@ -229,6 +266,11 @@ process.stdout.write(JSON.stringify({
   fixtures: {
     ids: fixtureIds,
     engine_requests: fixtureResult ? fixtureResult.totals.requests : null
-  }
+  },
+  // M16: the page no longer hands this module an array of files. It opens a
+  // collector and feeds it the lines parse.js is already walking. Whether that
+  // produces the SAME sample is the whole safety of the refactor: a fingerprint
+  // that shifts is a returning submitter who stops matching their own row.
+  streaming: streamingProbe()
 }));
 }

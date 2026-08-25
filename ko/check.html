@@ -103,6 +103,12 @@ details.paste .actions{display:flex; align-items:center; gap:12px; margin-top:10
 details.paste button{font:inherit; font-weight:600; padding:7px 14px; border-radius:8px; border:1px solid var(--line); background:var(--surface); color:var(--ink); cursor:pointer}
 details.paste button:hover{border-color:var(--muted)}
 details.paste .hint{font-size:.76rem; color:var(--muted)}
+.prog-track{height:6px; border-radius:99px; background:var(--grid); overflow:hidden; margin:2px 0 8px}
+.prog-bar{height:100%; width:0; background:var(--ok); border-radius:99px; transition:width .12s linear}
+.prog-nums{display:flex; flex-wrap:wrap; gap:6px 18px; font-size:.82rem}
+.prog-nums .prog-loss{color:var(--muted)}
+.prog-nums .prog-loss.hit{color:var(--crit); font-weight:600}
+.prog-msg{margin-top:6px}
 .progress{margin-top:12px; font-family:ui-monospace,'Cascadia Mono',Consolas,monospace; font-variant-numeric:tabular-nums; font-size:.82rem; color:var(--muted)}
 .err{font-size:.85rem; margin-top:12px; padding:12px 14px; border-left:3px solid var(--crit); background:var(--crit-soft); border-radius:0 6px 6px 0}
 .kpis{display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:12px; margin:0 0 8px}
@@ -186,6 +192,9 @@ details.preview pre{margin:0; padding:2px 12px 12px; font-family:ui-monospace,'C
 /* M10 로컬 저장 UI. 색은 전부 토큰이다. 버튼 글자는 var(--ink)로 두고
    --ok / --crit은 테두리에만 쓴다. 라이트 테마에서 흰 글자 대비가
    --ok 3.34:1, --crit 4.37:1로 측정돼 4.5:1 기준에 못 미치기 때문이다. */
+.store-toggle{display:flex; align-items:center; gap:8px; font-size:.85rem; margin:10px 0 2px; cursor:pointer}
+.store-toggle input{width:15px; height:15px; accent-color:var(--ok); cursor:pointer}
+.store-toggle.off{color:var(--muted)}
 .store-box{border:1px solid var(--line); border-radius:8px; background:var(--surface); padding:16px 18px; margin-top:18px}
 .store-box h3{margin:0 0 6px; font-size:.95rem; font-weight:700}
 .store-box .lead{margin:0 0 11px; font-size:.85rem; color:var(--muted)}
@@ -236,12 +245,12 @@ a{color:inherit}
 
 <div class="notice"><b>데스크톱 브라우저 필요.</b> 로그는 Claude Code가 실행되는 기기(<span class="mono">~/.claude/projects</span>)에 있다. 모바일 브라우저에서는 접근할 수 없다.</div>
 
-<div class="notice"><b>저장은 선택이고, 누르지 않으면 켜지지 않는다.</b> 진단 후 <b>"이 브라우저에 저장"</b>을 누르면 결과가 이 브라우저의 저장 공간에 남아, 다음 진단이 이번에 끝난 지점부터 이어질 수 있다. 서버로는 가지 않고 버튼 하나로 지운다. <b>공용·공유 컴퓨터에서는 저장하지 말 것.</b> 이 브라우저 프로필을 다음에 쓰는 사람에게 결과가 그대로 남는다. 진단만 돌리면 아무것도 남지 않는다.</div>
+<div class="notice"><b>진단 결과는 이 브라우저에 자동으로 저장된다.</b> 스캔이 끝나면 총계·일별 집계·시간대별 요청 수·이 기계의 지문 해시가 이 컴퓨터의 브라우저 저장 공간에 기록되고, 그래서 다음 진단이 이번에 끝난 지점부터 이어진다. 서버로는 가지 않고, 버튼 하나로 지우고, 2번 카드의 체크박스 하나로 끈다. <b>공용·공유 컴퓨터라면 스캔 전에 2번 카드에서 꺼 둘 것.</b> 그러지 않으면 이 브라우저 프로필을 다음에 쓰는 사람에게 결과가 그대로 남는다.</div>
 
 <div class="trust-block">
   <h3>돌리기 전에: 이 페이지가 무엇을 하고, 무엇을 하지 않나</h3>
   <ul>
-    <li><b>로그 파일은 이 기기를 떠나지 않는다.</b> 읽기·판정·그래프가 전부 이 탭 안에서 끝난다. 2번 카드에서 <b>"이 브라우저에 저장"</b>을 누르지 않으면 탭을 닫는 순간 전부 사라진다. 저장을 누르면 이 컴퓨터의 브라우저 저장 공간에만 기록되고, 서버로는 전송되지 않으며, 버튼 하나로 언제든 지울 수 있다. 진단만 돌리면 네트워크 요청이 <b>0건</b>이다. F12 → Network 탭을 열어둔 채 실행해 직접 확인할 수 있다.</li>
+    <li><b>로그 파일은 이 기기를 떠나지 않는다.</b> 읽기·판정·그래프가 전부 이 탭 안에서 끝나고, 로그 파일 자체는 어디에도 저장되지 않는다. 읽고 놓아준다. 대신 <b>판정 결과</b>는 자동으로 남는다. 총계·일별 집계·시간대별 요청 수·이 기계의 지문 해시가 이 컴퓨터의 브라우저 저장 공간에 기록된다. 서버로는 전송되지 않고, 버튼 하나로 지우고, 2번 카드의 체크박스 하나로 끈다. 진단만 돌리면 네트워크 요청이 <b>0건</b>이다. F12 → Network 탭을 열어둔 채 실행해 직접 확인할 수 있다.</li>
     <li><b>전송은 3번 카드의 버튼을 눌러야만 일어난다.</b> 그때 나가는 것도 화면에 미리 보여준 집계 숫자(일별 건수·합계), 직접 입력한 닉네임, 그리고 관측소가 이 기계를 같은 제출자로 알아보게 하는 <b>단방향 해시</b> 최대 16개뿐이다. 대화 내용·파일 경로·세션 ID·시각은 제출 스키마에 아예 없다.</li>
     <li><b>그 해시가 왜 있고, 무엇인가.</b> 관측소는 모든 행을 더한다. 그래서 한 사람이 두 번 제출하면 두 번 세어졌다. 여기엔 로그인이 없으므로, 이 페이지는 로그 안에 이미 들어 있는 request ID로 이 기계의 고정 익명 식별자를 만든다. 정해진 규칙으로 일부를 고르고 각각을 SHA-256으로 해시해서, 다이제스트만 보낸다. request ID 자체는 나가지 않고 해시에서 되돌릴 수도 없으며, 관측소는 받은 다이제스트를 한 번 더 해시해서 저장한다. 그래서 공개 데이터를 읽는 사람이 손에 쥐는 값으로는 아무것도 되돌려 보낼 수 없다. 보낼 목록 전체는 3번 카드의 JSON 미리보기에 그대로 나온다.</li>
     <li><b>빌드 스텝이 없다.</b> 브라우저가 실행하는 코드가 repo에 올라간 파일 그대로다. view-source와 GitHub를 한 줄씩 대조할 수 있다.</li>
@@ -272,7 +281,7 @@ a{color:inherit}
     <ol class="steps">
       <li>Claude Code 로그 폴더를 찾는다: <span class="mono">~/.claude/projects</span> (Windows: <span class="mono">C:\Users\&lt;사용자명&gt;\.claude\projects</span>).</li>
       <li>그 폴더를 아래에 끌어다 놓거나, 버튼으로 선택한다. 여러 개의 <span class="mono">.jsonl</span> 파일도 된다.</li>
-      <li>결과를 읽는다. 파싱은 이 탭 안에서만 일어난다. 2번 카드에서 "이 브라우저에 저장"을 고르지 않으면 탭을 닫을 때 전부 사라진다.</li>
+      <li>결과를 읽는다. 파싱은 이 탭 안에서만 일어난다. 판정 결과는 다음 진단이 이어질 수 있도록 이 브라우저에 저장된다. 끄는 스위치와 삭제 버튼은 2번 카드에 있다.</li>
     </ol>
     <div class="dropzone" id="dropzone">
       <p>폴더(또는 <span class="mono">.jsonl</span> 파일)를 여기에 <b>드래그 앤 드롭</b></p>
@@ -280,7 +289,15 @@ a{color:inherit}
       <p><button id="pickBtn" type="button">폴더 선택…</button></p>
     </div>
     <div class="notice" id="singleFileNote" hidden><b>낱개 .jsonl 파일이 드롭되었다.</b> 낱개 파일은 <span class="mono">subagents</span> 폴더 판별이 불가능해 전부 메인 세션(30분 TTL)으로 분류된다. 정확한 판정을 원하면 폴더째 드롭하거나 폴더 선택을 권장.</div>
-    <div class="progress" id="progress" hidden></div>
+    <div class="progress" id="progress" hidden>
+      <div class="prog-track" id="progTrack" hidden><div class="prog-bar" id="progBar"></div></div>
+      <div class="prog-nums" id="progNums" hidden>
+        <span id="progCount">–</span>
+        <span id="progReq">–</span>
+        <span class="prog-loss" id="progLoss">–</span>
+      </div>
+      <div class="prog-msg" id="progMsg"></div>
+    </div>
     <div class="err" id="parseErr" hidden></div>
     <details class="paste" id="pasteDetails">
       <summary>폴더 접근이 안 되면? CLI 스크립트의 JSON 출력 붙여넣기</summary>
@@ -360,12 +377,13 @@ a{color:inherit}
   </details>
 
   <div class="store-box" id="storeBox">
-    <h3>이 결과를 이 브라우저에 남기기 (선택)</h3>
-    <p class="lead">자동 저장은 없다. 버튼을 누르면 총계·일별 집계·시간대별 요청 수·이 기계의 지문 해시가 <b>이 컴퓨터의 브라우저 저장 공간</b>에 기록된다. 서버로는 가지 않고, "저장된 기록 지우기"를 누르면 즉시 지워진다. 저장해 두면 다음 진단이 마지막 제출 다음 날부터 시작되므로 이미 보낸 기간을 다시 보내지 않아도 된다. 이 카드에 적히는 기간은 모두 <b>UTC</b> 기준으로, 위 그래프가 아니라 제출 카드와 같은 기준이다. <b>공용·공유 컴퓨터에서는 저장하지 말 것.</b></p>
+    <h3>이 브라우저가 보관하는 것</h3>
+    <p class="lead">스캔이 끝날 때마다 총계·일별 집계·시간대별 요청 수·이 기계의 지문 해시가 <b>이 컴퓨터의 브라우저 저장 공간</b>에 기록된다. 서버로는 가지 않는다. 이게 있어서 다음 진단이 마지막 제출 다음 날부터 시작되고, 두 번의 진단을 비교할 수 있다. 최근 8건까지만 남는다. 이 카드에 적히는 기간은 모두 <b>UTC</b> 기준으로, 위 그래프가 아니라 제출 카드와 같은 기준이다. 아래 체크박스를 끄면 앞으로 저장하지 않고 이미 있는 건 그대로 둔다. 삭제 버튼은 전부 지우고 저장도 같이 끈다. <b>공용·공유 컴퓨터에서는 꺼 둘 것.</b> 이 브라우저 프로필을 다음에 쓰는 사람이 저장된 내용을 읽을 수 있다.</p>
+    <label class="store-toggle"><input type="checkbox" id="autoSaveToggle" checked> 끝난 스캔을 이 브라우저에 보관</label>
     <p class="store-state off" id="storeState">이 브라우저에 저장된 기록이 없다.</p>
     <div class="store-actions">
       <button id="storeSaveBtn" type="button" class="go">이 브라우저에 저장</button>
-      <button id="storeClearBtn" type="button" class="danger" hidden>저장된 기록 지우기</button>
+      <button id="storeClearBtn" type="button" class="danger" hidden>저장된 기록 지우고, 저장도 끄기</button>
     </div>
     <div class="store-cmp" id="storeCmp" hidden></div>
   </div>
@@ -535,35 +553,6 @@ function tsDateHour(ts){
 }
 function isObj(v){ return v !== null && typeof v === "object" && !Array.isArray(v); }
 
-/* 히트맵 바탕용 시간별 요청 집계. parse.js의 요청 카운팅 규칙을 그대로
-   따른다(usage 라인, requestId 중복 제거, 첫 레코드 우선). 음영용 볼륨
-   카운팅일 뿐, 유실 판정이 아니다. */
-function usageCensus(files){
-  var seen = new Set();
-  var byDate = new Map();
-  files.forEach(function(f){
-    var lines = f.text.split("\n");
-    for(var i = 0; i < lines.length; i++){
-      var line = lines[i];
-      if(line.indexOf('"usage"') === -1) continue;
-      var o;
-      try{ o = JSON.parse(line); }catch(e){ continue; }
-      if(!isObj(o)) continue;
-      var msg = isObj(o.message) ? o.message : {};
-      if(!isObj(msg.usage)) continue;
-      var rid = o.requestId || msg.id || null;
-      if(seen.has(rid)) continue;
-      seen.add(rid);
-      var dh = tsDateHour(typeof o.timestamp === "string" ? o.timestamp : "");
-      if(!dh) continue;
-      var arr = byDate.get(dh.date);
-      if(!arr){ arr = new Array(24).fill(0); byDate.set(dh.date, arr); }
-      arr[dh.hour] += 1;
-    }
-  });
-  return byDate;
-}
-
 /* ---------- 입력: 폴더 선택 ---------- */
 var pickBtn = document.getElementById("pickBtn");
 if(!window.showDirectoryPicker){
@@ -643,7 +632,36 @@ async function walkEntry(entry, out){
 function setProgress(msg){
   var p = document.getElementById("progress");
   p.hidden = false;
-  p.textContent = msg;
+  document.getElementById("progTrack").hidden = true;
+  document.getElementById("progNums").hidden = true;
+  document.getElementById("progMsg").textContent = msg;
+}
+function nowMs(){
+  return (typeof performance !== "undefined" && performance.now)
+    ? performance.now() : Date.now();
+}
+function yieldToPaint(){
+  return new Promise(function(r){ setTimeout(r, 0); });
+}
+/* 숫자가 들어 있는 진행 표시. 막대만 있으면 "얼마나 걸리나"에만 답하는데,
+   스캔 중에는 그게 덜 궁금한 질문이다. 요청 수와 유실 수가 올라가는 게
+   이 페이지가 멈춘 게 아니라 내 로그를 읽고 있다는 걸 보여 준다. 숫자는
+   엔진의 진행 중 총계에서 그대로 가져오므로, 화면에 뜨는 수가 실제로 세고
+   있던 수다. */
+function setScanProgress(done, total, st){
+  var p = document.getElementById("progress");
+  p.hidden = false;
+  document.getElementById("progTrack").hidden = false;
+  document.getElementById("progNums").hidden = false;
+  var pct = total > 0 ? Math.round(100 * done / total) : 0;
+  document.getElementById("progBar").style.width = pct + "%";
+  document.getElementById("progCount").textContent =
+    fmtInt(done) + " / " + fmtInt(total) + " 파일";
+  document.getElementById("progReq").textContent = fmtInt(st.requests) + " 요청";
+  var loss = document.getElementById("progLoss");
+  loss.textContent = "in-TTL 유실 " + fmtInt(st.in_ttl_losses) + "건";
+  loss.className = st.in_ttl_losses > 0 ? "prog-loss hit" : "prog-loss";
+  document.getElementById("progMsg").textContent = "";
 }
 function showError(msg){
   var e = document.getElementById("parseErr");
@@ -651,42 +669,87 @@ function showError(msg){
   e.textContent = msg;
   document.getElementById("progress").hidden = true;
 }
+/* 파일당 한 번만 훑는다 (M16).
+   전에는 모든 파일을 배열에 읽어 놓고 그 배열을 세 번 훑었다. 엔진, 시간별
+   집계, 지문. 실제 로그 폴더면 문자열 약 100MB를 들고 있는 상태로 UI가
+   14.4초 얼어붙는다(실측: 6.5 + 4.1 + 3.8). 이제 파일 하나를 읽어서 세 가지를
+   한 번에 처리하는 순회에 넣고, 다음 파일을 열기 전에 버린다. 엔진과 지문
+   수집기는 각자 규칙을 그대로 쓴다. `identity.js`는 자기 정규식으로 id를
+   읽는데, 엔진과 어떤 id를 쓸지가 다르고, 지문이 흔들리면 재제출자가 자기
+   행을 못 찾게 되기 때문이다(`tests/identity_test.py`가 둘의 동일성을 잡는다). */
 async function processList(list){
   document.getElementById("parseErr").hidden = true;
   if(!list.length){
-    showError(".jsonl 파일을 찾지 못했다. ~/.claude/projects 폴더(또는 그 안의 .jsonl 파일)를 드롭할 것.");
+    showError(".jsonl 파일이 없다. ~/.claude/projects 폴더(또는 그 안의 .jsonl 파일)를 드롭할 것.");
     return;
   }
-  var files = [];
-  for(var i = 0; i < list.length; i++){
-    setProgress("파일 읽는 중… " + (i + 1) + "/" + list.length);
-    try{
-      files.push({ name: list[i].name, text: await list[i].file.text() });
-    }catch(e){ /* 읽을 수 없는 파일은 건너뜀 */ }
-    if(i % 20 === 0) await new Promise(function(r){ setTimeout(r, 0); });
-  }
-  setProgress(files.length + "개 파일 로컬 파싱 중…");
-  await new Promise(function(r){ setTimeout(r, 30); });
-  var result, census;
+
+  var collector = CacheObservatoryIdentity.createCollector();
+  var scan;
   try{
-    result = CacheObservatory.parseFiles(files);
-    census = usageCensus(files);
+    scan = CacheObservatory.createScan({ census: true, onLine: collector.addLine });
   }catch(e){
-    showError("파싱 실패: " + e.message);
+    showError("스캔을 시작하지 못했다: " + e.message);
     return;
   }
-  // M13: 로그에서 뽑아 이 자리에서 해시한 기계 지문. 나가는 것은 다이제스트뿐이고,
-  // 그것도 제출 버튼을 눌렀을 때만 나간다.
-  setProgress("이 기계의 지문을 로컬에서 계산 중…");
+
+  var read = 0, unreadable = 0;
+  var lastPaint = 0;
+  setScanProgress(0, list.length, scan.stats());
+  await yieldToPaint();
+
+  for(var i = 0; i < list.length; i++){
+    var text = null;
+    try{ text = await list[i].file.text(); }
+    catch(e){ unreadable += 1; }
+    if(text !== null){
+      try{
+        scan.addFile(list[i].name, text);
+        read += 1;
+      }catch(e){
+        showError("파싱 실패 (" + list[i].name + "): " + e.message);
+        return;
+      }
+      // 스트리밍 경로의 핵심. 이 파일 텍스트는 여기서 참조가 끊기므로 다음
+      // 파일을 열기 전에 회수될 수 있다.
+      text = null;
+    }
+    // N개마다가 아니라 시간 예산으로 다시 그린다. 파일 크기가 자릿수 단위로
+    // 차이 나서, 개수 기준으로 하면 끊기거나 헛돌거나 둘 중 하나다.
+    if(nowMs() - lastPaint > 60 || i === list.length - 1){
+      setScanProgress(i + 1, list.length, scan.stats());
+      await yieldToPaint();
+      lastPaint = nowMs();
+    }
+  }
+
+  var result;
+  try{ result = scan.finish(); }
+  catch(e){ showError("파싱 실패: " + e.message); return; }
+
+  // M13: 지문. 로그에서 뽑아 여기서 해시한다. 나갈 수 있는 건 다이제스트뿐이고,
+  // 그것도 제출 버튼을 눌렀을 때만이다.
   var fp = { count: 0, sampled: 0, anchors: [] };
-  try{ fp = await CacheObservatoryIdentity.fingerprint(files); }catch(e){ /* 지문 없이 진행 */ }
-  setProgress("완료: 파일 " + files.length + "개 · 요청 " + fmtInt(result.totals.requests) + "건 스캔.");
-  LAST = { result: result, census: census, source_version: null, detail_dropped: false,
+  try{
+    fp = await CacheObservatoryIdentity.fingerprintFromIds(collector.ids());
+  }catch(e){ /* degrade */ }
+
+  var done = "완료: " + fmtInt(read) + "개 파일 · 요청 " +
+    fmtInt(result.totals.requests) + "건 스캔.";
+  // 삼키지 말고 말한다. 브라우저가 다 못 읽은 폴더는 더 작은 수를 내놓고,
+  // 더 작은 수는 좋은 소식처럼 읽힌다.
+  if(unreadable > 0){
+    done += " " + fmtInt(unreadable) + "개 파일을 읽지 못했고 위 수치에 포함되지 않았다.";
+  }
+  setProgress(done);
+
+  LAST = { result: result, census: result.census, source_version: null, detail_dropped: false,
            anchors: fp.anchors, id_count: fp.count, link_token: linkToken() };
   document.getElementById("pasteSrcNote").hidden = true;
   document.getElementById("storeRestored").hidden = true;
-  // Unhide BEFORE drawing: canvases in a hidden section have zero width.
+  // 그리기 전에 먼저 보이게 한다. 숨겨진 섹션 안의 canvas는 폭이 0이다.
   document.getElementById("results").hidden = false;
+  autoSaveIfOn();
   renderResults();
   document.getElementById("results").scrollIntoView({ behavior: "smooth" });
 }
@@ -851,6 +914,7 @@ document.getElementById("pasteBtn").addEventListener("click", function(){
   document.getElementById("storeRestored").hidden = true;
   document.getElementById("pasteSrcNote").hidden = false;
   document.getElementById("results").hidden = false;
+  autoSaveIfOn();
   renderResults();
   document.getElementById("results").scrollIntoView({ behavior: "smooth" });
 });
@@ -1628,6 +1692,33 @@ function updateOverlapWarning(payload){
     " 제출을 막지는 않는다.";
 }
 
+/* ---------- M16: 저장이 기본값 ----------
+   실행 기록 저장소 안이 아니라 별도 키에 둔다. "내 결과를 남기지 마라"는
+   선택이 실행 기록을 지우는 버튼보다 오래 살아야 하기 때문이다. 키가 없으면
+   켜진 것이다. 한 번도 다르게 말한 적 없는 브라우저는 저장한다. 이 페이지
+   맨 위 안내가 스캔 전에 그렇게 말하고 있다. 저장소를 읽지 못하면 꺼진 것으로
+   보고한다. 읽지 못하는 브라우저는 쓰지도 못하고, 그런데도 저장된다고 말하는
+   게 이 카드가 해서는 안 되는 유일한 거짓말이다. */
+/* AUTOSAVE:BEGIN */
+var AUTOSAVE_KEY = "cco.autosave.v1";
+function autoSaveOn(){
+  try{ return window.localStorage.getItem(AUTOSAVE_KEY) !== "off"; }
+  catch(e){ return false; }
+}
+function setAutoSave(on){
+  try{
+    if(on) window.localStorage.removeItem(AUTOSAVE_KEY);
+    else window.localStorage.setItem(AUTOSAVE_KEY, "off");
+  }catch(e){ /* 거부됨. 체크박스는 이 탭 상태만 반영한다 */ }
+}
+/* AUTOSAVE:END */
+/* 이 브라우저 설정이 그렇다면 지금 저장한다. 결과를 만드는 모든 경로 끝에서
+   호출하므로, 숫자가 폴더에서 왔든 붙여넣은 CLI 출력에서 왔든 "자동"의 뜻이
+   같다. */
+function autoSaveIfOn(){
+  if(STORE_OK && LAST && autoSaveOn()) doSave();
+}
+
 function updateStoreCard(){
   var state = document.getElementById("storeState");
   var saveBtn = document.getElementById("storeSaveBtn");
@@ -1646,6 +1737,9 @@ function updateStoreCard(){
     cmp.hidden = true;
     return;
   }
+  /* 저장이 켜져 있으면 저장 버튼이 할 일이 없다. 그런데 버튼을 남겨 두면
+     "눌러야 남는다"는 반대 뜻으로 읽힌다. 체크를 끄는 순간 다시 나타난다. */
+  saveBtn.hidden = autoSaveOn();
   saveBtn.disabled = !LAST;
   var runs = storedRuns();
   var subs = storedSubmissions();
@@ -1656,7 +1750,9 @@ function updateStoreCard(){
   var token = linkToken();
   if(!runs.length && !subs.length && !token){
     state.className = "store-state off";
-    state.textContent = "이 브라우저에 저장된 기록이 없다.";
+    state.textContent = autoSaveOn()
+      ? "이 브라우저에 저장된 기록이 아직 없다. 다음에 끝나는 스캔부터 여기에 남는다."
+      : "이 브라우저에 저장된 기록이 없고, 저장 기능도 꺼져 있다.";
     clearBtn.hidden = true;
     cmp.hidden = true;
     return;
@@ -1791,8 +1887,22 @@ document.getElementById("storeSaveBtn").addEventListener("click", function(){
   openSaveModal();
 });
 
+var autoSaveBox = document.getElementById("autoSaveToggle");
+autoSaveBox.checked = autoSaveOn();
+autoSaveBox.addEventListener("change", function(){
+  setAutoSave(autoSaveBox.checked);
+  // 켜면 화면에 이미 있는 결과부터 저장한다. 다음 스캔까지 기다려야
+  // 체크박스가 의미를 갖는 건 이상하다.
+  if(autoSaveBox.checked) autoSaveIfOn();
+  updateStoreCard();
+});
+
 document.getElementById("storeClearBtn").addEventListener("click", function(){
   if(!STORE_OK) return;
+  // 지운 다음 스캔에서 또 저장하면 이 버튼은 시늉이 된다. 저장도 같이 끄고,
+  // 카드가 그렇게 적어 둔다.
+  setAutoSave(false);
+  autoSaveBox.checked = false;
   Store.clear();
   STATE = Store.load() || Store.emptyState();
   INC = null;

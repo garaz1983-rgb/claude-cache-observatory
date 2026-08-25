@@ -268,6 +268,27 @@ def main():
               % (len(fx["ids"]), fx["engine_requests"]))
         print("PASS fixture parity: %d request ids, %d engine requests"
               % (len(fx["ids"]), fx["engine_requests"]))
+
+        # ---------- M16: streaming must sample what the array path sampled ----
+        # The page no longer hands this module an array of file texts. It opens
+        # a collector and feeds it the lines assets/parse.js is already walking.
+        # The engine strips a trailing \r from each line and collect() does not,
+        # so the CRLF set is the one that would catch a divergence.
+        streaming = out.get("streaming")
+        check(isinstance(streaming, dict) and streaming,
+              "no streaming probe in the runner output")
+        for key in sorted(streaming):
+            row = streaming[key]
+            check(row.get("equal") is True,
+                  "🔴 streaming(%s): the engine-fed collector produced %r ids "
+                  "and collect() produced %r. A different sample means a "
+                  "returning submitter stops matching their own row."
+                  % (key, row.get("n_engine"), row.get("n_files")))
+            check(row.get("anchors_equal") is True,
+                  "🔴 streaming(%s): same ids, different anchors" % key)
+        print("PASS streaming equivalence on %s: the engine-fed collector "
+              "samples exactly what collect() samples"
+              % ", ".join(sorted(streaming)))
     except CheckFail as exc:
         print("IDENTITY_FAIL: %s" % exc)
         return 1

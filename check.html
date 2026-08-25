@@ -103,6 +103,12 @@ details.paste .actions{display:flex; align-items:center; gap:12px; margin-top:10
 details.paste button{font:inherit; font-weight:600; padding:7px 14px; border-radius:8px; border:1px solid var(--line); background:var(--surface); color:var(--ink); cursor:pointer}
 details.paste button:hover{border-color:var(--muted)}
 details.paste .hint{font-size:.76rem; color:var(--muted)}
+.prog-track{height:6px; border-radius:99px; background:var(--grid); overflow:hidden; margin:2px 0 8px}
+.prog-bar{height:100%; width:0; background:var(--ok); border-radius:99px; transition:width .12s linear}
+.prog-nums{display:flex; flex-wrap:wrap; gap:6px 18px; font-size:.82rem}
+.prog-nums .prog-loss{color:var(--muted)}
+.prog-nums .prog-loss.hit{color:var(--crit); font-weight:600}
+.prog-msg{margin-top:6px}
 .progress{margin-top:12px; font-family:ui-monospace,'Cascadia Mono',Consolas,monospace; font-variant-numeric:tabular-nums; font-size:.82rem; color:var(--muted)}
 .err{font-size:.85rem; margin-top:12px; padding:12px 14px; border-left:3px solid var(--crit); background:var(--crit-soft); border-radius:0 6px 6px 0}
 .kpis{display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:12px; margin:0 0 8px}
@@ -190,6 +196,9 @@ details.preview pre{margin:0; padding:2px 12px 12px; font-family:ui-monospace,'C
    var(--ink) text on a surface/bg fill and use --ok / --crit for the border
    only, because white-on-accent measured 3.34:1 (--ok) and 4.37:1 (--crit)
    in the light theme, both under the 4.5:1 the new controls have to hold. */
+.store-toggle{display:flex; align-items:center; gap:8px; font-size:.85rem; margin:10px 0 2px; cursor:pointer}
+.store-toggle input{width:15px; height:15px; accent-color:var(--ok); cursor:pointer}
+.store-toggle.off{color:var(--muted)}
 .store-box{border:1px solid var(--line); border-radius:8px; background:var(--surface); padding:16px 18px; margin-top:18px}
 .store-box h3{margin:0 0 6px; font-size:.95rem; font-weight:700}
 .store-box .lead{margin:0 0 11px; font-size:.85rem; color:var(--muted)}
@@ -240,12 +249,12 @@ a{color:inherit}
 
 <div class="notice"><b>Desktop browser required.</b> The logs live on the machine where Claude Code runs (<span class="mono">~/.claude/projects</span>); mobile browsers cannot access them.</div>
 
-<div class="notice"><b>Saving is optional, and off unless you ask for it.</b> After the diagnosis you can press <b>“Save to this browser”</b> to keep the result in this browser's own storage, so the next run can pick up where this one ended. It never goes to a server, and one button deletes it. <b>On a shared or public computer, do not save</b>: the result would stay behind for whoever uses this browser profile next. Just scanning leaves nothing behind.</div>
+<div class="notice"><b>Your result is kept in this browser, automatically.</b> When a scan finishes, its totals, daily rows, hour-by-hour counts and this machine's fingerprint hashes are written to this browser's own storage on this computer, so the next run can pick up where this one ended. It never goes to a server, one button deletes it, and one checkbox in step 2 stops it. <b>On a shared or public computer, turn it off in step 2 before you scan</b>: otherwise the result stays behind for whoever uses this browser profile next.</div>
 
 <div class="trust-block">
   <h3>Before you run it: what this page does, and what it does not</h3>
   <ul>
-    <li><b>Your log files never leave this machine.</b> Reading, scoring and charting all happen inside this tab. Nothing is kept when you close it <b>unless you press “Save to this browser”</b> in step 2 — and that save is written to this browser's local storage on this computer, is never sent to a server, and can be deleted at any time with one button. Running a check makes <b>zero</b> network requests: open F12 → Network and watch it yourself.</li>
+    <li><b>Your log files never leave this machine.</b> Reading, scoring and charting all happen inside this tab, and the log files themselves are never stored anywhere — they are read and released. What <b>is</b> kept, automatically, is the scored result: totals, daily rows, hourly counts and this machine's fingerprint hashes, written to this browser's local storage on this computer. Never to a server, deletable with one button, and switchable off with one checkbox in step 2. Running a check makes <b>zero</b> network requests: open F12 → Network and watch it yourself.</li>
     <li><b>Nothing is sent unless you press the button in step 3.</b> Even then, all that leaves is the aggregate numbers shown to you first (daily counts and totals), an optional nickname, and up to 16 <b>one-way hashes</b> that let the observatory recognise this machine as the same submitter next time. Conversation text, file paths, session IDs and timestamps are not part of the submission schema at all.</li>
     <li><b>Why the hashes exist, and what they are.</b> The observatory adds every row together, so a person who submits twice used to be counted twice. There is no login here, so the page derives a stable pseudonym for this machine from the request IDs already inside your logs: it takes a fixed sample of them, hashes each one with SHA-256, and sends only the digests. The request IDs themselves never leave, nothing can be turned back into them, and the observatory hashes the digests a second time before storing them, so nobody reading the public dataset holds anything they could send back. The full list is shown in the JSON preview in step 3 before you send it.</li>
     <li><b>There is no build step.</b> The code your browser runs is the same file that sits in the repo, so you can diff view-source against GitHub line by line.</li>
@@ -276,7 +285,7 @@ a{color:inherit}
     <ol class="steps">
       <li>Find your Claude Code log folder: <span class="mono">~/.claude/projects</span> (Windows: <span class="mono">C:\Users\&lt;you&gt;\.claude\projects</span>).</li>
       <li>Drop that folder below, or pick it with the button. Multiple <span class="mono">.jsonl</span> files work too.</li>
-      <li>Read the results. Parsing happens in this tab only. Closing it discards everything, unless you choose “Save to this browser” in step 2.</li>
+      <li>Read the results. Parsing happens in this tab only. The scored result is then kept in this browser so the next run can continue from it — step 2 holds the switch and the delete button.</li>
     </ol>
     <div class="dropzone" id="dropzone">
       <p><b>Drag &amp; drop</b> the folder (or <span class="mono">.jsonl</span> files) here</p>
@@ -284,7 +293,15 @@ a{color:inherit}
       <p><button id="pickBtn" type="button">Choose folder…</button></p>
     </div>
     <div class="notice" id="singleFileNote" hidden><b>Individual .jsonl files dropped.</b> Loose files cannot be told apart from subagent logs (the <span class="mono">subagents</span> folder name is what marks those), so every file is classified as a main session (30-minute TTL). For an accurate verdict, drop or pick the whole folder.</div>
-    <div class="progress" id="progress" hidden></div>
+    <div class="progress" id="progress" hidden>
+      <div class="prog-track" id="progTrack" hidden><div class="prog-bar" id="progBar"></div></div>
+      <div class="prog-nums" id="progNums" hidden>
+        <span id="progCount">–</span>
+        <span id="progReq">–</span>
+        <span class="prog-loss" id="progLoss">–</span>
+      </div>
+      <div class="prog-msg" id="progMsg"></div>
+    </div>
     <div class="err" id="parseErr" hidden></div>
     <details class="paste" id="pasteDetails">
       <summary>No folder access? Paste the CLI script's JSON output instead</summary>
@@ -364,12 +381,13 @@ a{color:inherit}
   </details>
 
   <div class="store-box" id="storeBox">
-    <h3>Keep this result in this browser (optional)</h3>
-    <p class="lead">Nothing is saved automatically. Pressing the button writes the totals, the daily rows, the hour-by-hour counts and this machine's fingerprint hashes into <b>this browser's own storage on this computer</b>. It is never sent to a server, and “Clear saved results” deletes it immediately. It also lets the next run start the day after your last submission instead of repeating a period you already sent. Every period named in this card is a <b>UTC</b> period, matching the submission card rather than the charts above. <b>Do not save on a shared or public computer.</b></p>
+    <h3>What this browser keeps</h3>
+    <p class="lead">Every finished scan is written to <b>this browser's own storage on this computer</b>: the totals, the daily rows, the hour-by-hour counts and this machine's fingerprint hashes. Never to a server. It is what lets the next run start the day after your last submission instead of repeating a period you already sent, and what lets this page compare two runs. Only the last 8 results are kept. Every period named in this card is a <b>UTC</b> period, matching the submission card rather than the charts above. Unchecking the box below stops future saves and leaves what is already here; the delete button removes everything and switches saving off. <b>On a shared or public computer, uncheck it</b>: whoever uses this browser profile next can read what is stored.</p>
+    <label class="store-toggle"><input type="checkbox" id="autoSaveToggle" checked> Keep each finished scan in this browser</label>
     <p class="store-state off" id="storeState">Nothing is saved in this browser yet.</p>
     <div class="store-actions">
       <button id="storeSaveBtn" type="button" class="go">Save to this browser</button>
-      <button id="storeClearBtn" type="button" class="danger" hidden>Clear saved results</button>
+      <button id="storeClearBtn" type="button" class="danger" hidden>Delete what is saved, and stop saving</button>
     </div>
     <div class="store-cmp" id="storeCmp" hidden></div>
   </div>
@@ -541,35 +559,6 @@ function tsDateHour(ts){
 }
 function isObj(v){ return v !== null && typeof v === "object" && !Array.isArray(v); }
 
-/* Hourly request census for the heatmap background. Mirrors parse.js request
-   counting (usage-bearing lines, requestId dedup, first record wins) — this
-   is volume counting for the shading only, never loss judgment. */
-function usageCensus(files){
-  var seen = new Set();
-  var byDate = new Map();
-  files.forEach(function(f){
-    var lines = f.text.split("\n");
-    for(var i = 0; i < lines.length; i++){
-      var line = lines[i];
-      if(line.indexOf('"usage"') === -1) continue;
-      var o;
-      try{ o = JSON.parse(line); }catch(e){ continue; }
-      if(!isObj(o)) continue;
-      var msg = isObj(o.message) ? o.message : {};
-      if(!isObj(msg.usage)) continue;
-      var rid = o.requestId || msg.id || null;
-      if(seen.has(rid)) continue;
-      seen.add(rid);
-      var dh = tsDateHour(typeof o.timestamp === "string" ? o.timestamp : "");
-      if(!dh) continue;
-      var arr = byDate.get(dh.date);
-      if(!arr){ arr = new Array(24).fill(0); byDate.set(dh.date, arr); }
-      arr[dh.hour] += 1;
-    }
-  });
-  return byDate;
-}
-
 /* ---------- input: folder picker ---------- */
 var pickBtn = document.getElementById("pickBtn");
 if(!window.showDirectoryPicker){
@@ -649,7 +638,36 @@ async function walkEntry(entry, out){
 function setProgress(msg){
   var p = document.getElementById("progress");
   p.hidden = false;
-  p.textContent = msg;
+  document.getElementById("progTrack").hidden = true;
+  document.getElementById("progNums").hidden = true;
+  document.getElementById("progMsg").textContent = msg;
+}
+function nowMs(){
+  return (typeof performance !== "undefined" && performance.now)
+    ? performance.now() : Date.now();
+}
+function yieldToPaint(){
+  return new Promise(function(r){ setTimeout(r, 0); });
+}
+/* Progress with real numbers in it. A bar alone answers "how long", which is
+   the less interesting question during a scan; the request and loss counters
+   climbing are what make it visible that the page is reading YOUR logs and
+   not spinning. They come from the engine's own running totals, so the number
+   that ends up on screen is the number that was being counted. */
+function setScanProgress(done, total, st){
+  var p = document.getElementById("progress");
+  p.hidden = false;
+  document.getElementById("progTrack").hidden = false;
+  document.getElementById("progNums").hidden = false;
+  var pct = total > 0 ? Math.round(100 * done / total) : 0;
+  document.getElementById("progBar").style.width = pct + "%";
+  document.getElementById("progCount").textContent =
+    fmtInt(done) + " / " + fmtInt(total) + " files";
+  document.getElementById("progReq").textContent = fmtInt(st.requests) + " requests";
+  var loss = document.getElementById("progLoss");
+  loss.textContent = fmtInt(st.in_ttl_losses) + " in-TTL losses";
+  loss.className = st.in_ttl_losses > 0 ? "prog-loss hit" : "prog-loss";
+  document.getElementById("progMsg").textContent = "";
 }
 function showError(msg){
   var e = document.getElementById("parseErr");
@@ -657,42 +675,91 @@ function showError(msg){
   e.textContent = msg;
   document.getElementById("progress").hidden = true;
 }
+/* One pass over each file (M16).
+   Before this, the page read every file into an array and then walked that
+   array three times: the engine, the hourly census, and the fingerprint. On a
+   real log folder that is ~100 MB of strings held in memory and 14.4 s of
+   frozen UI (measured: 6.5 + 4.1 + 3.8). Now a file is read, fed to one walk
+   that serves all three, and dropped before the next is opened. The engine and
+   the fingerprint collector keep their own rules — assets/identity.js reads
+   ids by its own regexes, because it and the engine disagree about which id to
+   take and a fingerprint that shifts is a returning submitter who stops
+   matching their own row (tests/identity_test.py holds them equal). */
 async function processList(list){
   document.getElementById("parseErr").hidden = true;
   if(!list.length){
     showError("No .jsonl files found. Drop the ~/.claude/projects folder (or .jsonl files from it).");
     return;
   }
-  var files = [];
-  for(var i = 0; i < list.length; i++){
-    setProgress("Reading files… " + (i + 1) + "/" + list.length);
-    try{
-      files.push({ name: list[i].name, text: await list[i].file.text() });
-    }catch(e){ /* unreadable file: skip */ }
-    if(i % 20 === 0) await new Promise(function(r){ setTimeout(r, 0); });
-  }
-  setProgress("Parsing " + files.length + " files locally…");
-  await new Promise(function(r){ setTimeout(r, 30); });
-  var result, census;
+
+  var collector = CacheObservatoryIdentity.createCollector();
+  var scan;
   try{
-    result = CacheObservatory.parseFiles(files);
-    census = usageCensus(files);
+    scan = CacheObservatory.createScan({ census: true, onLine: collector.addLine });
   }catch(e){
-    showError("Parsing failed: " + e.message);
+    showError("Could not start the scan: " + e.message);
     return;
   }
+
+  var read = 0, unreadable = 0;
+  var lastPaint = 0;
+  setScanProgress(0, list.length, scan.stats());
+  await yieldToPaint();
+
+  for(var i = 0; i < list.length; i++){
+    var text = null;
+    try{ text = await list[i].file.text(); }
+    catch(e){ unreadable += 1; }
+    if(text !== null){
+      try{
+        scan.addFile(list[i].name, text);
+        read += 1;
+      }catch(e){
+        showError("Parsing failed on " + list[i].name + ": " + e.message);
+        return;
+      }
+      // The whole point of the streaming path: this file's text is now
+      // unreferenced and can be collected before the next one is opened.
+      text = null;
+    }
+    // Repaint on a time budget rather than every N files: files differ in size
+    // by orders of magnitude, so a fixed count either stutters or wastes turns.
+    if(nowMs() - lastPaint > 60 || i === list.length - 1){
+      setScanProgress(i + 1, list.length, scan.stats());
+      await yieldToPaint();
+      lastPaint = nowMs();
+    }
+  }
+
+  var result;
+  try{ result = scan.finish(); }
+  catch(e){ showError("Parsing failed: " + e.message); return; }
+
   // M13: the fingerprint, derived from the logs and hashed here. Only the
   // digests can leave, and only when the submit button is pressed.
-  setProgress("Fingerprinting this machine locally…");
   var fp = { count: 0, sampled: 0, anchors: [] };
-  try{ fp = await CacheObservatoryIdentity.fingerprint(files); }catch(e){ /* degrade */ }
-  setProgress("Done: " + files.length + " files · " + fmtInt(result.totals.requests) + " requests scanned.");
-  LAST = { result: result, census: census, source_version: null, detail_dropped: false,
+  try{
+    fp = await CacheObservatoryIdentity.fingerprintFromIds(collector.ids());
+  }catch(e){ /* degrade */ }
+
+  var done = "Done: " + fmtInt(read) + " files · " +
+    fmtInt(result.totals.requests) + " requests scanned.";
+  // Say it rather than swallow it: a folder the browser could not fully read
+  // produces a smaller number, and a smaller number reads as better news.
+  if(unreadable > 0){
+    done += " " + fmtInt(unreadable) + " file" + (unreadable === 1 ? "" : "s") +
+      " could not be read and " + (unreadable === 1 ? "is" : "are") +
+      " not in these figures.";
+  }
+  setProgress(done);
+
+  LAST = { result: result, census: result.census, source_version: null, detail_dropped: false,
            anchors: fp.anchors, id_count: fp.count, link_token: linkToken() };
   document.getElementById("pasteSrcNote").hidden = true;
   document.getElementById("storeRestored").hidden = true;
   // Unhide BEFORE drawing: canvases in a hidden section have zero width.
   document.getElementById("results").hidden = false;
+  autoSaveIfOn();
   renderResults();
   document.getElementById("results").scrollIntoView({ behavior: "smooth" });
 }
@@ -859,6 +926,7 @@ document.getElementById("pasteBtn").addEventListener("click", function(){
   document.getElementById("storeRestored").hidden = true;
   document.getElementById("pasteSrcNote").hidden = false;
   document.getElementById("results").hidden = false;
+  autoSaveIfOn();
   renderResults();
   document.getElementById("results").scrollIntoView({ behavior: "smooth" });
 });
@@ -1672,6 +1740,34 @@ function updateOverlapWarning(payload){
     " This does not block the submission.";
 }
 
+/* ---------- M16: saving is the default ----------
+   Kept in its own key rather than inside the run store, because "do not keep
+   my results" must survive the button that deletes the run store. Absent means
+   on: a browser that has never been told otherwise saves, which is what the
+   notice at the top of this page says before any scan starts. A storage that
+   refuses reads is reported as off, because a browser that cannot be read from
+   cannot be written to either, and claiming otherwise would be the one lie
+   this card must not tell. */
+/* AUTOSAVE:BEGIN */
+var AUTOSAVE_KEY = "cco.autosave.v1";
+function autoSaveOn(){
+  try{ return window.localStorage.getItem(AUTOSAVE_KEY) !== "off"; }
+  catch(e){ return false; }
+}
+function setAutoSave(on){
+  try{
+    if(on) window.localStorage.removeItem(AUTOSAVE_KEY);
+    else window.localStorage.setItem(AUTOSAVE_KEY, "off");
+  }catch(e){ /* refused: the checkbox still reflects this tab */ }
+}
+/* AUTOSAVE:END */
+/* Save now if that is what this browser is set to. Called at the end of every
+   path that produces a result, so "automatic" means the same thing whether the
+   numbers came from a folder or from pasted CLI output. */
+function autoSaveIfOn(){
+  if(STORE_OK && LAST && autoSaveOn()) doSave();
+}
+
 function updateStoreCard(){
   var state = document.getElementById("storeState");
   var saveBtn = document.getElementById("storeSaveBtn");
@@ -1690,6 +1786,10 @@ function updateStoreCard(){
     cmp.hidden = true;
     return;
   }
+  /* With saving on there is nothing for a save button to do, and leaving one
+     on screen would suggest the opposite — that a press is what makes a result
+     persist. It comes back the moment the box is unchecked. */
+  saveBtn.hidden = autoSaveOn();
   saveBtn.disabled = !LAST;
   var runs = storedRuns();
   var subs = storedSubmissions();
@@ -1700,7 +1800,9 @@ function updateStoreCard(){
   var token = linkToken();
   if(!runs.length && !subs.length && !token){
     state.className = "store-state off";
-    state.textContent = "Nothing is saved in this browser yet.";
+    state.textContent = autoSaveOn()
+      ? "Nothing is saved in this browser yet. The next finished scan will be kept here."
+      : "Nothing is saved in this browser, and saving is switched off.";
     clearBtn.hidden = true;
     cmp.hidden = true;
     return;
@@ -1838,8 +1940,22 @@ document.getElementById("storeSaveBtn").addEventListener("click", function(){
   openSaveModal();
 });
 
+var autoSaveBox = document.getElementById("autoSaveToggle");
+autoSaveBox.checked = autoSaveOn();
+autoSaveBox.addEventListener("change", function(){
+  setAutoSave(autoSaveBox.checked);
+  // Turning it ON keeps the result already on screen, rather than waiting for
+  // the next scan to make the checkbox mean something.
+  if(autoSaveBox.checked) autoSaveIfOn();
+  updateStoreCard();
+});
+
 document.getElementById("storeClearBtn").addEventListener("click", function(){
   if(!STORE_OK) return;
+  // Deleting and then saving again on the next scan would make this button a
+  // gesture. It switches saving off too, and the card says so.
+  setAutoSave(false);
+  autoSaveBox.checked = false;
   Store.clear();
   STATE = Store.load() || Store.emptyState();
   INC = null;

@@ -492,6 +492,55 @@ def check_subhour(data):
               % (off, bucket, ev["offsetMinutes"]))
 
 
+def check_autosave(tag, data):
+    """M16 made local saving the default. That is one boolean deciding whether a
+    stranger's diagnosis is left behind on a shared computer, so it is asserted
+    rather than eyeballed: absent means on (which the page discloses above the
+    drop zone, before any scan), only the exact string "off" turns it off, and a
+    browser that refuses storage reports off because it cannot keep anything."""
+    boxes = data.get("autosave")
+    check(isinstance(boxes, dict) and boxes, "%s: no autosave probe" % tag)
+    for page in sorted(boxes or {}):
+        a = boxes[page]
+        check(a.get("key") == "cco.autosave.v1",
+              "%s %s: the preference key is %r — it lives outside the run store "
+              "so that 'do not keep my results' outlives the delete button"
+              % (tag, page, a.get("key")))
+        for field, why in (
+            ("fresh_is_on", "a browser that was never told otherwise must save"),
+            ("off_is_off", "the stored 'off' must be obeyed"),
+            ("set_false_writes_off", "turning it off must persist"),
+            ("set_true_clears", "turning it back on must clear the marker"),
+            ("blocked_is_off",
+             "a storage that refuses reads cannot keep anything, so it must not "
+             "report saving as on"),
+            ("blocked_set_survives",
+             "a refused write must not throw out of the change handler"),
+            ("junk_is_on",
+             "only the exact string 'off' disables a documented default"),
+        ):
+            check(a.get(field) is True,
+                  "🔴 %s %s: autosave.%s is %r — %s"
+                  % (tag, page, field, a.get(field), why))
+
+
+def check_census_move(tag, data):
+    """M16: the hourly census moved from check.html into assets/parse.js so the
+    folder scan walks each file once instead of three times. The harness keeps
+    its own copy of the old rule and this compares the two — a heatmap that
+    quietly re-shaded itself would otherwise look exactly like a faster page."""
+    move = data.get("census_move")
+    check(isinstance(move, dict), "%s: no census_move probe" % tag)
+    check(move.get("equal") is True,
+          "🔴 %s: the engine's census differs from the page's original rule "
+          "(days %r vs %r, requests %r vs %r). The heatmap would re-shade."
+          % (tag, move.get("days_engine"), move.get("days_page"),
+             move.get("total_engine"), move.get("total_page")))
+    check(move.get("total_engine") == data["totals"]["requests"],
+          "🔴 %s: the census totals %r but the engine counted %r requests"
+          % (tag, move.get("total_engine"), data["totals"]["requests"]))
+
+
 def check_payload(tag, data, discriminating):
     """M12.1 invariant 7 (D3): the payload comes from the engine's UTC rows.
 
@@ -683,6 +732,8 @@ def main():
                 errors.append(str(exc))
         try:
             check_payload(tag, data, discriminating)
+            check_census_move(tag, data)
+            check_autosave(tag, data)
         except CheckFail as exc:
             errors.append(str(exc))
     if not discriminating:
