@@ -688,6 +688,46 @@ def run_runner(runner, env):
     return proc
 
 
+def select_mutations(argv):
+    """`--from ID` resumes at a mutant, `--only A,B` runs just those.
+
+    The gate boots wrangler once per contract mutant, and on Windows that
+    process occasionally dies with 0xC0000409 partway through a twenty-minute
+    run. Without a way back in, one infrastructure flake costs the whole run,
+    which is how a gate quietly stops being run at all. Whatever is skipped is
+    printed: a partial run must never be able to read as a full one.
+    """
+    start = None
+    only = None
+    for i, arg in enumerate(argv):
+        if arg == "--from" and i + 1 < len(argv):
+            start = argv[i + 1]
+        elif arg.startswith("--from="):
+            start = arg.split("=", 1)[1]
+        elif arg == "--only" and i + 1 < len(argv):
+            only = argv[i + 1]
+        elif arg.startswith("--only="):
+            only = arg.split("=", 1)[1]
+
+    ids = [m[0] for m in MUTATIONS]
+    if only is not None:
+        wanted = [x.strip() for x in only.split(",") if x.strip()]
+        unknown = [x for x in wanted if x not in ids]
+        if unknown:
+            return None, "unknown mutation id(s): " + ", ".join(unknown)
+        chosen = [m for m in MUTATIONS if m[0] in wanted]
+        return chosen, "--only %s (%d of %d; %d NOT run)" % (
+            ",".join(wanted), len(chosen), len(MUTATIONS), len(MUTATIONS) - len(chosen))
+    if start is not None:
+        if start not in ids:
+            return None, "unknown mutation id: " + start
+        at = ids.index(start)
+        chosen = MUTATIONS[at:]
+        return chosen, "--from %s (%d of %d; the %d before it were NOT run)" % (
+            start, len(chosen), len(MUTATIONS), at)
+    return list(MUTATIONS), None
+
+
 def main():
     node = probe_node()
     if node is None:
@@ -700,10 +740,22 @@ def main():
               "tree before running mutations" % SITE_DIR)
         return 2
 
+    selected, note = select_mutations(sys.argv[1:])
+    if selected is None:
+        print("FATAL: %s" % note)
+        return 2
+    if note:
+        # Loud, and repeated at the end: a run that covered part of the list
+        # must not be mistakable for one that covered all of it.
+        print("PARTIAL RUN: %s" % note)
+
     sources = {}
     for rel in {rel for _, rel, _, _, _ in MUTATIONS}:
         sources[rel] = read_target(rel)
 
+    # The anchor pre-scan stays over the WHOLE list even on a partial run: a
+    # stale anchor is a bug in the gate itself, and finding it only when that
+    # mutant happens to be selected is how it would go unnoticed.
     anchor_errors = []
     for mut_id, rel, anchor, _, _ in MUTATIONS:
         count = sources[rel].count(anchor)
@@ -723,7 +775,7 @@ def main():
 
     # Baseline: every runner must pass on the unmutated tree, otherwise the
     # verdicts below would be meaningless.
-    for runner in sorted({runner for _, _, _, _, runner in MUTATIONS}):
+    for runner in sorted({runner for _, _, _, _, runner in selected}):
         base = run_runner(runner, env)
         if base.returncode != 0:
             print("FATAL: baseline %s failed (exit %d) — fix it before mutating"
@@ -734,7 +786,7 @@ def main():
 
     survived = []
     killed = 0
-    for mut_id, rel, anchor, replacement, runner in MUTATIONS:
+    for mut_id, rel, anchor, replacement, runner in selected:
         src = sources[rel]
         mutated = src.replace(anchor, replacement, 1)
         if mutated == src:
@@ -761,14 +813,17 @@ def main():
         else:
             killed += 1
 
-    print("mutations: %d total / %d KILLED / %d SURVIVED"
-          % (len(MUTATIONS), killed, len(survived)))
+    print("mutations: %d run / %d KILLED / %d SURVIVED"
+          % (len(selected), killed, len(survived)))
     if survived:
         print("SURVIVED mutations:")
         for mut_id in survived:
             print("  - " + mut_id)
         return 1
-    print("MUT_ALL_DEFENDED")
+    if note:
+        print("MUT_PARTIAL_DEFENDED (%s)" % note)
+    else:
+        print("MUT_ALL_DEFENDED")
     return 0
 
 
