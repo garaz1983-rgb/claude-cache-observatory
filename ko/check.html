@@ -56,6 +56,21 @@ header h1{font-size:1.5rem; font-weight:700; margin:0 0 4px; letter-spacing:-.01
 header .sub{color:var(--muted); font-size:.86rem; margin:0}
 header .sub .mono{font-size:.82rem}
 .notice{font-size:.85rem; margin:18px 0 0; padding:10px 14px; border-left:3px solid var(--amber); background:var(--amber-soft); border-radius:0 6px 6px 0}
+.det{margin:16px 0 0; padding:14px 16px; border:1px solid var(--line); border-left:3px solid var(--line); border-radius:0 8px 8px 0}
+.det.ok{border-left-color:var(--ok); background:var(--ok-soft)}
+.det.warn{border-left-color:var(--amber); background:var(--amber-soft)}
+.det.bad{border-left-color:var(--crit); background:var(--crit-soft)}
+.det h3{margin:0 0 6px; font-size:.95rem}
+.det .det-lead{margin:0; font-size:.85rem; line-height:1.65}
+.det-grid{display:flex; flex-wrap:wrap; gap:22px; margin-top:13px}
+.det-tab{font-size:.8rem; min-width:200px}
+.det-tab h4{margin:0 0 5px; font-size:.72rem; letter-spacing:.03em; color:var(--muted); font-weight:600}
+.det-tab table{border-collapse:collapse}
+.det-tab td{padding:2px 14px 2px 0; vertical-align:top}
+.det-tab td.n{text-align:right; padding-right:0; font-variant-numeric:tabular-nums; color:var(--muted)}
+.det-tab td.k{font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:.77rem; word-break:break-all}
+.det-tab td.k.alien{color:var(--crit); font-weight:700}
+.det-foot{margin:11px 0 0; font-size:.78rem; color:var(--muted); line-height:1.6}
 .trust-block{margin:18px 0 0; padding:14px 16px; border-left:3px solid var(--ok); background:var(--ok-soft); border-radius:0 8px 8px 0}
 .trust-block h3{margin:0 0 8px; font-size:.92rem; font-weight:700}
 .trust-block ul{margin:0; padding-left:20px; font-size:.85rem}
@@ -296,6 +311,16 @@ a{color:inherit}
     <div class="kpi"><div class="label">유실률</div><div class="val" id="kRate">–</div><div class="note">in-TTL 유실 / 요청</div></div>
   </div>
   <p class="tz-note" id="tzNote"></p>
+
+  <!-- 탐지기 상태 (M15). 이 패널이 한정하는 수치 바로 아래에 둔다. 페이지가
+       유실을 더 못 보게 됐다면, 위의 0을 믿기 전에 읽어야 하는 내용이지
+       읽고 난 뒤에 읽을 내용이 아니다. -->
+  <div class="det" id="detBox" hidden>
+    <h3 id="detTitle"></h3>
+    <p class="det-lead" id="detLead"></p>
+    <div class="det-grid" id="detGrid"></div>
+    <p class="det-foot" id="detFoot"></p>
+  </div>
 
   <div class="card" style="margin-top:14px">
     <canvas id="daily" height="260"></canvas>
@@ -670,6 +695,59 @@ async function processList(list){
 function isCountInt(v){
   return typeof v === "number" && isFinite(v) && Math.floor(v) === v && v >= 0;
 }
+/* 인구조사 키는 평범한 태그이거나, 엔진이 없음·비정상·초과에 쓰는 괄호 리터럴
+   셋 중 하나다. 괄호가 바로 이 리터럴을 위조 불가로 만든다. 태그 charset에
+   괄호가 없으므로 로그 파일에서 나온 사유값이 리터럴을 흉내낼 수 없다.
+   붙여넣기는 인구조사가 이 페이지 밖에서 들어오는 유일한 경로라서,
+   /api/submit이 들어오는 값을 검사하는 만큼 여기서도 세게 검사한다. */
+var CENSUS_KEY_RE = /^(?:[A-Za-z0-9._-]{1,64}|\((?:invalid|none|other)\))$/;
+var CENSUS_MAX_SHOWN = 16;   // 개수 상위 12개 + 초과 버킷, 여유 포함
+
+function validateCensusObj(v, label, errs){
+  if(!isObj(v)){ errs.push(label + ": 객체여야 한다"); return null; }
+  var keys = Object.keys(v);
+  if(keys.length > CENSUS_MAX_SHOWN){
+    errs.push(label + ": 서로 다른 키가 " + CENSUS_MAX_SHOWN + "개를 넘는다");
+    return null;
+  }
+  var out = {};
+  keys.forEach(function(k){
+    if(!CENSUS_KEY_RE.test(k)){ errs.push(label + ": 평범한 태그가 아닌 키: " + k); return; }
+    if(!isCountInt(v[k])){ errs.push(label + "." + k + ": 0 이상 정수여야 한다"); return; }
+    out[k] = v[k];
+  });
+  return out;
+}
+
+/* 선택 항목이다. 없다고 오류가 아니다. 이 repo 사본보다 오래된 CLI이거나,
+   인구조사가 생기기 전에 이 브라우저가 저장한 실행 결과면 애초에 없다. */
+function validateDetector(v, errs){
+  if(v === undefined) return null;
+  if(!isObj(v)){ errs.push("detector: 객체여야 한다"); return null; }
+  var known = ["diagnosed_requests", "unknown_reasons", "cold_writes", "reasons", "versions"];
+  Object.keys(v).forEach(function(k){
+    if(known.indexOf(k) === -1) errs.push("정의되지 않은 필드: detector." + k);
+  });
+  var out = {};
+  ["diagnosed_requests", "unknown_reasons", "cold_writes"].forEach(function(k){
+    if(!isCountInt(v[k])) errs.push("detector." + k + ": 0 이상 정수여야 한다");
+    else out[k] = v[k];
+  });
+  out.reasons = validateCensusObj(v.reasons, "detector.reasons", errs);
+  out.versions = validateCensusObj(v.versions, "detector.versions", errs);
+  if(out.reasons && out.unknown_reasons !== undefined){
+    var unknown = 0;
+    Object.keys(out.reasons).forEach(function(k){
+      if(k !== "previous_message_not_found") unknown += out.reasons[k];
+    });
+    if(unknown !== out.unknown_reasons){
+      errs.push("detector.unknown_reasons " + out.unknown_reasons +
+        "이 reasons 인구조사(" + unknown + ")와 맞지 않는다");
+    }
+  }
+  return errs.length ? null : out;
+}
+
 /* CLI --json 집계의 필드별 검증 (06 스펙 E3). {script_version?, totals, daily}
    정확히 그 형태만 허용한다(/api/submit과 같은 화이트리스트 방식). */
 function validateCliJson(text){
@@ -679,7 +757,7 @@ function validateCliJson(text){
   catch(e){ return { errors: ["유효한 JSON이 아니다: " + e.message] }; }
   if(!isObj(o)) return { errors: ["최상위는 JSON 객체여야 한다 (--json으로 실행한 출력 전체를 붙여넣을 것)"] };
   Object.keys(o).forEach(function(k){
-    if(["script_version", "totals", "daily"].indexOf(k) === -1) errs.push("정의되지 않은 필드: " + k);
+    if(["script_version", "totals", "daily", "detector"].indexOf(k) === -1) errs.push("정의되지 않은 필드: " + k);
   });
   var t = o.totals;
   if(!isObj(t)){
@@ -731,6 +809,7 @@ function validateCliJson(text){
   if(sv !== undefined && (typeof sv !== "string" || sv.length === 0 || sv.length > 32 || !/^[A-Za-z0-9._-]+$/.test(sv))){
     errs.push("script_version: cli-2.1 같은 짧은 태그여야 한다");
   }
+  var det = validateDetector(o.detector, errs);
   if(errs.length) return { errors: errs };
   return {
     errors: [],
@@ -738,7 +817,8 @@ function validateCliJson(text){
     result: {
       totals: { requests: t.requests, in_ttl_losses: t.in_ttl_losses, iron_losses: t.iron_losses, wasted_tokens: t.wasted_tokens },
       daily: d.map(function(e){ return { date: e.date, requests: e.requests, losses: e.losses, wasted_tokens: e.wasted_tokens }; }),
-      events: []
+      events: [],
+      detector: det
     }
   };
 }
@@ -915,6 +995,111 @@ function updateHeatmapNote(){
   el.appendChild(document.createTextNode(t.rest));
 }
 
+/* ---------- 탐지기 상태 (M15) ----------
+   아래는 전부 textContent로 쓴다. 키는 엔진이 charset을 이미 검사했고
+   붙여넣기 경로에서 한 번 더 검사하지만, 그래도 출처는 디스크의 파일이다.
+   로그 파일에서 나온 값이 마크업으로 DOM에 들어가는 일은 없어야 한다. */
+var PMNF = "previous_message_not_found";
+
+function censusTable(title, obj, alienTest){
+  var wrap = document.createElement("div");
+  wrap.className = "det-tab";
+  var h = document.createElement("h4");
+  h.textContent = title;
+  wrap.appendChild(h);
+  var keys = Object.keys(obj || {}).sort(function(a, b){
+    return (obj[b] - obj[a]) || (a < b ? -1 : (a > b ? 1 : 0));
+  });
+  if(!keys.length){
+    var none = document.createElement("div");
+    none.textContent = "없음";
+    wrap.appendChild(none);
+    return wrap;
+  }
+  var table = document.createElement("table");
+  keys.forEach(function(k){
+    var tr = document.createElement("tr");
+    var tdk = document.createElement("td");
+    tdk.className = alienTest && alienTest(k) ? "k alien" : "k";
+    tdk.textContent = k;
+    var tdn = document.createElement("td");
+    tdn.className = "n";
+    tdn.textContent = fmtInt(obj[k]);
+    tr.appendChild(tdk);
+    tr.appendChild(tdn);
+    table.appendChild(tr);
+  });
+  wrap.appendChild(table);
+  return wrap;
+}
+
+function renderDetector(){
+  var box = document.getElementById("detBox");
+  var title = document.getElementById("detTitle");
+  var lead = document.getElementById("detLead");
+  var grid = document.getElementById("detGrid");
+  var foot = document.getElementById("detFoot");
+  grid.textContent = "";
+  foot.textContent = "";
+  box.hidden = false;
+
+  var d = (LAST && LAST.result && isObj(LAST.result.detector)) ? LAST.result.detector : null;
+  if(!d){
+    box.className = "det";
+    title.textContent = "탐지기 상태: 이 소스에는 인구조사가 없다";
+    lead.textContent = "위 수치는 이 페이지가 서버의 캐시 미스 사유 이름을 알아보는 " +
+      "만큼만 믿을 수 있다. 그런데 이 결과는 어떤 이름을 봤는지 보고하지 않는 소스에서 " +
+      "왔다. 이 repo 사본보다 오래된 CLI이거나, 인구조사가 생기기 전에 이 브라우저가 " +
+      "저장해 둔 실행 결과다. 폴더를 다시 스캔하면 나온다.";
+    return;
+  }
+
+  var t = LAST.result.totals;
+  var reasons = isObj(d.reasons) ? d.reasons : {};
+
+  if(d.unknown_reasons > 0){
+    box.className = "det bad";
+    title.textContent = "서버가 이 페이지는 모르는 사유값을 찍고 있다";
+    lead.textContent = "위에서 센 유실은 전부 " + PMNF + " 하나만 보고 판정한 것이다. " +
+      "이 스캔에는 다른 사유값을 단 요청이 " + fmtInt(d.unknown_reasons) + "건 있고, " +
+      "그 " + fmtInt(d.unknown_reasons) + "건은 무엇이었든 판정 자체가 되지 않고 통째로 " +
+      "건너뛰어졌다. 위 수치는 총계가 아니라 하한으로 읽어야 한다. 못 알아본 사유값은 " +
+      "이슈 스레드에 알려 달라.";
+  } else if(d.diagnosed_requests === 0 && t.requests > 0){
+    box.className = "det warn";
+    title.textContent = "이 스캔의 어느 레코드에도 캐시 미스 사유가 없었다";
+    lead.textContent = "아무것도 안 깨졌거나, 진단 필드가 옮겨 갔거나 둘 중 하나다. " +
+      "이 페이지는 그 둘을 구분하지 못한다. 그러니 위의 0은 '유실 없음'이 아니라 " +
+      "'근거 없음'으로 읽어야 한다. 참고로 이 스캔에서 캐시를 쓰기만 하고 읽지는 않은 " +
+      "요청이 " + fmtInt(d.cold_writes) + "건이다.";
+  } else {
+    box.className = "det ok";
+    title.textContent = "탐지기 상태: 이 페이지가 아는 사유값만 나타났다";
+    lead.textContent = "진단이 붙은 요청 " + fmtInt(d.diagnosed_requests) + "건이 전부 " +
+      PMNF + "다. 이름을 못 알아봐서 건너뛴 건은 없다.";
+  }
+
+  grid.appendChild(censusTable("관측된 cache_miss_reason 값", reasons, function(k){
+    return k !== PMNF;
+  }));
+  grid.appendChild(censusTable("이 스캔의 클라이언트 버전", isObj(d.versions) ? d.versions : {}, null));
+
+  // 화면에 실제로 있는 기호만 설명한다. 고정 범례를 깔면 각주 전체를 건너뛰는
+  // 버릇이 생기는데, 정작 단서가 그 각주 안에 있다.
+  var parts = ["세기만 한다. 이 패널 위의 어떤 수치도 여기에 기대지 않는다."];
+  if(d.unknown_reasons > 0) parts.push("빨간 키는 이 빌드에 판정 규칙이 없는 값이다.");
+  var shown = Object.keys(reasons).concat(Object.keys(isObj(d.versions) ? d.versions : {}));
+  var legend = [];
+  if(shown.indexOf("(none)") !== -1) legend.push("(none)은 레코드가 값을 안 남긴 것");
+  if(shown.indexOf("(invalid)") !== -1) legend.push("(invalid)는 평범한 태그가 아닌 값");
+  if(shown.indexOf("(other)") !== -1) legend.push("(other)는 상위 12개 밖 전부");
+  if(legend.length) parts.push(legend.join(", ") + ".");
+  parts.push("cold_writes = " + fmtInt(d.cold_writes) + ": 캐시를 쓰면서 읽기는 하나도 " +
+    "안 한 요청이다. 세션 시작에서는 정상이고, 유실로 세지 않는다.");
+  parts.push("인구조사는 스캔한 파일 전체가 대상이지, 아래에서 고르는 제출 기간만이 아니다.");
+  foot.textContent = parts.join(" ");
+}
+
 function renderResults(){
   if(!LAST) return;
   rebuildView();
@@ -925,6 +1110,7 @@ function renderResults(){
   document.getElementById("kTokens").textContent = fmtTok(t.wasted_tokens);
   document.getElementById("kRate").textContent = t.requests > 0 ? (100 * t.in_ttl_losses / t.requests).toFixed(2) + "%" : "–";
   updateTzNote();
+  renderDetector();
   drawCharts();
   setupRange();
   updateSubmitCard();

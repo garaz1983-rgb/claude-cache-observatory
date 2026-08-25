@@ -56,6 +56,21 @@ header h1{font-size:1.5rem; font-weight:700; margin:0 0 4px; letter-spacing:-.01
 header .sub{color:var(--muted); font-size:.86rem; margin:0}
 header .sub .mono{font-size:.82rem}
 .notice{font-size:.85rem; margin:18px 0 0; padding:10px 14px; border-left:3px solid var(--amber); background:var(--amber-soft); border-radius:0 6px 6px 0}
+.det{margin:16px 0 0; padding:14px 16px; border:1px solid var(--line); border-left:3px solid var(--line); border-radius:0 8px 8px 0}
+.det.ok{border-left-color:var(--ok); background:var(--ok-soft)}
+.det.warn{border-left-color:var(--amber); background:var(--amber-soft)}
+.det.bad{border-left-color:var(--crit); background:var(--crit-soft)}
+.det h3{margin:0 0 6px; font-size:.95rem}
+.det .det-lead{margin:0; font-size:.85rem; line-height:1.55}
+.det-grid{display:flex; flex-wrap:wrap; gap:22px; margin-top:13px}
+.det-tab{font-size:.8rem; min-width:200px}
+.det-tab h4{margin:0 0 5px; font-size:.72rem; letter-spacing:.05em; text-transform:uppercase; color:var(--muted); font-weight:600}
+.det-tab table{border-collapse:collapse}
+.det-tab td{padding:2px 14px 2px 0; vertical-align:top}
+.det-tab td.n{text-align:right; padding-right:0; font-variant-numeric:tabular-nums; color:var(--muted)}
+.det-tab td.k{font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:.77rem; word-break:break-all}
+.det-tab td.k.alien{color:var(--crit); font-weight:700}
+.det-foot{margin:11px 0 0; font-size:.78rem; color:var(--muted); line-height:1.5}
 .trust-block{margin:18px 0 0; padding:14px 16px; border-left:3px solid var(--ok); background:var(--ok-soft); border-radius:0 8px 8px 0}
 .trust-block h3{margin:0 0 8px; font-size:.92rem; font-weight:700}
 .trust-block ul{margin:0; padding-left:20px; font-size:.85rem}
@@ -300,6 +315,16 @@ a{color:inherit}
     <div class="kpi"><div class="label">Loss rate</div><div class="val" id="kRate">–</div><div class="note">in-TTL losses / requests</div></div>
   </div>
   <p class="tz-note" id="tzNote"></p>
+
+  <!-- Detector health (M15). Sits directly under the numbers it qualifies:
+       if the page can no longer see losses, that has to be read before the
+       zero above is believed, not after. -->
+  <div class="det" id="detBox" hidden>
+    <h3 id="detTitle"></h3>
+    <p class="det-lead" id="detLead"></p>
+    <div class="det-grid" id="detGrid"></div>
+    <p class="det-foot" id="detFoot"></p>
+  </div>
 
   <div class="card" style="margin-top:14px">
     <canvas id="daily" height="260"></canvas>
@@ -676,6 +701,60 @@ async function processList(list){
 function isCountInt(v){
   return typeof v === "number" && isFinite(v) && Math.floor(v) === v && v >= 0;
 }
+/* A census key is a plain tag, or one of the three bracketed literals the
+   engines use for missing/unprintable/overflow. The brackets are what make
+   the literals unforgeable: the tag charset has no parentheses, so a reason
+   value out of a log file can never impersonate one. Pasted text is the one
+   place a census arrives from outside this page, so it is checked as hard
+   here as /api/submit checks it on the way in. */
+var CENSUS_KEY_RE = /^(?:[A-Za-z0-9._-]{1,64}|\((?:invalid|none|other)\))$/;
+var CENSUS_MAX_SHOWN = 16;   // 12 by count + the overflow bucket, plus slack
+
+function validateCensusObj(v, label, errs){
+  if(!isObj(v)){ errs.push(label + ": must be an object"); return null; }
+  var keys = Object.keys(v);
+  if(keys.length > CENSUS_MAX_SHOWN){
+    errs.push(label + ": more than " + CENSUS_MAX_SHOWN + " distinct keys");
+    return null;
+  }
+  var out = {};
+  keys.forEach(function(k){
+    if(!CENSUS_KEY_RE.test(k)){ errs.push(label + ": key is not a plain tag: " + k); return; }
+    if(!isCountInt(v[k])){ errs.push(label + "." + k + ": must be a non-negative integer"); return; }
+    out[k] = v[k];
+  });
+  return out;
+}
+
+/* Optional. Absent is not an error: a CLI older than this repo's copy, or a
+   run this browser saved before the census existed, simply has none. */
+function validateDetector(v, errs){
+  if(v === undefined) return null;
+  if(!isObj(v)){ errs.push("detector: must be an object"); return null; }
+  var known = ["diagnosed_requests", "unknown_reasons", "cold_writes", "reasons", "versions"];
+  Object.keys(v).forEach(function(k){
+    if(known.indexOf(k) === -1) errs.push("unexpected field: detector." + k);
+  });
+  var out = {};
+  ["diagnosed_requests", "unknown_reasons", "cold_writes"].forEach(function(k){
+    if(!isCountInt(v[k])) errs.push("detector." + k + ": must be a non-negative integer");
+    else out[k] = v[k];
+  });
+  out.reasons = validateCensusObj(v.reasons, "detector.reasons", errs);
+  out.versions = validateCensusObj(v.versions, "detector.versions", errs);
+  if(out.reasons && out.unknown_reasons !== undefined){
+    var unknown = 0;
+    Object.keys(out.reasons).forEach(function(k){
+      if(k !== "previous_message_not_found") unknown += out.reasons[k];
+    });
+    if(unknown !== out.unknown_reasons){
+      errs.push("detector.unknown_reasons " + out.unknown_reasons +
+        " does not match the reasons census (" + unknown + ")");
+    }
+  }
+  return errs.length ? null : out;
+}
+
 /* Field-by-field validation of the CLI's --json aggregate (06 spec, E3).
    Accepts exactly {script_version?, totals, daily} — same whitelist spirit
    as /api/submit. Returns {errors} or {errors:[], version, result}. */
@@ -686,7 +765,7 @@ function validateCliJson(text){
   catch(e){ return { errors: ["Not valid JSON: " + e.message] }; }
   if(!isObj(o)) return { errors: ["Top level must be a JSON object (run the script with --json and paste its whole output)"] };
   Object.keys(o).forEach(function(k){
-    if(["script_version", "totals", "daily"].indexOf(k) === -1) errs.push("unexpected field: " + k);
+    if(["script_version", "totals", "daily", "detector"].indexOf(k) === -1) errs.push("unexpected field: " + k);
   });
   var t = o.totals;
   if(!isObj(t)){
@@ -738,6 +817,7 @@ function validateCliJson(text){
   if(sv !== undefined && (typeof sv !== "string" || sv.length === 0 || sv.length > 32 || !/^[A-Za-z0-9._-]+$/.test(sv))){
     errs.push("script_version: must be a short tag like cli-2.1");
   }
+  var det = validateDetector(o.detector, errs);
   if(errs.length) return { errors: errs };
   return {
     errors: [],
@@ -745,7 +825,8 @@ function validateCliJson(text){
     result: {
       totals: { requests: t.requests, in_ttl_losses: t.in_ttl_losses, iron_losses: t.iron_losses, wasted_tokens: t.wasted_tokens },
       daily: d.map(function(e){ return { date: e.date, requests: e.requests, losses: e.losses, wasted_tokens: e.wasted_tokens }; }),
-      events: []
+      events: [],
+      detector: det
     }
   };
 }
@@ -933,6 +1014,116 @@ function updateHeatmapNote(){
   el.appendChild(document.createTextNode(t.rest));
 }
 
+/* ---------- detector health (M15) ----------
+   Everything below is written with textContent. The keys are already
+   charset-checked by the engines and re-checked on the paste path, but they
+   still originate in a file on disk, and a value out of a log file must
+   never reach the DOM as markup. */
+var PMNF = "previous_message_not_found";
+
+function censusTable(title, obj, alienTest){
+  var wrap = document.createElement("div");
+  wrap.className = "det-tab";
+  var h = document.createElement("h4");
+  h.textContent = title;
+  wrap.appendChild(h);
+  var keys = Object.keys(obj || {}).sort(function(a, b){
+    return (obj[b] - obj[a]) || (a < b ? -1 : (a > b ? 1 : 0));
+  });
+  if(!keys.length){
+    var none = document.createElement("div");
+    none.textContent = "none";
+    wrap.appendChild(none);
+    return wrap;
+  }
+  var table = document.createElement("table");
+  keys.forEach(function(k){
+    var tr = document.createElement("tr");
+    var tdk = document.createElement("td");
+    tdk.className = alienTest && alienTest(k) ? "k alien" : "k";
+    tdk.textContent = k;
+    var tdn = document.createElement("td");
+    tdn.className = "n";
+    tdn.textContent = fmtInt(obj[k]);
+    tr.appendChild(tdk);
+    tr.appendChild(tdn);
+    table.appendChild(tr);
+  });
+  wrap.appendChild(table);
+  return wrap;
+}
+
+function renderDetector(){
+  var box = document.getElementById("detBox");
+  var title = document.getElementById("detTitle");
+  var lead = document.getElementById("detLead");
+  var grid = document.getElementById("detGrid");
+  var foot = document.getElementById("detFoot");
+  grid.textContent = "";
+  foot.textContent = "";
+  box.hidden = false;
+
+  var d = (LAST && LAST.result && isObj(LAST.result.detector)) ? LAST.result.detector : null;
+  if(!d){
+    box.className = "det";
+    title.textContent = "Detector health: this source carries no census";
+    lead.textContent = "The numbers above are only as good as this page's ability to " +
+      "recognise the server's own name for a cache miss, and this result came from a " +
+      "source that does not report which names it saw: a CLI older than the one in this " +
+      "repo, or a run saved in this browser before the census existed. Scanning the " +
+      "folder again produces it.";
+    return;
+  }
+
+  var t = LAST.result.totals;
+  var reasons = isObj(d.reasons) ? d.reasons : {};
+  var known = reasons[PMNF] || 0;
+
+  if(d.unknown_reasons > 0){
+    box.className = "det bad";
+    title.textContent = "The server stamped a reason this page does not recognise";
+    lead.textContent = "Every loss counted above was judged from " + PMNF + " alone. " +
+      fmtInt(d.unknown_reasons) + " request" + (d.unknown_reasons === 1 ? "" : "s") +
+      " in this scan carry a different reason, and not one of them could be judged — " +
+      "they were skipped entirely, whatever they were. Treat the loss figures above as " +
+      "a floor, not a total, and report the unrecognised value in the issue thread.";
+  } else if(d.diagnosed_requests === 0 && t.requests > 0){
+    box.className = "det warn";
+    title.textContent = "Not one record in this scan carried a cache-miss reason";
+    lead.textContent = "Either nothing missed, or the diagnostic moved. This page cannot " +
+      "tell those two apart, so read the zero above as no evidence rather than as no " +
+      "losses. For context, " + fmtInt(d.cold_writes) + " request" +
+      (d.cold_writes === 1 ? "" : "s") + " in this scan wrote cache and read none back.";
+  } else {
+    box.className = "det ok";
+    title.textContent = "Detector health: the only reason present is the one this page knows";
+    lead.textContent = "All " + fmtInt(d.diagnosed_requests) + " diagnosed request" +
+      (d.diagnosed_requests === 1 ? "" : "s") + " carry " + PMNF + ", so nothing was " +
+      "skipped for wearing a name this page cannot read.";
+  }
+
+  grid.appendChild(censusTable("cache_miss_reason values seen", reasons, function(k){
+    return k !== PMNF;
+  }));
+  grid.appendChild(censusTable("client versions in this scan", isObj(d.versions) ? d.versions : {}, null));
+
+  // Explain only the symbols actually on screen. A fixed legend would teach
+  // the reader to skip the whole footnote, which is where the caveat lives.
+  var parts = ["Counting only — no figure above this panel depends on it."];
+  if(d.unknown_reasons > 0) parts.push("Red keys are values this build has no judgment rule for.");
+  var shown = Object.keys(reasons).concat(Object.keys(isObj(d.versions) ? d.versions : {}));
+  var legend = [];
+  if(shown.indexOf("(none)") !== -1) legend.push("(none) = the record named none");
+  if(shown.indexOf("(invalid)") !== -1) legend.push("(invalid) = not a plain tag");
+  if(shown.indexOf("(other)") !== -1) legend.push("(other) = everything past the twelfth most common");
+  if(legend.length) parts.push(legend.join("; ") + ".");
+  parts.push("cold_writes = " + fmtInt(d.cold_writes) + ": requests that wrote cache while " +
+    "reading none back, normal at the start of a session and never counted as a loss.");
+  parts.push("The census covers every file scanned, not only the period you may pick " +
+    "for submission below.");
+  foot.textContent = parts.join(" ");
+}
+
 function renderResults(){
   if(!LAST) return;
   rebuildView();
@@ -943,6 +1134,7 @@ function renderResults(){
   document.getElementById("kTokens").textContent = fmtTok(t.wasted_tokens);
   document.getElementById("kRate").textContent = t.requests > 0 ? (100 * t.in_ttl_losses / t.requests).toFixed(2) + "%" : "–";
   updateTzNote();
+  renderDetector();
   drawCharts();
   setupRange();
   updateSubmitCard();
