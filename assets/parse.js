@@ -15,6 +15,16 @@
  *       expired: everything else — legitimate expiry, NOT a loss.
  *   - wasted_tokens = cache_creation_input_tokens of each in-TTL-lost request.
  *
+ * Detector census (M15) — counting, never judgment. The rules above ask one
+ * yes/no question per request ("is the reason PMNF?"), and everything that
+ * answers no falls into one silent bucket that mixes two very different
+ * things: records carrying no cache-miss diagnostic at all (the normal case)
+ * and records carrying a reason this build does not recognise (the dangerous
+ * one). If the server ever renames the reason, every loss lands in that
+ * bucket and the page reports a confident zero. The census splits the bucket
+ * open so the page can say "I no longer know" instead of "nothing happened".
+ * It changes no total and no daily row.
+ *
  * Input : array of {name, text} — one entry per *.jsonl file (name may carry
  *         a relative path; a "subagents" path segment marks a subagent file —
  *         path-only classification, same as the CLI SSOT).
@@ -38,6 +48,17 @@
   var MAIN_TTL_SECONDS = 1800;
   var SUBAGENT_TTL_SECONDS = 300;
   var IRON_SECONDS = 300;
+
+  /* Census keys reach a public JSON file, so a log file must never be able to
+     put free text there: a value is kept verbatim only if it matches this
+     charset, and anything else is counted under a fixed literal. The three
+     literals below contain parentheses, which the charset excludes, so no
+     real reason or version string can ever collide with one. */
+  var CENSUS_KEY_RE = /^[A-Za-z0-9._-]{1,64}$/;
+  var CENSUS_MAX_KEYS = 12;
+  var KEY_INVALID = "(invalid)";
+  var KEY_MISSING = "(none)";
+  var KEY_OTHER = "(other)";
 
   function isPlainObject(v) {
     return v !== null && typeof v === "object" && !Array.isArray(v);
@@ -88,6 +109,36 @@
     }
   }
 
+  function censusAdd(map, raw, missingIsKey) {
+    var key;
+    if (raw === null || raw === undefined) {
+      if (!missingIsKey) return;
+      key = KEY_MISSING;
+    } else {
+      key = (typeof raw === "string" && CENSUS_KEY_RE.test(raw)) ? raw : KEY_INVALID;
+    }
+    map.set(key, (map.get(key) || 0) + 1);
+  }
+
+  // Deterministic top-N: count desc, then key asc. Sorting rather than
+  // truncating on insertion order is what lets the two engines agree — they
+  // walk the same files in different orders, and only the tally is shared.
+  function censusOut(map) {
+    var pairs = [];
+    map.forEach(function (count, key) { pairs.push([key, count]); });
+    pairs.sort(function (a, b) {
+      return (b[1] - a[1]) || (a[0] < b[0] ? -1 : (a[0] > b[0] ? 1 : 0));
+    });
+    var out = {};
+    var other = 0;
+    for (var i = 0; i < pairs.length; i++) {
+      if (i < CENSUS_MAX_KEYS) out[pairs[i][0]] = pairs[i][1];
+      else other += pairs[i][1];
+    }
+    if (other > 0) out[KEY_OTHER] = (out[KEY_OTHER] || 0) + other;
+    return out;
+  }
+
   function parseFiles(files) {
     if (!Array.isArray(files)) {
       throw new TypeError("parseFiles expects an array of {name, text}");
@@ -98,6 +149,9 @@
     var totals = { requests: 0, in_ttl_losses: 0, iron_losses: 0, wasted_tokens: 0 };
     var dailyMap = new Map();
     var events = [];
+    var reasonCensus = new Map();
+    var versionCensus = new Map();
+    var detector = { diagnosed_requests: 0, unknown_reasons: 0, cold_writes: 0 };
 
     for (var fi = 0; fi < files.length; fi++) {
       var file = isPlainObject(files[fi]) ? files[fi] : {};
@@ -143,14 +197,36 @@
         // smuggle a string here and ride it into the DOM (XSS vector).
         var cc = u.cache_creation_input_tokens;
         if (typeof cc !== "number" || !isFinite(cc) || cc < 0) cc = 0;
+        var cr = u.cache_read_input_tokens;
+        if (typeof cr !== "number" || !isFinite(cr) || cr < 0) cr = 0;
         byrid.set(rid, {
           rid: rid,
           epochMs: ts.epochMs,
           offsetMinutes: ts.offsetMinutes,
           cc: cc,
+          cr: cr,
+          version: o.version === undefined ? null : o.version,
           rtype: rtype,
           timestamp: o.timestamp
         });
+      });
+
+      /* Census pass. Deliberately its own loop over the same deduped records:
+         the judgment loop below is the SSOT-mirrored code and stays untouched,
+         so a future reader can see at a glance that counting never feeds back
+         into classification. Runs after the line walk, so rtype here is the
+         back-filled final value, not whatever the first record happened to
+         carry. Order does not matter — censusOut() sorts. */
+      byrid.forEach(function (r) {
+        censusAdd(versionCensus, r.version, true);
+        if (r.rtype !== null && r.rtype !== undefined) {
+          censusAdd(reasonCensus, r.rtype, false);
+          detector.diagnosed_requests += 1;
+          if (r.rtype !== PMNF_REASON) detector.unknown_reasons += 1;
+        }
+        // A full context write with nothing read back. Normal at session
+        // start; it is only ever context for the reader, never a loss.
+        if (r.cc > 0 && r.cr === 0) detector.cold_writes += 1;
       });
 
       var isSub = isSubByName;
@@ -215,7 +291,9 @@
       return a.date < b.date ? -1 : (a.date > b.date ? 1 : 0);
     });
 
-    return { totals: totals, daily: daily, events: events };
+    detector.reasons = censusOut(reasonCensus);
+    detector.versions = censusOut(versionCensus);
+    return { totals: totals, daily: daily, events: events, detector: detector };
   }
 
   /* ---------- submission range helpers (payload shaping, not judgment) -----
