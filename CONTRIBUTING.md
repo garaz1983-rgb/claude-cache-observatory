@@ -47,9 +47,21 @@ Checklist for a page change:
 - idle gap to the previous request in the same file: in-TTL when under 1800 s (main) / 300 s (subagent, marked by a `subagents` path segment); iron when under 300 s; anything longer is a legitimate expiry and not a loss;
 - wasted tokens = `cache_creation_input_tokens` of each in-TTL-lost request.
 
+Since M15 both engines also emit a `detector` block: a census of every
+`cache_miss_reason` value seen, every client `version`, and the requests that
+wrote cache while reading none back. It is **counting, not judgment** — it runs
+as its own loop over the same deduped records so that it is visible at a glance
+that it cannot feed back into classification, and no total or daily row depends
+on it. It exists because the rules above depend on one string: rename it
+server-side and every loss disappears into the "not a candidate" bucket while
+the page prints a confident zero. The census splits that bucket so the page can
+say "I no longer know" instead of "nothing happened". `tests/parity_check.py`
+compares the whole block between the engines AND against hand-computed
+expectations, because agreement alone would not catch a mistake made in both.
+
 **If you change a rule in one engine you must change the other in the same commit**, and `tests/parity_check.py` must pass. Output-only changes (like the CLI's `--json` shaping) are fine as long as the judgment loop is untouched, but state that explicitly in the commit message.
 
-The check page's paste fallback consumes the CLI's `--json` output (`script_version`, `totals`, `daily`). If that shape changes, update the paste validator in both `check.html` and `ko/check.html` and this note.
+The check page's paste fallback consumes the CLI's `--json` output (`script_version`, `totals`, `daily`, `detector`). If that shape changes, update the paste validator in both `check.html` and `ko/check.html` and this note.
 
 ## assets/store.js and the local save
 

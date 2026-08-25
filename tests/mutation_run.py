@@ -94,6 +94,10 @@ IDENTITY_JS_REL = "assets/identity.js"
 CHECK_HTML_REL = "check.html"
 CHECK_HTML_KO_REL = "ko/check.html"
 VALIDATE_PY_REL = "tests/dataset_validate.py"
+# M15. The CLI is half the parity contract and had never been mutated:
+# until now its only logic was the untouched v2.1 judgment loop, which
+# the parse.js mutants already exercise from the other side.
+CLI_PY_REL = "scripts/check_cache_loss.py"
 
 NODE_FALLBACKS = [
     r"C:\Program Files\nodejs\node.exe",
@@ -514,6 +518,72 @@ MUTATIONS = [
     ("C51_payload_drops_token_ko", CHECK_HTML_KO_REL,
      '  if(typeof LAST.link_token === "string" && LAST.link_token) payload.token = LAST.link_token;',
      "  void 0;", "localtime"),
+    # -- M15: the detector census. Everything here is COUNTING, so every one of
+    # these mutants is killed by the two engines disagreeing, or by both
+    # disagreeing with tests/fixtures_detector's hand-computed expectation.
+    # "Report a confident zero on the day the server renames the reason."
+    ("D01_census_skips_unknown_reasons", PARSE_JS_REL,
+     "          censusAdd(reasonCensus, r.rtype, false);",
+     "          if (r.rtype === PMNF_REASON) censusAdd(reasonCensus, r.rtype, false);",
+     "parity"),
+    ("D02_unknown_counter_dead", PARSE_JS_REL,
+     "          if (r.rtype !== PMNF_REASON) detector.unknown_reasons += 1;",
+     "          if (false) detector.unknown_reasons += 1;", "parity"),
+    ("D03_cold_write_ignores_the_read", PARSE_JS_REL,
+     "        if (r.cc > 0 && r.cr === 0) detector.cold_writes += 1;",
+     "        if (r.cc > 0) detector.cold_writes += 1;", "parity"),
+    # The charset is what stops a log file putting free text into a public
+    # file. fixtures_detector carries the reason "not a tag!" for this.
+    ("D04_census_charset_relaxed", PARSE_JS_REL,
+     "  var CENSUS_KEY_RE = /^[A-Za-z0-9._-]{1,64}$/;",
+     "  var CENSUS_KEY_RE = /^.{1,64}$/;", "parity"),
+    ("D05_missing_version_not_counted", PARSE_JS_REL,
+     "        censusAdd(versionCensus, r.version, true);",
+     "        censusAdd(versionCensus, r.version, false);", "parity"),
+    # Sorting by count first is what makes the two engines agree at all: they
+    # walk files in different orders, so insertion order is not shared.
+    ("D06_census_sort_ignores_count", PARSE_JS_REL,
+     "      return (b[1] - a[1]) || (a[0] < b[0] ? -1 : (a[0] > b[0] ? 1 : 0));",
+     "      return (a[0] < b[0] ? -1 : (a[0] > b[0] ? 1 : 0));", "parity"),
+    ("D07_census_cap_lifted", PARSE_JS_REL,
+     "  var CENSUS_MAX_KEYS = 12;", "  var CENSUS_MAX_KEYS = 99;", "parity"),
+    # The same two rules on the CLI side of the parity contract.
+    ("D08_cli_census_charset_relaxed", CLI_PY_REL,
+     'CENSUS_KEY_RE = re.compile(r"^[A-Za-z0-9._-]{1,64}$")',
+     'CENSUS_KEY_RE = re.compile(r"^.{1,64}$")', "parity"),
+    ("D09_cli_missing_version_not_counted", CLI_PY_REL,
+     "        census_add(version_census, ver, True)",
+     "        census_add(version_census, ver, False)", "parity"),
+
+    # -- M15: the published vocabulary. These strings are the only part of the
+    # public dataset that begins as free text on a stranger's disk, so the
+    # mutants below are the ones that would put it there.
+    # "Publish whatever string was in someone's log file."
+    ("D10_vocabulary_charset_relaxed", SUBMIT_JS_REL,
+     "const CENSUS_KEY_RE = /^(?:[A-Za-z0-9._-]{1,64}|\((?:invalid|none|other)\))$/;",
+     "const CENSUS_KEY_RE = /^.{1,200}$/;", "contract"),
+    ("D11_vocabulary_cap_lifted", SUBMIT_JS_REL,
+     "  if (v.length > MAX_CENSUS_KEYS) {", "  if (false) {", "contract"),
+    ("D12_vocabulary_duplicates_allowed", SUBMIT_JS_REL,
+     '    if (seen.has(v[i])) errors.push(label + "[" + i + "]: duplicate entry");',
+     "    void 0;", "contract"),
+    ("D13_vocabulary_undefined_field_allowed", SUBMIT_JS_REL,
+     "        if (DETECTOR_FIELDS.indexOf(key) === -1) {",
+     "        if (false) {", "contract"),
+    # The published order is the server's, never the submitter's.
+    ("D14_vocabulary_not_sorted", SUBMIT_JS_REL,
+     "      reasons: body.detector.reasons.slice().sort(),",
+     "      reasons: body.detector.reasons.slice(),", "contract"),
+    # Absent and empty are different claims: "never reported" vs "looked and
+    # met none". Collapsing them makes the front page's coverage line a lie.
+    ("D15_absent_vocabulary_stored_anyway", SUBMIT_JS_REL,
+     "  if (fields.detector) rec.detector = fields.detector;",
+     "  rec.detector = fields.detector;", "contract"),
+    # A rename has to be visible as a CHANGE. A row that keeps every name it
+    # ever saw can never show one going away.
+    ("D16_merge_keeps_the_old_vocabulary", SUBMIT_JS_REL,
+     "    detector: incoming.detector",
+     "    detector: existing.detector || incoming.detector", "contract"),
 ]
 
 

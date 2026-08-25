@@ -376,7 +376,7 @@ a{color:inherit}
 
   <section id="submitSection">
     <h2>3 · Share your aggregate (optional)</h2>
-    <p class="desc">Exactly the JSON shown below is sent: period, totals, daily counts and the one-way fingerprint hashes that keep your machine to a single row. Never your logs, file paths, session contents or per-event details. Narrowing the shared period recomputes the totals for that window. <b>The days in this card are UTC days</b>, unlike the screens above, which are in your own timezone: submissions from many countries are summed day by day, and cutting each one by its own local date would scramble the fleet's daily totals. The dates in the picker below are therefore the UTC dates that will be sent.</p>
+    <p class="desc">Exactly the JSON shown below is sent: period, totals, daily counts, the <b>names</b> of the cache-miss reasons and client versions your logs carried (the names only, never how many of each), and the one-way fingerprint hashes that keep your machine to a single row. Never your logs, file paths, session contents or per-event details. Narrowing the shared period recomputes the totals for that window. <b>The days in this card are UTC days</b>, unlike the screens above, which are in your own timezone: submissions from many countries are summed day by day, and cutting each one by its own local date would scramble the fleet's daily totals. The dates in the picker below are therefore the UTC dates that will be sent.</p>
     <div class="card">
       <div class="range-box" id="subRange" hidden>
         <div class="range-head">Shared period</div>
@@ -1272,6 +1272,18 @@ function buildSubmitPayload(){
      honest degradation the card above describes. */
   if(Array.isArray(LAST.anchors) && LAST.anchors.length) payload.anchors = LAST.anchors.slice(0, 16);
   if(typeof LAST.link_token === "string" && LAST.link_token) payload.token = LAST.link_token;
+  /* M15 detector vocabulary. Like identity, this is about the MACHINE and not
+     the window: the census covers every file scanned, so none of its COUNTS
+     are sent — only the names, which have nothing to reconcile against the
+     narrowed totals above. An empty list is a real answer (looked, found
+     none) and is not the same as sending nothing at all. */
+  var det = LAST.result.detector;
+  if(det && typeof det === "object"){
+    payload.detector = {
+      reasons: Object.keys(det.reasons || {}).sort().slice(0, 16),
+      versions: Object.keys(det.versions || {}).sort().slice(0, 16)
+    };
+  }
   return payload;
 }
 /* SUBMIT-PAYLOAD:END */

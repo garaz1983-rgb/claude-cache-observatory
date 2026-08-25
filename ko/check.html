@@ -372,7 +372,7 @@ a{color:inherit}
 
   <section id="submitSection">
     <h2>3 · 관측소에 집계 공유하기 (선택)</h2>
-    <p class="desc">전송되는 것은 아래 JSON <b>전문 그대로</b>다. 기간·총계·일별 카운트, 그리고 이 기계를 한 행으로 유지하는 단방향 지문 해시뿐. 로그·파일 경로·세션 내용·건별 상세는 절대 전송되지 않는다. 공유 기간을 좁히면 총계도 그 기간으로 다시 계산된다. <b>이 카드의 날짜는 위 화면과 달리 UTC 기준</b>이다. 여러 나라의 제출을 날짜별로 더하는 자리라, 각자의 현지 날짜로 자르면 전체 일별 합계가 어긋나기 때문이다. 아래 기간 선택도 실제로 전송될 UTC 날짜를 보여 준다.</p>
+    <p class="desc">전송되는 것은 아래 JSON <b>전문 그대로</b>다. 기간·총계·일별 카운트, 로그에 있던 캐시 미스 사유값과 클라이언트 버전의 <b>이름</b>(이름만 보내고 각각 몇 건인지는 보내지 않는다), 그리고 이 기계를 한 행으로 유지하는 단방향 지문 해시뿐. 로그·파일 경로·세션 내용·건별 상세는 절대 전송되지 않는다. 공유 기간을 좁히면 총계도 그 기간으로 다시 계산된다. <b>이 카드의 날짜는 위 화면과 달리 UTC 기준</b>이다. 여러 나라의 제출을 날짜별로 더하는 자리라, 각자의 현지 날짜로 자르면 전체 일별 합계가 어긋나기 때문이다. 아래 기간 선택도 실제로 전송될 UTC 날짜를 보여 준다.</p>
     <div class="card">
       <div class="range-box" id="subRange" hidden>
         <div class="range-head">공유 기간</div>
@@ -1243,6 +1243,18 @@ function buildSubmitPayload(){
      그게 위 카드가 설명하는 정직한 열화다. */
   if(Array.isArray(LAST.anchors) && LAST.anchors.length) payload.anchors = LAST.anchors.slice(0, 16);
   if(typeof LAST.link_token === "string" && LAST.link_token) payload.token = LAST.link_token;
+  /* M15 탐지기 어휘. 신원과 마찬가지로 기간이 아니라 기계에 대한 정보다.
+     인구조사는 스캔한 파일 전체가 대상이라서 개수는 하나도 보내지 않고
+     이름만 보낸다. 이름은 위에서 좁힌 totals와 대조할 대상이 없다.
+     빈 배열도 진짜 답이다. 찾아봤는데 없었다는 뜻이고, 아예 안 보낸 것과
+     같지 않다. */
+  var det = LAST.result.detector;
+  if(det && typeof det === "object"){
+    payload.detector = {
+      reasons: Object.keys(det.reasons || {}).sort().slice(0, 16),
+      versions: Object.keys(det.versions || {}).sort().slice(0, 16)
+    };
+  }
   return payload;
 }
 /* SUBMIT-PAYLOAD:END */

@@ -161,6 +161,12 @@ canvas{display:block; width:100%}
    점선 앰버 테두리와 제목 옆 배지가 진짜 fleet 섹션과 구분하는 유일한 장치이므로,
    이 블록을 다시 스타일링하더라도 둘 다 유지할 것. */
 .h2-badge{margin-left:8px; vertical-align:2px}
+.det-alert{margin:14px 0 0; padding:12px 15px; border:1px solid var(--crit); border-left-width:3px; background:var(--crit-soft); border-radius:0 8px 8px 0; font-size:.86rem; line-height:1.65}
+.det-alert b{color:var(--crit)}
+.det-cols{display:flex; flex-wrap:wrap; gap:26px}
+.det-col{flex:1 1 260px; min-width:240px}
+.det-col h3{margin:0 0 7px; font-size:.8rem; letter-spacing:.02em; color:var(--muted); font-weight:600}
+.det-note{margin:14px 0 0; font-size:.8rem; color:var(--muted); line-height:1.7}
 .badge.real{color:var(--ok); border-color:var(--ok)}
 .demo{border:1px dashed var(--amber); border-radius:10px; background:var(--amber-soft); padding:14px}
 .demo .kpis{grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); margin:0 0 12px}
@@ -384,6 +390,11 @@ a{color:inherit}
 
 <a class="cta" href="check.html">내 데이터 진단하기 →</a>
 
+<!-- M15. 평소에는 조용하다가 필요할 때만 뜬다. 탐지기 상태를 상시 패널로
+     두면 그냥 넘겨 읽게 된다. 이 줄은 어딘가의 기계가 이 프로젝트에 판정
+     규칙이 없는 사유값을 보고했을 때만 나타난다. -->
+<div class="det-alert" id="detAlert" hidden></div>
+
 <div class="err" id="loadErr" hidden><a class="mono" href="../data/submissions.json">data/submissions.json</a>을 불러오지 못했다. 제출 색인이 없거나 읽을 수 없어서 아래의 합계·목록·환경별 분해가 비어 있다.</div>
 
 <section id="secWhy">
@@ -500,6 +511,40 @@ a{color:inherit}
       <li id="envSoft">–</li>
       <li>기계마다 요청 규모가 자릿수 단위로 다르다. 여기 유실률의 분모는 서로 크기가 비대칭이고, 큰 기계 하나가 그룹 전체를 끌고 갈 수 있다.</li>
       <li>제출 <b id="envMinN">5</b>건 미만인 그룹은 건수만 표시한다. 행 순서는 정렬이지 순위가 아니다. 한 행이 뒷받침하는 것은 "지금까지 제출된 것이 이렇다"까지다.</li>
+    </ul>
+  </div>
+</section>
+
+<section id="secDetector">
+  <h2>탐지기가 본 것 <span class="badge real h2-badge">실제 제출</span></h2>
+  <p class="desc">이 페이지의 모든 수치는 문자열 하나에서 나온다. 서버가 직접 찍는 <span class="mono">cache_miss_reason</span>이 <span class="mono">previous_message_not_found</span>일 때다. 이름에 의존한다는 뜻이고, 이름은 바뀐다. 만약 바뀌면 위의 모든 차트가 조용히 0으로 떨어지고 그게 좋은 소식처럼 읽힌다. 그래서 제출하는 기계마다 <b>자기 로그에 실제로 있던 사유값 이름</b>도 같이 보고한다. 이름만 보내고 각각 몇 건인지는 보내지 않는다. 이 표가 그 목록이다.</p>
+  <div class="card">
+    <div class="det-cols">
+      <div class="det-col">
+        <h3>보고된 사유값</h3>
+        <div class="tbl-scroll">
+          <table class="subs">
+            <thead><tr><th>값</th><th>기계 수</th></tr></thead>
+            <tbody id="detReasons"></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="det-col">
+        <h3>보고된 클라이언트 버전</h3>
+        <div class="tbl-scroll">
+          <table class="subs">
+            <thead><tr><th>버전</th><th>기계 수</th></tr></thead>
+            <tbody id="detVersions"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+    <p class="det-note" id="detCoverage"></p>
+    <ul class="env-limits">
+      <li>기계는 자기 스캔에서 만난 이름을 보고한다. 여기 있는 어떤 것도 유실 건수가 아니고, 위의 어떤 수치도 바꾸지 않는다.</li>
+      <li>보고 단위는 요청이 아니라 기계다. 한 번 본 값과 만 번 본 값이 똑같이 기계 1로 나온다.</li>
+      <li>각 행은 그 기계의 <b>가장 최근</b> 스캔이 본 것이다. 더 이상 안 나오는 값은 목록에서 빠진다. 그게 의도다. 이름이 바뀐 건 변화로 보여야지, 지금까지 본 것 전부 밑에 묻히면 안 된다.</li>
+      <li><span class="mono">(none)</span>은 로그 레코드가 버전을 안 남긴 것, <span class="mono">(invalid)</span>는 평범한 태그가 아닌 값, <span class="mono">(other)</span>는 그 기계에서 상위 12개 밖 전부다.</li>
     </ul>
   </div>
 </section>
@@ -810,6 +855,111 @@ function bindSortControls(){
    이 페이지가 이미 갖고 있던 규칙이다. 정렬 쪽의 null 처리는 옳았으므로 그대로 둔다.
    요청 0인 제출로 도달할 수 있고, validateSanity가 이를 허용한다(totals.requests에
    하한을 두지 않는다). 실제 데이터셋에 그런 행은 없다. */
+/* ---------- M15: 탐지기가 본 것, 함대 전체 ----------
+   요청 수가 아니라 기계 수를 센다. 색인 행에는 이름 목록만 있고 숫자는 없는데
+   의도한 것이다. 이 표가 답하는 질문은 "규칙이 없는 값을 보기 시작한 사람이
+   있나"이고, 그건 어휘에 대한 질문이다. M15 이전에 쓰인 행에는 목록 자체가
+   없고, 그건 "못 찾음"에 섞지 않고 따로 센다. 없는 것과 빈 것은 다른 주장이다. */
+var PMNF = "previous_message_not_found";
+
+function detectorFleet(subs){
+  var reasons = {}, versions = {}, silent = 0, foundNone = 0, reported = 0;
+  (subs || []).forEach(function(s){
+    var d = s && s.detector;
+    if(!d || !Array.isArray(d.reasons) || !Array.isArray(d.versions)){ silent += 1; return; }
+    reported += 1;
+    if(!d.reasons.length) foundNone += 1;
+    d.reasons.forEach(function(k){ if(typeof k === "string") reasons[k] = (reasons[k] || 0) + 1; });
+    d.versions.forEach(function(k){ if(typeof k === "string") versions[k] = (versions[k] || 0) + 1; });
+  });
+  return { reasons: reasons, versions: versions, silent: silent,
+           foundNone: foundNone, reported: reported };
+}
+
+function fillCensusRows(tbody, counts, alienTest, emptyText){
+  tbody.textContent = "";
+  var keys = Object.keys(counts).sort(function(a, b){
+    return (counts[b] - counts[a]) || (a < b ? -1 : (a > b ? 1 : 0));
+  });
+  if(!keys.length){
+    var tr = document.createElement("tr");
+    var td = document.createElement("td");
+    td.colSpan = 2;
+    td.className = "nick";
+    td.textContent = emptyText;
+    tr.appendChild(td);
+    tbody.appendChild(tr);
+    return;
+  }
+  keys.forEach(function(k){
+    var tr = document.createElement("tr");
+    var tdk = document.createElement("td");
+    tdk.className = alienTest && alienTest(k) ? "nick crit" : "nick";
+    // textContent. 이 문자열은 남의 로그 파일에서 시작된 것이다. 들어올 때
+    // charset 검사를 하고 dataset_validate가 한 번 더 보지만, 그래도 마크업이
+    // 되는 일은 없다.
+    tdk.textContent = k;
+    var tdn = document.createElement("td");
+    tdn.textContent = String(counts[k]);
+    tr.appendChild(tdk);
+    tr.appendChild(tdn);
+    tbody.appendChild(tr);
+  });
+}
+
+function renderDetectorFleet(subs){
+  var f = detectorFleet(subs);
+  var alien = Object.keys(f.reasons).filter(function(k){ return k !== PMNF; });
+
+  fillCensusRows(document.getElementById("detReasons"), f.reasons,
+    function(k){ return k !== PMNF; },
+    f.reported ? "어느 기계의 최근 스캔에서도 사유값이 나오지 않았다."
+               : "아직 사유값 이름을 보고한 기계가 없다.");
+  fillCensusRows(document.getElementById("detVersions"), f.versions, null,
+    f.reported ? "보고된 버전이 없다." : "아직 버전을 보고한 기계가 없다.");
+
+  var total = (subs || []).length;
+  var parts = [];
+  parts.push("본 사유값 이름을 보고한 기계: " + total + "대 중 " + f.reported + "대.");
+  if(f.silent){
+    parts.push(f.silent + "대는 이 목록이 생기기 전에 제출해서 이름을 하나도 내지 않았다. " +
+      "못 찾은 것과 같지 않다.");
+  }
+  if(f.foundNone){
+    parts.push(f.foundNone + "대는 찾아봤는데 사유값을 하나도 만나지 못했다. 그 기계들에 " +
+      "대해서는 위의 0이 '없다는 증거'가 아니라 '증거가 없다'는 뜻이다.");
+  }
+  document.getElementById("detCoverage").textContent = parts.join(" ");
+
+  var alertBox = document.getElementById("detAlert");
+  if(!alien.length){
+    alertBox.hidden = true;
+    alertBox.textContent = "";
+    return;
+  }
+  alertBox.hidden = false;
+  alertBox.textContent = "";
+  var b = document.createElement("b");
+  b.textContent = "이 프로젝트에 판정 규칙이 없는 사유값이 보고되고 있다. ";
+  alertBox.appendChild(b);
+  alertBox.appendChild(document.createTextNode(
+    "이 페이지가 세는 유실은 전부 " + PMNF + " 하나로만 판정한 것이라, 아래 이름을 단 " +
+    "유실은 세어진 게 아니라 통째로 건너뛰어진 것이다: "));
+  alien.sort().forEach(function(k, i){
+    if(i) alertBox.appendChild(document.createTextNode(", "));
+    var code = document.createElement("span");
+    code.className = "mono";
+    code.textContent = k;
+    alertBox.appendChild(code);
+  });
+  alertBox.appendChild(document.createTextNode(
+    ". 정리될 때까지 위 총계는 총계가 아니라 하한으로 읽어야 한다. "));
+  var a = document.createElement("a");
+  a.href = "#secDetector";
+  a.textContent = "탐지기가 본 것";
+  alertBox.appendChild(a);
+}
+
 function renderTable(subs){
   var tb = document.querySelector("#subsTable tbody");
   tb.innerHTML = sortedForTable(subs).map(function(s){
@@ -1280,6 +1430,7 @@ Promise.all([
   if(doc && Array.isArray(doc.submissions)){
     SUBS = doc.submissions;
     renderKpis(SUBS);
+    renderDetectorFleet(SUBS);
     renderTable(SUBS);
     bindEnvControls();
     renderEnv();

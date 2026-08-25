@@ -536,11 +536,25 @@ def check_payload(tag, data, discriminating):
             check(pay.get("token") == want["token"],
                   "%s %s (%s): payload.token %r, want the browser's stored link "
                   "token %r" % (tag, page, path, pay.get("token"), want["token"]))
+            # M15: the detector vocabulary leaves with the payload too, and
+            # like the fingerprint it describes the MACHINE. Nothing downstream
+            # can catch its absence: /api/submit accepts a submission without
+            # one and stores a row that simply never reports which reason names
+            # it saw, which reads on the front page as "an old client" rather
+            # than as a bug here.
+            want_vocab = data["detector_vocab"]
+            check(pay.get("detector") == want_vocab,
+                  "%s %s (%s): payload.detector %r, want the engine's census "
+                  "keys %r" % (tag, page, path, pay.get("detector"), want_vocab))
             # Narrowing the period must not touch either: they identify the
             # machine, not the window.
             check(pay.get("anchors") == got["whole"].get("anchors"),
                   "%s %s (%s): the period picker changed the fingerprint"
                   % (tag, page, path))
+            check(pay.get("detector") == got["whole"].get("detector"),
+                  "%s %s (%s): the period picker changed the detector "
+                  "vocabulary — the census covers the whole scan, so narrowing "
+                  "the window must not touch it" % (tag, page, path))
         bare = got["bare"]
         check("anchors" not in bare and "token" not in bare,
               "%s %s: a scan with no fingerprint sent one anyway: %r"

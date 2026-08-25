@@ -427,6 +427,12 @@ process.stdout.write(JSON.stringify({
   },
   page_payload: pagePayload,
   probe_identity: probeIdentity,
+  // M15: what the page's payload block must derive from the engine's census.
+  // Sorted key lists, no counts — the same shape /api/submit accepts.
+  detector_vocab: {
+    reasons: Object.keys((result.detector || {}).reasons || {}).sort(),
+    versions: Object.keys((result.detector || {}).versions || {}).sort()
+  },
   page_labels: pageLabels,
   unit: unit,
   labels: [0, 540, 330, 345, -300, 825, -210, 60].reduce(function (a, o) {

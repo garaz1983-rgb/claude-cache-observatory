@@ -22,8 +22,11 @@ What is checked (all of it is arithmetic a reader could redo by hand):
 
   index      every row has a well-formed id, a detail path derived from that
              id, no `daily` array of its own, no `identity` block of its own,
-             and totals whose iron subset cannot exceed the in-TTL count it is
-             a subset of.
+             totals whose iron subset cannot exceed the in-TTL count it is a
+             subset of, and (M15) a detector vocabulary that is a sorted,
+             duplicate-free list of plain tags. That last one is the only part
+             of the dataset that starts life as free text on a submitter's
+             disk, so it is checked here as well as at the door.
   index↔identity
              every index row has an identity entry OR EXPLICITLY NONE — a row
              with no fingerprint is a legitimate state, not a defect, and the
@@ -87,6 +90,12 @@ HEX64_RE = re.compile(r"^[0-9a-f]{64}\Z")
 # anything outside this alphabet is refused rather than sanitised: a lenient id
 # is a path-traversal primitive in the one code path that writes files.
 SUB_ID_RE = re.compile(r"^sub-[0-9]{14}-[0-9a-f]{4}\Z")
+
+# M15. These strings are the only part of the public dataset that originates as
+# free text on a submitter's disk, so they get the strictest shape check in this
+# file. Mirrors CENSUS_KEY_RE in functions/api/submit.js and both engines.
+CENSUS_KEY_RE = re.compile(r"^(?:[A-Za-z0-9._-]{1,64}|\((?:invalid|none|other)\))\Z")
+MAX_CENSUS_KEYS = 16
 # Mirrors parseDay()'s shape test in functions/api/submit.js, same \Z reasoning.
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}\Z")
 
@@ -218,6 +227,44 @@ def validate(index_doc, daily_doc, details, identity_doc=None):
         # to carry. Only a malformed entry, or an entry with no row, is a fault.
         if identities is not None and sub_id in identities:
             _check_identity_entry(sub_id, identities[sub_id], err)
+        # M15 detector vocabulary. Absent is fine (a client older than M15
+        # reported no names); present means it has to be a sorted, duplicate-
+        # free list of plain tags, because this is what the front page prints.
+        det = row.get("detector")
+        if det is not None:
+            if not isinstance(det, dict):
+                err.append("index/%s: detector is not an object" % sub_id)
+            else:
+                extra = set(det) - {"reasons", "versions"}
+                if extra:
+                    err.append("index/%s: detector has undefined field(s) %s"
+                               % (sub_id, ", ".join(sorted(extra))))
+                for field in ("reasons", "versions"):
+                    v = det.get(field)
+                    if not isinstance(v, list):
+                        err.append("index/%s: detector.%s is not an array"
+                                   % (sub_id, field))
+                        continue
+                    if len(v) > MAX_CENSUS_KEYS:
+                        err.append("index/%s: detector.%s has %d entries, over "
+                                   "the %d cap" % (sub_id, field, len(v),
+                                                   MAX_CENSUS_KEYS))
+                    bad = [e for e in v
+                           if not isinstance(e, str) or not CENSUS_KEY_RE.match(e)]
+                    if bad:
+                        err.append("index/%s: detector.%s carries %d entr%s that "
+                                   "%s not a plain tag - a published reason value "
+                                   "must never be free text"
+                                   % (sub_id, field, len(bad),
+                                      "y" if len(bad) == 1 else "ies",
+                                      "is" if len(bad) == 1 else "are"))
+                    elif v != sorted(v):
+                        err.append("index/%s: detector.%s is not sorted"
+                                   % (sub_id, field))
+                    if len(set(map(str, v))) != len(v):
+                        err.append("index/%s: detector.%s has duplicate entries"
+                                   % (sub_id, field))
+
         want_detail = detail_path(sub_id)
         if row.get("detail") != want_detail:
             err.append("index/%s: detail %r, want %r"

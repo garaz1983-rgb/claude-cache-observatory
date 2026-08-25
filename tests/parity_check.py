@@ -54,22 +54,33 @@ DETECTOR_DIR = os.path.join(HERE, "fixtures_detector")
 # Hand-computed from tests/fixtures_detector/main_detector.jsonl, so that a
 # bug present in BOTH engines still fails this check. Agreement alone would
 # not catch a shared mistake.
-#   8 deduped requests; only 2 are judged losses. The third real one wears a
+#   30 deduped requests; only 2 are judged losses. The third real one wears a
 #   renamed reason ("cache_entry_not_found") and is invisible to the rules -
 #   that gap is the entire point of the census.
 DETECTOR_EXPECTED = {
-    "diagnosed_requests": 6,
-    "unknown_reasons": 4,
+    "diagnosed_requests": 7,
+    "unknown_reasons": 5,
     "cold_writes": 4,
     "reasons": {
-        "(invalid)": 2,                    # a number, and an empty string
+        # a number, an empty string, and free text with a space and a "!"
+        "(invalid)": 3,
         "previous_message_not_found": 2,   # plain form + {"type": ...} form
         "brand_new_reason": 1,             # arrived by back-fill, later record
         "cache_entry_not_found": 1,        # the renamed loss
     },
-    "versions": {"2.2.0": 5, "2.1.0": 2, "(none)": 1},
+    # 18 distinct versions over 30 requests, so the 12-key cap bites and the
+    # overflow bucket is exercised. zeta-9 is the load-bearing entry: it has the
+    # highest count and the last-sorting name, so it is inside the top 12 under
+    # count-first ordering and outside it under name-only ordering. 7+6+2+1+8
+    # named = 24, and the 6 that did not fit are the (other) bucket.
+    "versions": {
+        "zeta-9": 7, "2.2.0": 6, "2.1.0": 2, "(none)": 1,
+        "3.0.01": 1, "3.0.02": 1, "3.0.03": 1, "3.0.04": 1,
+        "3.0.05": 1, "3.0.06": 1, "3.0.07": 1, "3.0.08": 1,
+        "(other)": 6,
+    },
 }
-DETECTOR_TOTALS = {"requests": 8, "in_ttl_losses": 2, "iron_losses": 2,
+DETECTOR_TOTALS = {"requests": 30, "in_ttl_losses": 2, "iron_losses": 2,
                    "wasted_tokens": 12000}
 
 NODE_FALLBACKS = [

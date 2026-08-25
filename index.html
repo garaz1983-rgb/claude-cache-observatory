@@ -172,6 +172,12 @@ canvas{display:block; width:100%}
    frame and the heading badge are what separate it from the real fleet
    sections; keep both if this block is ever restyled. */
 .h2-badge{margin-left:8px; vertical-align:2px}
+.det-alert{margin:14px 0 0; padding:12px 15px; border:1px solid var(--crit); border-left-width:3px; background:var(--crit-soft); border-radius:0 8px 8px 0; font-size:.86rem; line-height:1.55}
+.det-alert b{color:var(--crit)}
+.det-cols{display:flex; flex-wrap:wrap; gap:26px}
+.det-col{flex:1 1 260px; min-width:240px}
+.det-col h3{margin:0 0 7px; font-size:.8rem; letter-spacing:.04em; text-transform:uppercase; color:var(--muted); font-weight:600}
+.det-note{margin:14px 0 0; font-size:.8rem; color:var(--muted); line-height:1.6}
 .badge.real{color:var(--ok); border-color:var(--ok)}
 .demo{border:1px dashed var(--amber); border-radius:10px; background:var(--amber-soft); padding:14px}
 .demo .kpis{grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); margin:0 0 12px}
@@ -410,6 +416,11 @@ a{color:inherit}
 
 <a class="cta" href="check.html">Check your own data →</a>
 
+<!-- M15. Quiet until it is not. A permanent panel about detector health would
+     be scrolled past; this line appears only when some machine, somewhere, has
+     reported a reason value this project has no judgment rule for. -->
+<div class="det-alert" id="detAlert" hidden></div>
+
 <div class="err" id="loadErr" hidden>Could not load <a class="mono" href="data/submissions.json">data/submissions.json</a>. The submission index is missing or unreadable, so the totals, the list and the environment breakdown below are empty.</div>
 
 <section id="secWhy">
@@ -527,6 +538,40 @@ a{color:inherit}
       <li id="envSoft">–</li>
       <li>Request volume differs by an order of magnitude between machines, so these denominators are not comparable in size: one heavy machine can carry a whole group.</li>
       <li>Groups with fewer than <b id="envMinN">5</b> submissions show counts only. Rows are ordered, not ranked; what a row supports is "this is what has been submitted so far".</li>
+    </ul>
+  </div>
+</section>
+
+<section id="secDetector">
+  <h2>What the detector saw <span class="badge real h2-badge">Real submissions</span></h2>
+  <p class="desc">Every number on this page is counted from one string: the server's own <span class="mono">cache_miss_reason</span>, when it reads <span class="mono">previous_message_not_found</span>. That is a dependency on a name, and names change. If it ever changed, every chart above would quietly fall to zero and read as good news. So each submitting machine also reports <b>which reason names its logs actually carried</b> — the names only, never how many of each — and this is that list.</p>
+  <div class="card">
+    <div class="det-cols">
+      <div class="det-col">
+        <h3>Reason values reported</h3>
+        <div class="tbl-scroll">
+          <table class="subs">
+            <thead><tr><th>Value</th><th>Machines</th></tr></thead>
+            <tbody id="detReasons"></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="det-col">
+        <h3>Client versions reported</h3>
+        <div class="tbl-scroll">
+          <table class="subs">
+            <thead><tr><th>Version</th><th>Machines</th></tr></thead>
+            <tbody id="detVersions"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+    <p class="det-note" id="detCoverage"></p>
+    <ul class="env-limits">
+      <li>A machine reports the names its own scan met. Nothing here is a count of losses, and nothing here changes a number above.</li>
+      <li>Reporting is per machine, not per request: a value one machine saw once and a value it saw ten thousand times both appear as one machine.</li>
+      <li>Each row shows what that machine's <b>most recent</b> scan saw. A value that stopped appearing drops off, which is the point: a rename has to be visible as a change, not buried under everything ever seen.</li>
+      <li><span class="mono">(none)</span> means a log record named no version, <span class="mono">(invalid)</span> a value that was not a plain tag, <span class="mono">(other)</span> everything past the twelfth most common on that machine.</li>
     </ul>
   </div>
 </section>
@@ -849,6 +894,117 @@ function bindSortControls(){
    sort is correct and stays exactly as it is.
    Reachable with a zero-request submission, which validateSanity permits (it
    sets no minimum on totals.requests). No such row is in the live dataset. */
+/* ---------- M15: what the detector saw, fleet-wide ----------
+   Machine counts, not request counts. The index row carries a list of names
+   and no numbers, which is deliberate: the question this answers is "has
+   anyone started seeing a value we have no rule for", and that is a question
+   about vocabulary. Rows written before M15 carry no list at all, and that is
+   reported as its own number rather than folded into "found none" — absent
+   and empty are different claims. */
+var PMNF = "previous_message_not_found";
+
+function detectorFleet(subs){
+  var reasons = {}, versions = {}, silent = 0, foundNone = 0, reported = 0;
+  (subs || []).forEach(function(s){
+    var d = s && s.detector;
+    if(!d || !Array.isArray(d.reasons) || !Array.isArray(d.versions)){ silent += 1; return; }
+    reported += 1;
+    if(!d.reasons.length) foundNone += 1;
+    d.reasons.forEach(function(k){ if(typeof k === "string") reasons[k] = (reasons[k] || 0) + 1; });
+    d.versions.forEach(function(k){ if(typeof k === "string") versions[k] = (versions[k] || 0) + 1; });
+  });
+  return { reasons: reasons, versions: versions, silent: silent,
+           foundNone: foundNone, reported: reported };
+}
+
+function fillCensusRows(tbody, counts, alienTest, emptyText){
+  tbody.textContent = "";
+  var keys = Object.keys(counts).sort(function(a, b){
+    return (counts[b] - counts[a]) || (a < b ? -1 : (a > b ? 1 : 0));
+  });
+  if(!keys.length){
+    var tr = document.createElement("tr");
+    var td = document.createElement("td");
+    td.colSpan = 2;
+    td.className = "nick";
+    td.textContent = emptyText;
+    tr.appendChild(td);
+    tbody.appendChild(tr);
+    return;
+  }
+  keys.forEach(function(k){
+    var tr = document.createElement("tr");
+    var tdk = document.createElement("td");
+    tdk.className = alienTest && alienTest(k) ? "nick crit" : "nick";
+    // textContent: these strings started life in a stranger's log file. They
+    // are charset-checked at the door and again by dataset_validate, and they
+    // still never become markup.
+    tdk.textContent = k;
+    var tdn = document.createElement("td");
+    tdn.textContent = String(counts[k]);
+    tr.appendChild(tdk);
+    tr.appendChild(tdn);
+    tbody.appendChild(tr);
+  });
+}
+
+function renderDetectorFleet(subs){
+  var f = detectorFleet(subs);
+  var alien = Object.keys(f.reasons).filter(function(k){ return k !== PMNF; });
+
+  fillCensusRows(document.getElementById("detReasons"), f.reasons,
+    function(k){ return k !== PMNF; },
+    f.reported ? "No machine's latest scan met any reason value."
+               : "No machine has reported reason names yet.");
+  fillCensusRows(document.getElementById("detVersions"), f.versions, null,
+    f.reported ? "No versions reported." : "No machine has reported versions yet.");
+
+  var total = (subs || []).length;
+  var parts = [];
+  // Phrased as a label, not a sentence with a subject: "0 of 1 machine report"
+  // and "0 of 1 machines reports" are both wrong, and the count is a variable.
+  parts.push("Reporting which reason names they saw: " + f.reported + " of " +
+    total + " machine" + (total === 1 ? "" : "s") + ".");
+  if(f.silent){
+    parts.push(f.silent + " submitted before this list existed and named none, " +
+      "which is not the same as having found none.");
+  }
+  if(f.foundNone){
+    parts.push(f.foundNone + " looked and met no reason value at all, so for " +
+      "those machines a zero above is the absence of evidence rather than " +
+      "evidence of absence.");
+  }
+  document.getElementById("detCoverage").textContent = parts.join(" ");
+
+  var alertBox = document.getElementById("detAlert");
+  if(!alien.length){
+    alertBox.hidden = true;
+    alertBox.textContent = "";
+    return;
+  }
+  alertBox.hidden = false;
+  alertBox.textContent = "";
+  var b = document.createElement("b");
+  b.textContent = "A reason value this project has no rule for is being reported. ";
+  alertBox.appendChild(b);
+  alertBox.appendChild(document.createTextNode(
+    "Every loss counted on this page is judged from " + PMNF + " alone, so any " +
+    "loss wearing one of these names was skipped instead of counted: "));
+  alien.sort().forEach(function(k, i){
+    if(i) alertBox.appendChild(document.createTextNode(", "));
+    var code = document.createElement("span");
+    code.className = "mono";
+    code.textContent = k;
+    alertBox.appendChild(code);
+  });
+  alertBox.appendChild(document.createTextNode(
+    ". Read the totals above as a floor until that is resolved. "));
+  var a = document.createElement("a");
+  a.href = "#secDetector";
+  a.textContent = "What the detector saw";
+  alertBox.appendChild(a);
+}
+
 function renderTable(subs){
   var tb = document.querySelector("#subsTable tbody");
   tb.innerHTML = sortedForTable(subs).map(function(s){
@@ -1338,6 +1494,7 @@ Promise.all([
   if(doc && Array.isArray(doc.submissions)){
     SUBS = doc.submissions;
     renderKpis(SUBS);
+    renderDetectorFleet(SUBS);
     renderTable(SUBS);
     bindEnvControls();
     renderEnv();

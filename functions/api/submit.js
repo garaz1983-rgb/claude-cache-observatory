@@ -223,7 +223,7 @@ const SESSIONS_ENUM = ["single", "multi", "unknown"];
 const TOP_FIELDS = [
   "nickname", "plan", "client", "concurrent_sessions",
   "period_start", "period_end", "totals", "daily", "script_version",
-  "anchors", "token"
+  "anchors", "token", "detector"
 ];
 const TOP_REQUIRED = [
   "plan", "client", "concurrent_sessions",
@@ -231,6 +231,30 @@ const TOP_REQUIRED = [
 ];
 const TOTALS_FIELDS = ["requests", "in_ttl_losses", "iron_losses", "wasted_tokens"];
 const DAILY_FIELDS = ["date", "requests", "losses", "wasted_tokens"];
+
+/* M15 detector vocabulary. VOCABULARY ONLY — no counts.
+ *
+ * The engines build a full census (how many requests carried each reason, each
+ * client version, how many wrote cache without reading any). None of that
+ * crosses the wire. Two reasons, and the second is the load-bearing one:
+ *
+ *   1. Nothing here can contradict `totals`. A submission covers at most 92
+ *      days, while the census covers every file the browser scanned, so any
+ *      count sent alongside would be a number a reader could not reconcile
+ *      with the row it sits in. A list of names has nothing to reconcile.
+ *   2. The fleet does not need counts to answer the question this milestone
+ *      exists for: has anyone, anywhere, started seeing a reason value this
+ *      project does not know? That is a question about vocabulary.
+ *
+ * Same charset the engines enforce, plus the three bracketed literals they
+ * use for missing/unprintable/overflow. The literals carry parentheses, which
+ * the tag charset excludes, so a value out of a log file cannot impersonate
+ * one. These strings ARE published, so this is the last gate before a string
+ * from a stranger's disk lands in a file everyone reads.
+ */
+const DETECTOR_FIELDS = ["reasons", "versions"];
+const CENSUS_KEY_RE = /^(?:[A-Za-z0-9._-]{1,64}|\((?:invalid|none|other)\))$/;
+const MAX_CENSUS_KEYS = 16;
 
 /* Identity (M13). MAX_ANCHORS mirrors assets/identity.js ANCHOR_COUNT.
    The two prefixes are domain separation, not secrets: they keep an anchor
@@ -479,7 +503,50 @@ function validateSchema(body) {
       errors.push("token: must be a 32-character lowercase hex string");
     }
   }
+
+  /* M15 detector. Optional: a submission from an older client carries none,
+     and that is not an error — it means "this machine did not report which
+     reason names it saw", which the fleet page states rather than guesses. */
+  if ("detector" in body) {
+    const det = body.detector;
+    if (!isPlainObject(det)) {
+      errors.push("detector: must be an object");
+    } else {
+      for (const key of Object.keys(det)) {
+        if (DETECTOR_FIELDS.indexOf(key) === -1) {
+          errors.push("undefined field: detector." + key);
+        }
+      }
+      for (const key of DETECTOR_FIELDS) {
+        validateVocabulary(det[key], "detector." + key, errors);
+      }
+    }
+  }
   return errors;
+}
+
+/* A published list of plain tags. The offending value is deliberately NOT
+   echoed into the error: the page validates the same rule before sending, so
+   a failure here is a bug or an attempt, and neither is worth reflecting a
+   stranger's string back out of this endpoint. */
+function validateVocabulary(v, label, errors) {
+  if (!Array.isArray(v)) {
+    errors.push(label + ": must be an array");
+    return;
+  }
+  if (v.length > MAX_CENSUS_KEYS) {
+    errors.push(label + ": more than " + MAX_CENSUS_KEYS + " entries");
+    return;
+  }
+  const seen = new Set();
+  for (let i = 0; i < v.length; i++) {
+    if (typeof v[i] !== "string" || !CENSUS_KEY_RE.test(v[i])) {
+      errors.push(label + "[" + i + "]: not a plain tag");
+      continue;
+    }
+    if (seen.has(v[i])) errors.push(label + "[" + i + "]: duplicate entry");
+    seen.add(v[i]);
+  }
 }
 
 /* ---------- step 2: sanity validation ---------- */
@@ -681,7 +748,14 @@ function buildIncoming(body) {
         wasted_tokens: d.wasted_tokens
       };
     }),
-    script_version: body.script_version
+    script_version: body.script_version,
+    // Sorted here, not trusted from the client: the published order is this
+    // server's, so a diff of the public file stays readable whatever order a
+    // submitter happened to send.
+    detector: isPlainObject(body.detector) ? {
+      reasons: body.detector.reasons.slice().sort(),
+      versions: body.detector.versions.slice().sort()
+    } : null
   };
 }
 
@@ -710,6 +784,10 @@ function composeRecord(id, submittedAt, updatedAt, fields) {
   rec.daily_days = fields.daily.length;
   rec.detail = detailPath(id);
   rec.script_version = fields.script_version;
+  // Last, and omitted entirely when the client sent none: absent and empty are
+  // different claims. Absent = this machine never reported which names it saw.
+  // Empty = it looked and found none, which is the case worth noticing.
+  if (fields.detector) rec.detector = fields.detector;
   return rec;
 }
 
@@ -1008,7 +1086,12 @@ function mergeRecord(existing, existingDaily, incoming) {
     period_end: ends[ends.length - 1],
     totals: totals,
     daily: daily,
-    script_version: incoming.script_version
+    script_version: incoming.script_version,
+    // Incoming wins, like nickname and script_version: the row states what
+    // this machine's LATEST scan saw. A union would never be able to forget a
+    // value the server had stopped sending, which is the change this whole
+    // milestone is built to make visible in the first place.
+    detector: incoming.detector
   };
 }
 

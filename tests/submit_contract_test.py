@@ -105,6 +105,13 @@ M14.2 (simultaneous submissions, and the failures the mock could not make) adds:
                                   entries or 7 MB, whichever comes first
                                     entries and data/subs/ is one file per
                                     submitter
+  case32 detector vocabulary     -> the server sorts it, empty and absent stay
+                                    distinct claims, and twelve malformed
+                                    vocabularies (markup, spaces, a forged
+                                    bracket literal, oversize, duplicates)
+                                    are refused at the door: these strings are
+                                    published, and they start as free text on
+                                    a submitter's disk.
   case31 a hand-edited series    -> a machines:0 day is dropped and a negative
                                     delta is clamped, so no public file carries
                                     a count below zero
@@ -2195,6 +2202,102 @@ def run_m142_cases():
 # M14.1: the two sides of index <-> identity, one of which no live path can reach
 # ---------------------------------------------------------------------------
 
+def run_detector_cases():
+    # -- case32: the detector vocabulary, the one published field that starts
+    # life as free text on a stranger's disk -------------------------------
+    #
+    # Every loss on this site is judged from one string. M15 makes each machine
+    # report which reason NAMES its logs carried, so a rename is visible instead
+    # of silently reading as zero. Those names are published, which is why the
+    # rejection half of this case matters more than the acceptance half: the
+    # door is the last point at which a value from someone's log file can be
+    # stopped before it lands in a file everyone downloads.
+    reset_doc()
+    a = anchor_set("machine-detector", 16, 0)
+    status, data = submit(
+        scan_payload("2026-04-01", 2, 10, 1, 500, 1, anchors=a,
+                     detector={"reasons": ["previous_message_not_found",
+                                           "cache_entry_not_found"],
+                               "versions": ["2.2.0", "2.1.0"]}),
+        "198.51.100.120")
+    data = expect_ok("case32 accept", status, data)
+    check_file_arithmetic("case32 accept")
+    row = index_doc()["submissions"][-1]
+    det = row.get("detector")
+    check(det == {"reasons": ["cache_entry_not_found",
+                              "previous_message_not_found"],
+                  "versions": ["2.1.0", "2.2.0"]},
+          "🔴 case32: stored detector %r — both lists must be sorted BY THE "
+          "SERVER, so the published order is never the submitter's" % (det,))
+
+    # An empty list is a real answer ("looked, met none") and must survive as
+    # an empty list. Collapsing it to absent would make it indistinguishable
+    # from a pre-M15 client, which is the exact distinction the front page
+    # prints.
+    status, data = submit(
+        scan_payload("2026-04-10", 2, 10, 0, 0, 0, anchors=a,
+                     detector={"reasons": [], "versions": ["2.3.0"]}),
+        "198.51.100.121")
+    expect_ok("case32 empty", status, data)
+    row = index_doc()["submissions"][-1]
+    check(row.get("detector") == {"reasons": [], "versions": ["2.3.0"]},
+          "🔴 case32: a re-scan that met no reason value stored %r — incoming "
+          "must win, and an empty list must stay a list" % (row.get("detector"),))
+
+    # No detector at all: the row carries no key. Absent and empty are
+    # different claims and the index has to be able to say either.
+    reset_doc()
+    status, data = submit(
+        scan_payload("2026-04-01", 2, 10, 0, 0, 0,
+                     anchors=anchor_set("machine-nodetector", 16, 0)),
+        "198.51.100.122")
+    expect_ok("case32 absent", status, data)
+    row = index_doc()["submissions"][-1]
+    check("detector" not in row,
+          "🔴 case32: a submission that sent no detector produced a row with "
+          "%r — absent must stay absent" % (row.get("detector"),))
+
+    # The rejections. Every one of these is a string, a shape or a size that
+    # must never reach data/submissions.json.
+    bad = [
+        ("markup in a reason value",
+         {"reasons": ["<script>alert(1)</script>"], "versions": ["2.1.0"]}),
+        ("a space in a reason value",
+         {"reasons": ["previous message not found"], "versions": ["2.1.0"]}),
+        ("a forged bracket literal",
+         {"reasons": ["(anything)"], "versions": ["2.1.0"]}),
+        ("a 65-character tag",
+         {"reasons": ["a" * 65], "versions": ["2.1.0"]}),
+        ("an empty string",
+         {"reasons": [""], "versions": ["2.1.0"]}),
+        ("a non-string entry",
+         {"reasons": [123], "versions": ["2.1.0"]}),
+        ("a duplicate entry",
+         {"reasons": ["previous_message_not_found",
+                      "previous_message_not_found"], "versions": ["2.1.0"]}),
+        ("more than 16 entries",
+         {"reasons": ["r%d" % i for i in range(17)], "versions": ["2.1.0"]}),
+        ("a missing versions list", {"reasons": ["previous_message_not_found"]}),
+        ("an object instead of a list",
+         {"reasons": {"previous_message_not_found": 3}, "versions": ["2.1.0"]}),
+        ("an undefined sub-field",
+         {"reasons": [], "versions": [], "cold_writes": 4}),
+        ("a string instead of an object", "previous_message_not_found"),
+    ]
+    for i, (why, det) in enumerate(bad):
+        snapshot = repo_snapshot()
+        status, data = submit(
+            scan_payload("2026-04-20", 2, 10, 0, 0, 0,
+                         anchors=anchor_set("machine-bad-%d" % i, 16, 0),
+                         detector=det),
+            "198.51.100.%d" % (130 + i))
+        expect_refused("case32 (%s)" % why, status, data, snapshot,
+                       want_status=400, want_error="schema")
+    print("PASS case32 detector vocabulary: sorted by the server, empty and "
+          "absent stay distinct, and %d malformed vocabularies -> 400 with "
+          "nothing published" % len(bad))
+
+
 def _mini_dataset(identities):
     """The smallest dataset that validates, plus whatever identity map is being
     tested against it. One row, one day, one detail file."""
@@ -2387,6 +2490,7 @@ def main():
         run_mask_cases()
         run_identity_cases()
         run_m142_cases()
+        run_detector_cases()
         print("CONTRACT_OK")
         code = 0
     except ContractFail as exc:
