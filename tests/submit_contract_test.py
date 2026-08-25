@@ -102,6 +102,7 @@ M14.2 (simultaneous submissions, and the failures the mock could not make) adds:
   case29 June, then May          -> a submitter whose logs are older than the
                                     series leaves it in date order
   case30 a truncated listing     -> 502. GitHub truncates a tree at 100,000
+                                  entries or 7 MB, whichever comes first
                                     entries and data/subs/ is one file per
                                     submitter
   case31 a hand-edited series    -> a machines:0 day is dropped and a negative
@@ -293,7 +294,8 @@ class MockState(object):
         #   fail_tree      -> GET /git/trees/<sha> answers 500 for the root, the
         #                     data/ tree or the data/subs/ tree, by position
         #   truncate_tree  -> the same listing comes back with truncated:true,
-        #                     which is what GitHub does past 100,000 entries and
+        #                     which is what GitHub does past 100,000 entries
+        #                     or 7 MB of response, whichever comes first, and
         #                     which means "entries are MISSING from this reply"
         #   fail_commit_post -> POST /git/commits answers 500
         #   conflict_status  -> the status a non-fast-forward PATCH answers with
@@ -580,7 +582,8 @@ class MockHandler(BaseHTTPRequestHandler):
                 if MOCK.fail_tree is not None and role == MOCK.fail_tree:
                     self._send(500, {"message": "boom"})
                     return
-                # 🔴 GitHub truncates a tree listing at 100,000 entries and says
+                # 🔴 GitHub truncates a tree listing at 100,000 entries or
+                # 7 MB, whichever comes first, and says
                 # so in this flag. The entries themselves are still returned —
                 # just NOT all of them — which is why a client that ignores the
                 # flag does not see an error, it sees a file that is not there.
@@ -2106,7 +2109,8 @@ def run_m142_cases():
           "%d days)" % (dates[0], dates[-1], len(dates)))
 
     # -- case30: a tree listing GitHub truncated is a failed read ------------
-    # GitHub truncates at 100,000 entries and data/subs/ holds one file per
+    # GitHub truncates at 100,000 entries or 7 MB, whichever comes first
+    # (~28,000 entries here at 257 B each), and data/subs/ holds one file per
     # submitter. The reply still looks like a complete listing, so ignoring the
     # flag means treeEntry() returns null and the write path decides a returning
     # submitter has no detail file — the read that is wrong in the one direction
@@ -2127,7 +2131,7 @@ def run_m142_cases():
             MOCK.truncate_tree = None
         expect_refused("case30 (%s listing truncated)" % role, status, data,
                        snapshot)
-    print("PASS case30 a truncated tree listing -> 502 (the 100,000-entry "
+    print("PASS case30 a truncated tree listing -> 502 (the ~28,000-entry "
           "ceiling fails loudly instead of losing a file)")
 
     # -- case31: the two guards a hand-edited data/daily.json reaches --------

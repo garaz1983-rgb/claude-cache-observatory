@@ -98,7 +98,9 @@
  *
  *   - the blob endpoint has no 1 MB inline cap, so THAT wall is gone. It is not
  *     true that there is no wall: GitHub truncates a tree listing at 100,000
- *     entries, and data/subs/ grows one file per submitter, so 100,000
+ *     entries OR 7 MB of response, whichever comes first, and data/subs/
+ *     grows one file per submitter. An entry serialises to 257 bytes in the
+ *     shape GitHub returns, so the 7 MB cap binds first at roughly 28,000
  *     submitters is where the read path stops being able to find an existing
  *     detail file. Since M14.2 that limit is DETECTED (readState and
  *     readDetailDaily refuse a listing GitHub marked `truncated`) rather than
@@ -1140,7 +1142,8 @@ function treeEntry(tree, name, type) {
   return null;
 }
 
-/* 🔴 M14.2. GitHub truncates a tree listing at 100,000 entries and says so with
+/* 🔴 M14.2. GitHub truncates a tree listing at 100,000 entries OR 7 MB of
+   response, whichever comes first, and says so with
    this flag, and the reply still LOOKS complete: it is a well-formed list of
    entries, just not all of them. A caller that ignores the flag therefore never
    sees an error — it sees treeEntry() return null and concludes the file is not
@@ -1148,8 +1151,12 @@ function treeEntry(tree, name, type) {
    readDetailDaily "this submitter has no history", and both of those are wrong
    answers that write. So a truncated listing is treated as a failed read.
 
-   The ceiling this puts on the design is real and worth stating plainly:
-   data/subs/ holds one file per submitter, so it is ~100,000 submitters. Below
+   The ceiling this puts on the design is real and worth stating plainly, and
+   it is NOT the entry count. data/subs/ holds one file per submitter, and an
+   entry serialises to 257 bytes in the shape GitHub returns (path, mode,
+   type, sha, size, blob url), so 7 MB binds first at roughly 28,000 - the
+   100,000 figure would be 24.5 MB of response. This is arithmetic on
+   GitHub's two documented caps, not a measurement against the live API. Below
    it nothing changes; at it every returning submitter is refused with a 502
    until someone shards the directory. That is a far better failure than the one
    this replaces, but it is not "no limit", and the M14 note that the wall was
@@ -1279,7 +1286,7 @@ async function readState(api, token, branch) {
    — refuse the write, publish nothing, and leave the hand-edit for a human,
    with tests/dataset_validate.py to find it.
 
-   The `truncated` guard is where the 100,000-submitter ceiling lands, and
+   The `truncated` guard is where the ~28,000-submitter ceiling lands, and
    sharding this directory (data/subs/<first 2 hex of the id's suffix>/<id>.json,
    256 buckets, ~25 M) is the obvious way to remove it. Deliberately NOT done
    here: `detail` is a published path in every existing index row, so sharding

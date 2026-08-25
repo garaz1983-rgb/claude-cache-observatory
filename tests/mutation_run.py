@@ -428,9 +428,16 @@ MUTATIONS = [
     ("S69_data_tree_status_unchecked", SUBMIT_JS_REL,
      "    if (dataTree.status !== 200) return null;",
      "    if (false) return null;", "contract"),
-    ("S70_subs_tree_status_unchecked", SUBMIT_JS_REL,
-     "  if (listing.status !== 200) return null;",
-     "  if (false) return null;", "contract"),
+    # S70 (subs-tree status unchecked) was written and then withdrawn: it is
+    # EQUIVALENT, and a survivor left in the list would teach the next reader
+    # that survivors are tolerable. Evidence, not assertion: dropping
+    # `if (listing.status !== 200) return null;` in readDetailDaily leaves
+    # listing.body as GitHub's error object ({"message": ...}), which carries no
+    # `truncated` and no `tree`, so treeTruncated() is false, treeEntry() finds
+    # nothing, and the next line — `if (!entry) return null;` — produces the
+    # identical refusal. Same 502, nothing published. The guard is still correct
+    # and stays: it is the difference between "the read failed" and "the file is
+    # not there" for any future caller that reads listing.body directly.
     # "Tell the submitter their data was saved when no ref was ever updated."
     ("S71_commit_post_failure_is_success", SUBMIT_JS_REL,
      "  if (commit.status !== 200 && commit.status !== 201) return null;",
@@ -456,7 +463,8 @@ MUTATIONS = [
     ("S74_empty_detail_daily_allowed", SUBMIT_JS_REL,
      "  if (!detail.daily.length) return null;   // a row with no history is not one",
      "  void 0;", "contract"),
-    # GitHub truncates a tree listing at 100,000 entries and the reply still
+    # GitHub truncates a tree listing at 100,000 entries or 7 MB, whichever
+    # comes first (~28,000 here), and the reply still
     # looks complete, so ignoring the flag is a read that is wrong in the one
     # direction that then writes.
     ("S75_tree_truncation_ignored", SUBMIT_JS_REL,
