@@ -320,6 +320,10 @@ var engineCensus = (function () {
   return scan.finish().census;
 })();
 function censusEqual(a, b) {
+  // A missing census is a MISMATCH, not a crash. A mutant that switches the
+  // census off must be reported as killed by an assertion; if this threw, the
+  // whole gate would stop and read as a broken environment instead.
+  if (!(a instanceof Map) || !(b instanceof Map)) return false;
   var ka = Array.from(a.keys()).sort();
   var kb = Array.from(b.keys()).sort();
   if (JSON.stringify(ka) !== JSON.stringify(kb)) return false;
@@ -510,13 +514,15 @@ process.stdout.write(JSON.stringify({
   census_move: {
     equal: censusEqual(census, engineCensus),
     days_page: census.size,
-    days_engine: engineCensus.size,
+    days_engine: engineCensus instanceof Map ? engineCensus.size : null,
     total_page: Array.from(census.values()).reduce(function (a, r) {
       return a + r.reduce(function (x, y) { return x + y; }, 0);
     }, 0),
-    total_engine: Array.from(engineCensus.values()).reduce(function (a, r) {
-      return a + r.reduce(function (x, y) { return x + y; }, 0);
-    }, 0)
+    total_engine: engineCensus instanceof Map
+      ? Array.from(engineCensus.values()).reduce(function (a, r) {
+          return a + r.reduce(function (x, y) { return x + y; }, 0);
+        }, 0)
+      : null
   },
   // M15: what the page's payload block must derive from the engine's census.
   // Sorted key lists, no counts — the same shape /api/submit accepts.
