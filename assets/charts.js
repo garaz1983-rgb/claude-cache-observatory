@@ -171,6 +171,27 @@
     return Math.max(1, Math.ceil(n / (maxLabels || 12)));
   }
 
+  /* Which indices get an x-axis label.
+
+     The last one is always named: a window whose end is not printed makes the
+     reader guess it. But forcing it ON TOP of the previous stepped label is
+     worse than not stepping there. At 14 days the step never landed near the
+     end and this never showed; at 91 the step lands on 88, the forced 90
+     printed over it, and the axis read "8/28/27".
+
+     So the colliding STEPPED label is dropped and the end is kept — dropping
+     the end instead would leave the axis stopping somewhere before the data
+     does, which is the more misleading of the two. */
+  function labelAt(n, step) {
+    var last = n - 1;
+    var gap = last % step;
+    var drop = (gap > 0 && gap * 2 < step) ? last - gap : -1;
+    return function (i) {
+      if (i === drop) return false;
+      return i % step === 0 || i === last;
+    };
+  }
+
   /*
    * Fleet daily loss-rate trend.
    * model = {
@@ -231,8 +252,9 @@
     }
 
     var step = labelStep(n, 12);
+    var showLabel = labelAt(n, step);
     for (var i = 0; i < n; i++) {
-      if (i % step !== 0 && i !== n - 1) continue;
+      if (!showLabel(i)) continue;
       ctx.fillStyle = muted; ctx.textAlign = "center";
       ctx.fillText(dateFormat(dates[i]), xAt(i), h - 8);
     }
@@ -335,6 +357,7 @@
 
     var n = days.length, slot = iw / n, bw = Math.max(2, Math.min(26, slot * 0.55));
     var step = labelStep(n, 12);
+    var showLabel = labelAt(n, step);
     // Counts are the primary reading of this chart (prototype behavior):
     // draw the number above every bar unless slots are too narrow to fit
     // two digits at all.
@@ -353,7 +376,7 @@
         ctx.strokeStyle = ok; ctx.lineWidth = 1.4;
         ctx.strokeRect(x - bw / 2, padT + ih - 4, bw, 4);
       }
-      if (i % step === 0 || i === n - 1) {
+      if (showLabel(i)) {
         ctx.fillStyle = d.count >= yMax / 2 ? ink : muted;
         ctx.textAlign = "center";
         ctx.fillText(d.label, x, h - 8);

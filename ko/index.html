@@ -157,9 +157,11 @@ canvas{display:block; width:100%}
 .legend span{display:inline-flex; align-items:center; gap:6px}
 .chip{width:12px; height:12px; border-radius:3px; display:inline-block}
 .chip.line{height:3px; border-radius:2px; width:18px}
-/* 예시 데이터 미리보기. 합성 샘플(assets/demo.js)이고 관측 데이터가 아니다.
-   점선 앰버 테두리와 제목 옆 배지가 진짜 fleet 섹션과 구분하는 유일한 장치이므로,
-   이 블록을 다시 스타일링하더라도 둘 다 유지할 것. */
+/* 미리보기. assets/preview.js의 실측이고, 기계 1대(운영자 것)다.
+   이 페이지는 두 축을 쓴다. 점선 앰버 테두리는 "fleet 집계가 아니다"를 뜻하고,
+   배지 색은 숫자의 출처를 뜻한다(앰버 배지 = 지어낸 값, 녹색 배지 = 실측).
+   그래서 이 블록은 앰버 테두리에 녹색 배지다. 아래 .env-demo는 둘 다 앰버다.
+   이 블록을 다시 스타일링하더라도 두 축을 섞지 말 것. */
 .h2-badge{margin-left:8px; vertical-align:2px}
 .det-alert{margin:14px 0 0; padding:12px 15px; border:1px solid var(--crit); border-left-width:3px; background:var(--crit-soft); border-radius:0 8px 8px 0; font-size:.86rem; line-height:1.65}
 .det-alert b{color:var(--crit)}
@@ -180,6 +182,12 @@ canvas{display:block; width:100%}
 .demo-foot .cta{margin-top:0}
 .demo-foot-note{display:block; margin-top:8px; font-size:.82rem; color:var(--muted)}
 .hm-scroll{overflow-x:auto}
+/* M17: 미리보기가 지어낸 14일 대신 실측 91일을 그린다. 그 바람에 이 블록
+   하나가 페이지의 42%를 먹고 아래 fleet 섹션이 스크롤 밖으로 밀렸다. 행을
+   빼는 대신 상자를 스크롤시킨다. 한 행도 안 빠지므로 위 총계가 여전히 상자
+   안의 내용 그대로를 가리킨다. fleet 히트맵은 짧아서 필요 없으니 미리보기에만
+   건다. */
+#secPreview .hm-scroll{max-height:min(60vh,540px); overflow-y:auto}
 table.hm{border-collapse:separate; border-spacing:2px; font-family:ui-monospace,'Cascadia Mono',Consolas,monospace; font-variant-numeric:tabular-nums; font-size:.72rem; min-width:760px}
 table.hm th{font-weight:500; color:var(--muted); padding:2px 2px; text-align:center; font-size:.66rem}
 table.hm th.day{text-align:right; padding-right:6px; font-size:.72rem}
@@ -257,8 +265,8 @@ table.subs tr.mine td{background:var(--ok-soft)}
   border:1px solid var(--ok); color:var(--ink); font-family:inherit;
   font-size:.68rem; font-weight:700; letter-spacing:.04em; vertical-align:1px}
 /* 환경별 분해. 실제 제출 데이터 전용이다. 표본 부족 안내는 일부러 앰버를
-   쓰지 않는다. 이 페이지에서 앰버는 예시 데이터 표시색이고, 둘이 같은
-   것으로 읽히면 안 된다. */
+   쓰지 않는다. 이 페이지에서 앰버 테두리는 "fleet 집계가 아니다"는 표시이고,
+   둘이 같은 것으로 읽히면 안 된다. */
 /* 축 선택기는 그동안 설명 없는 버튼 세 개였다. 제출이 1건인 상태에서는 눌러도
    문장 몇 글자만 바뀌고 그 외에는 아무 일도 없었다. 그래서 독자는 이게 무엇을
    하는 컨트롤인지도, 작동하는지도 알 수 없었다. 실제 반응이 "저거 바꿔도 글자만
@@ -280,9 +288,10 @@ table.subs tr.mine td{background:var(--ok-soft)}
 /* --- "모이면 이렇게 보인다" 예시(M11) -------------------------------------
    표본 하한 미만일 때만, 아직 정직하게 그릴 수 없는 비교표 자리에 함께 놓인다.
    .demo를 그대로 재사용한다. 위 미리보기 섹션과 같은 점선 앰버 테두리, 같은
-   앰버 배경, 같은 "예시 데이터" 배지다. 합성 숫자에 두 번째 시각 언어를 만드는
-   순간 합성 숫자가 관측으로 오인되기 시작한다. 녹색 "실제 제출 데이터" 배지는
-   fleet 차트·제출 목록·진짜 비교표의 것이고, 이 테두리 안에는 절대 붙지 않는다. */
+   앰버 배경이다. 앰버 테두리는 "fleet 집계가 아니다"는 뜻이고 여기도 그게 맞다.
+   다만 배지는 다르다. 이 블록의 숫자는 지어낸 것이므로 앰버 "예시 데이터"
+   배지를 달고, 위 미리보기는 실측이라 녹색 배지를 단다. 지어낸 숫자에 두 번째
+   시각 언어를 만드는 순간 지어낸 숫자가 관측으로 오인되기 시작한다. */
 .env-demo{margin-bottom:12px}
 .env-demo h3{font-size:.85rem; font-weight:700; margin:0 0 6px}
 .env-demo table{background:var(--surface); border-radius:6px}
@@ -410,10 +419,10 @@ a{color:inherit}
 </section>
 
 <section id="secPreview">
-  <h2>진단하면 이런 걸 본다 <span class="badge h2-badge">예시 데이터</span></h2>
-  <p class="desc">내 로그로 진단을 돌리면 돌아오는 화면이 이 모양이다. 아래 테두리 안의 숫자는 전부 <span class="mono">assets/demo.js</span>가 만든 <b>합성 예시</b>다. 관측 데이터도, 누군가의 제출 데이터도, 운영자 기계의 실측도 아니다.</p>
+  <h2>진단하면 이런 걸 본다 <span class="badge real h2-badge">운영자 기계 실측</span></h2>
+  <p class="desc">내 로그로 진단을 돌리면 돌아오는 화면이 이 모양이다. 아래 테두리 안의 숫자는 지어낸 값이 아니라 <b>운영자 기계 1대의 실측</b>이다(2026-05-28 ~ 2026-08-27, 91일, UTC+9). fleet 집계가 아니라 한 대짜리라서 테두리를 둘렀다. 만든 방법은 <span class="mono">scripts/build_preview.js</span>에 있고, 결과 파일은 <span class="mono">assets/preview.js</span>다.</p>
   <div class="demo">
-    <p class="demo-note"><b>왜 합성 예시여야 하나:</b> 제출 스키마에는 일별 집계만 있고 시간대별 항목이 아예 없다. 제출만으로 언제 일하는지가 드러나지 않도록 일부러 뺐다. 그래서 실제 제출로는 시간 단위 히트맵을 그릴 수 없고, 여기서도 쓰지 않는다.</p>
+    <p class="demo-note"><b>시간대가 왜 여기만 보이나:</b> 제출 스키마에는 일별 집계만 있고 시간대 항목이 아예 없다. 제출만으로 언제 일하는지가 드러나지 않도록 일부러 뺐고, 그 결정은 그대로다. 이 화면의 시간대는 <b>운영자가 자기 기계 것을 스스로 공개한 것</b>이지 누구에게서 걷은 값이 아니다. 제출하는 사람의 시간대는 애초에 수집되지 않는다. requestId와 로그 파일 경로는 이 파일에 없다. 생성기가 그 둘이 들어간 파일은 쓰지 않고 중단한다.</p>
     <div class="kpis">
       <div class="kpi"><div class="label">스캔한 요청</div><div class="val" id="dRequests">–</div></div>
       <div class="kpi crit"><div class="label">in-TTL 유실</div><div class="val" id="dLosses">–</div><div class="note">30분(메인) / 5분(서브에이전트) 안쪽</div></div>
@@ -441,7 +450,7 @@ a{color:inherit}
          클릭하지 않아도 표가 보인다. 히트맵의 가로 스크롤 박스 밖에 두어
          좁은 화면에서는 이 카드가 자기 스크롤을 갖게 한다. -->
     <div class="evt-panel" id="demoEvtPanel" role="region" tabindex="0"
-         aria-live="polite" aria-label="건별 상세(예시 데이터)"></div>
+         aria-live="polite" aria-label="건별 상세(운영자 기계 실측)"></div>
     <p class="demo-foot">
       <a class="cta" href="check.html">내 로그로 직접 돌려보기 →</a>
       <span class="demo-foot-note">파싱은 브라우저 안에서 일어난다. 로그 파일은 기기를 떠나지 않고, 공유 버튼을 누르기 전에는 아무것도 제출되지 않는다.</span>
@@ -634,7 +643,7 @@ a{color:inherit}
 </div>
 <script src="../assets/store.js"></script>
 <script src="../assets/charts.js"></script>
-<script src="../assets/demo.js"></script>
+<script src="../assets/preview.js"></script>
 <script>
 "use strict";
 /* ===== 이 페이지가 내려받는 것 (M14, M14.1) ==============================
@@ -1265,14 +1274,14 @@ function drawAll(){
   drawDemo();
 }
 
-/* ===== 예시 데이터 미리보기 =============================================
-   window.ObservatoryDemo(assets/demo.js의 합성 샘플)를 렌더한다. 위 fleet
-   데이터와 공유하는 것이 하나도 없다: fetch도, submissions.json도, 관측도
-   쓰지 않는다. 시간 단위 예시를 실제 제출로 만들 수 없는 이유는 demo.js
-   상단 주석에 적어 뒀다. */
+/* ===== 실측 미리보기 ====================================================
+   window.ObservatoryPreview(assets/preview.js)를 렌더한다. 기계 1대(운영자
+   것)를 사이트와 같은 엔진으로 훑어 만든 실측이고, 위 fleet 데이터와는 아무
+   것도 공유하지 않는다: fetch도, submissions.json도 쓰지 않는다. 제출로는
+   시간대를 걷지 않는데 여기엔 왜 있는지는 preview.js 상단 주석에 적어 뒀다. */
 
 function renderDemoKpis(){
-  var t = window.ObservatoryDemo.totals;
+  var t = window.ObservatoryPreview.totals;
   document.getElementById("dRequests").textContent = fmtInt(t.requests);
   document.getElementById("dLosses").textContent = fmtInt(t.losses);
   document.getElementById("dIron").textContent = fmtInt(t.iron);
@@ -1281,7 +1290,7 @@ function renderDemoKpis(){
 }
 
 function drawDemo(){
-  var D = window.ObservatoryDemo;
+  var D = window.ObservatoryPreview;
   if(!D) return;
   var days = D.days.map(function(d){
     return { label: mdLabel(d.date), count: d.losses, pct: d.requests > 0 ? 100 * d.losses / d.requests : 0 };
@@ -1299,7 +1308,7 @@ function drawDemo(){
   });
   ObservatoryCharts.renderUsageHeatmap(document.getElementById("demoHeatmap"), rows, {
     cellTitle: function(row, hour, rq, v){
-      return "예시 데이터 · " + row.key + " " + hh(hour) + "시 · 요청 " + rq + " · 유실 " + v;
+      return "운영자 기계 실측 · " + row.key + " " + hh(hour) + "시 · 요청 " + rq + " · 유실 " + v;
     },
     onSelect: function(row, hour){ selectDemoCell(row.key, hour); },
     onClear: function(){ clearDemoSelection(); },
@@ -1329,7 +1338,7 @@ var DEMO_DEFAULT = null;   // 데이터에서 골라낸 {date, hour}, 한 번만
    모든 방문자가 같은 셀을 보도록 결정적으로 고른다. */
 function demoDefaultCell(){
   var best = null;
-  window.ObservatoryDemo.events.forEach(function(list, key){
+  window.ObservatoryPreview.events.forEach(function(list, key){
     var p = key.split("#");
     var c = {
       date: p[0], hour: parseInt(p[1], 10), n: list.length,
@@ -1347,7 +1356,7 @@ function betterDemoCell(c, b){
 }
 
 function renderDemoDetail(){
-  var D = window.ObservatoryDemo;
+  var D = window.ObservatoryPreview;
   var p = document.getElementById("demoEvtPanel");
   if(!D || !p) return;
   if(!DEMO_DEFAULT) DEMO_DEFAULT = demoDefaultCell();
@@ -1360,8 +1369,8 @@ function renderDemoDetail(){
   // 예시 데이터 표기는 히트맵 툴팁과 같은 방식으로 이 카드 헤더에도 실린다.
   // 이 카드만 따로 캡처해 가도 그게 뭔지 그 안에 적혀 있어야 한다.
   var hint = picked
-    ? "(예시 데이터 · 선택한 시간대. 선택 해제: ×, ESC, 바깥 클릭, 셀 다시 클릭)"
-    : "(예시 데이터 · 예시에서 유실이 가장 몰린 시간대를 기본으로 띄웠다. 위 붉은 셀을 누르면 그 시간대가 여기 뜬다)";
+    ? "(운영자 기계 실측 · 선택한 시간대. 선택 해제: ×, ESC, 바깥 클릭, 셀 다시 클릭)"
+    : "(운영자 기계 실측 · 유실이 가장 몰린 시간대를 기본으로 띄웠다. 위 붉은 셀을 누르면 그 시간대가 여기 뜬다)";
   var html = "<div class='evt-head'><h3>" + cell.date + " " + hh(cell.hour) + "시 · 유실 " +
     rows.length + "건 · 재과금 " + (tot / 1e6).toFixed(2) + "M 토큰 " +
     "<span class='evt-hint'>" + hint + "</span></h3>" +
@@ -1379,7 +1388,7 @@ function renderDemoDetail(){
 }
 
 function selectDemoCell(date, hour){
-  var rows = window.ObservatoryDemo.events.get(date + "#" + hour);
+  var rows = window.ObservatoryPreview.events.get(date + "#" + hour);
   if(!rows || !rows.length){ clearDemoSelection(); return; }
   DEMO_SEL = { date: date, hour: hour };
   renderDemoDetail();
