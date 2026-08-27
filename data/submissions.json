@@ -19,6 +19,50 @@
       "daily_days": 89,
       "detail": "data/subs/sub-20260824115135-75fb.json",
       "script_version": "web-1.0"
+    },
+    {
+      "id": "sub-20260827051712-9265",
+      "submitted_at": "2026-08-27",
+      "nickname": "anonymous",
+      "plan": "unknown",
+      "client": "unknown",
+      "concurrent_sessions": "unknown",
+      "period_start": "2026-05-28",
+      "period_end": "2026-08-27",
+      "totals": {
+        "requests": 210018,
+        "in_ttl_losses": 267,
+        "iron_losses": 188,
+        "wasted_tokens": 64586043
+      },
+      "daily_days": 91,
+      "detail": "data/subs/sub-20260827051712-9265.json",
+      "script_version": "web-1.0",
+      "detector": {
+        "reasons": [
+          "messages_changed",
+          "model_changed",
+          "previous_message_not_found",
+          "system_changed",
+          "tools_changed",
+          "unavailable"
+        ],
+        "versions": [
+          "(other)",
+          "2.1.143",
+          "2.1.145",
+          "2.1.170",
+          "2.1.181",
+          "2.1.191",
+          "2.1.198",
+          "2.1.211",
+          "2.1.217",
+          "2.1.220",
+          "2.1.222",
+          "2.1.233",
+          "2.1.241"
+        ]
+      }
     }
   ]
 }
