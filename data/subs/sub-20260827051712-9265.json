@@ -1,10 +1,13 @@
 {
   "schema_version": 1,
   "id": "sub-20260827051712-9265",
-  "period_start": "2026-05-28",
+  "period_start": "2026-05-25",
   "period_end": "2026-08-27",
-  "totals": {"requests": 210018, "in_ttl_losses": 267, "iron_losses": 188, "wasted_tokens": 64586043},
+  "totals": {"requests": 210289, "in_ttl_losses": 267, "iron_losses": 188, "wasted_tokens": 64586043},
   "daily": [
+    {"date": "2026-05-25", "requests": 42, "losses": 0, "wasted_tokens": 0},
+    {"date": "2026-05-26", "requests": 181, "losses": 0, "wasted_tokens": 0},
+    {"date": "2026-05-27", "requests": 48, "losses": 0, "wasted_tokens": 0},
     {"date": "2026-05-28", "requests": 4093, "losses": 1, "wasted_tokens": 786627},
     {"date": "2026-05-29", "requests": 1124, "losses": 0, "wasted_tokens": 0},
     {"date": "2026-05-30", "requests": 773, "losses": 1, "wasted_tokens": 353857},

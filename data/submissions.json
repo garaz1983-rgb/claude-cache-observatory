@@ -2,40 +2,21 @@
   "schema_version": 2,
   "submissions": [
     {
-      "id": "sub-20260824115135-75fb",
-      "submitted_at": "2026-08-24",
-      "nickname": "anonymous",
-      "plan": "unknown",
-      "client": "unknown",
-      "concurrent_sessions": "unknown",
-      "period_start": "2026-05-25",
-      "period_end": "2026-08-24",
-      "totals": {
-        "requests": 153623,
-        "in_ttl_losses": 228,
-        "iron_losses": 162,
-        "wasted_tokens": 53879382
-      },
-      "daily_days": 89,
-      "detail": "data/subs/sub-20260824115135-75fb.json",
-      "script_version": "web-1.0"
-    },
-    {
       "id": "sub-20260827051712-9265",
       "submitted_at": "2026-08-27",
       "nickname": "anonymous",
       "plan": "unknown",
       "client": "unknown",
       "concurrent_sessions": "unknown",
-      "period_start": "2026-05-28",
+      "period_start": "2026-05-25",
       "period_end": "2026-08-27",
       "totals": {
-        "requests": 210018,
+        "requests": 210289,
         "in_ttl_losses": 267,
         "iron_losses": 188,
         "wasted_tokens": 64586043
       },
-      "daily_days": 91,
+      "daily_days": 94,
       "detail": "data/subs/sub-20260827051712-9265.json",
       "script_version": "web-1.0",
       "detector": {
