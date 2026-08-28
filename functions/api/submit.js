@@ -223,7 +223,7 @@ const SESSIONS_ENUM = ["single", "multi", "unknown"];
 const TOP_FIELDS = [
   "nickname", "plan", "client", "concurrent_sessions",
   "period_start", "period_end", "totals", "daily", "script_version",
-  "anchors", "token", "detector"
+  "anchors", "token", "detector", "hourly"
 ];
 const TOP_REQUIRED = [
   "plan", "client", "concurrent_sessions",
@@ -274,6 +274,10 @@ const TOKEN_BYTES = 16;
    hand-edit. */
 const INDEX_PATH = "data/submissions.json";
 const FLEET_PATH = "data/daily.json";
+/* M19: the fleet's hour axis. Opt-in only — the file exists exactly when at
+   least one detail file carries an hourly block. */
+const HOURLY_PATH = "data/hourly.json";
+const HOURLY_SCHEMA_VERSION = 1;
 const IDENTITY_PATH = "data/identity.json";
 const SUBS_PREFIX = "data/subs/";
 const INDEX_SCHEMA_VERSION = 2;
@@ -315,6 +319,9 @@ const CONFLICT_RETRY_AFTER_MAX = 6;
 const BLOB_MODE = "100644";
 const DETAIL_ROW_KEYS = ["date", "requests", "losses", "pmnf", "wasted_tokens"];
 const FLEET_ROW_KEYS = ["date", "requests", "losses", "pmnf", "wasted_tokens", "machines"];
+const HOURLY_FIELDS = ["date", "requests", "losses"];
+const HOURLY_ROW_KEYS = HOURLY_FIELDS;
+const FLEET_HOURLY_ROW_KEYS = ["date", "requests", "losses", "active", "machines"];
 
 function jsonResponse(status, body) {
   return new Response(JSON.stringify(body), {
@@ -505,6 +512,47 @@ function validateSchema(body) {
     }
   }
 
+  /* M19 hourly. Optional and OPT-IN: its absence is the default and means
+     "this machine chose not to publish its hours", never an error. Shape only
+     here; the arithmetic that ties it to daily lives in validateSanity, where
+     daily itself has already been checked. */
+  if ("hourly" in body) {
+    if (!Array.isArray(body.hourly)) {
+      errors.push("hourly: must be an array");
+    } else {
+      if (body.hourly.length > MAX_DAILY_ENTRIES) {
+        errors.push("hourly: more than " + MAX_DAILY_ENTRIES + " entries");
+      }
+      body.hourly.forEach(function (entry, i) {
+        if (!isPlainObject(entry)) {
+          errors.push("hourly[" + i + "]: must be an object");
+          return;
+        }
+        for (const key of Object.keys(entry)) {
+          if (HOURLY_FIELDS.indexOf(key) === -1) {
+            errors.push("undefined field: hourly[" + i + "]." + key);
+          }
+        }
+        if (parseDay(entry.date) === null) {
+          errors.push("hourly[" + i + "].date: must be a valid YYYY-MM-DD date");
+        }
+        for (const key of ["requests", "losses"]) {
+          const col = entry[key];
+          if (!Array.isArray(col) || col.length !== 24) {
+            errors.push("hourly[" + i + "]." + key + ": must be an array of exactly 24 entries");
+          } else {
+            for (let h = 0; h < 24; h++) {
+              if (!isCount(col[h])) {
+                errors.push("hourly[" + i + "]." + key + "[" + h + "]: must be a non-negative integer");
+                break;
+              }
+            }
+          }
+        }
+      });
+    }
+  }
+
   /* M15 detector. Optional: a submission from an older client carries none,
      and that is not an error — it means "this machine did not report which
      reason names it saw", which the fleet page states rather than guesses. */
@@ -618,6 +666,41 @@ function validateSanity(body) {
   if (sumPmnf !== t.pmnf_losses) {
     errors.push("daily pmnf sum " + sumPmnf +
       " != totals.pmnf_losses " + t.pmnf_losses);
+  }
+
+  /* M19: the hourly block is a decomposition of the daily rows — same date
+     set, and each row's 24 columns sum to that daily row. Anything else could
+     smuggle an hour-level claim the daily rows do not back. */
+  if (Array.isArray(body.hourly)) {
+    const byDate = new Map();
+    body.daily.forEach(function (d) { byDate.set(d.date, d); });
+    const seenHourly = new Set();
+    body.hourly.forEach(function (entry, i) {
+      if (seenHourly.has(entry.date)) {
+        errors.push("hourly[" + i + "].date duplicates " + entry.date);
+        return;
+      }
+      seenHourly.add(entry.date);
+      const day = byDate.get(entry.date);
+      if (!day) {
+        errors.push("hourly[" + i + "].date " + entry.date + " has no daily row");
+        return;
+      }
+      let hr = 0, hl = 0;
+      for (let h = 0; h < 24; h++) { hr += entry.requests[h]; hl += entry.losses[h]; }
+      if (hr !== day.requests) {
+        errors.push("hourly[" + entry.date + "] requests sum " + hr +
+          " != daily " + day.requests);
+      }
+      if (hl !== day.losses) {
+        errors.push("hourly[" + entry.date + "] losses sum " + hl +
+          " != daily " + day.losses);
+      }
+    });
+    if (errors.length === 0 && seenHourly.size !== body.daily.length) {
+      errors.push("hourly covers " + seenHourly.size + " of " +
+        body.daily.length + " daily dates — opt-in is all-or-nothing per submission");
+    }
   }
   if (sumWasted !== t.wasted_tokens) {
     errors.push("daily wasted_tokens sum " + sumWasted +
@@ -767,6 +850,9 @@ function buildIncoming(body) {
       };
     }),
     script_version: body.script_version,
+    hourly: Array.isArray(body.hourly) ? body.hourly.map(function (h) {
+      return { date: h.date, requests: h.requests.slice(), losses: h.losses.slice() };
+    }) : null,
     // Sorted here, not trusted from the client: the published order is this
     // server's, so a diff of the public file stays readable whatever order a
     // submitter happened to send.
@@ -817,7 +903,7 @@ function detailPath(id) {
    purpose: a reader who opens only this file can still add its own rows up and
    check them, and a reader who has both can check the two against each other. */
 function buildDetail(id, fields) {
-  return {
+  const detail = {
     schema_version: DETAIL_SCHEMA_VERSION,
     id: id,
     period_start: fields.period_start,
@@ -825,6 +911,11 @@ function buildDetail(id, fields) {
     totals: fields.totals,
     daily: fields.daily
   };
+  // M19: present exactly when this machine's stored history carries hours.
+  if (Array.isArray(fields.hourly) && fields.hourly.length) {
+    detail.hourly = fields.hourly;
+  }
+  return detail;
 }
 
 /* ---------- serialisation ----------
@@ -873,13 +964,30 @@ function serializeIndex(doc) {
 }
 
 function serializeDetail(detail) {
-  return serializeRowFile([
+  const base = serializeRowFile([
     ["schema_version", JSON.stringify(detail.schema_version)],
     ["id", JSON.stringify(detail.id)],
     ["period_start", JSON.stringify(detail.period_start)],
     ["period_end", JSON.stringify(detail.period_end)],
     ["totals", inlineRow(detail.totals, TOTALS_FIELDS)]
   ], "daily", detail.daily, DETAIL_ROW_KEYS);
+  if (!Array.isArray(detail.hourly) || !detail.hourly.length) return base;
+  // M19: a second row section, same one-line-per-date shape as daily. The
+  // base always ends "  ]\n}\n" (a detail's daily is never empty), and that
+  // exact tail is asserted rather than assumed: appending after a mismatched
+  // cut would publish an unparseable file.
+  const tail = "  ]\n}\n";
+  if (base.slice(-tail.length) !== tail) {
+    throw new Error("serializeDetail: unexpected base tail");
+  }
+  const lines = [base.slice(0, base.length - tail.length) + "  ],",
+                 "  \"hourly\": ["];
+  for (let i = 0; i < detail.hourly.length; i++) {
+    lines.push("    " + inlineRow(detail.hourly[i], HOURLY_ROW_KEYS) +
+      (i === detail.hourly.length - 1 ? "" : ","));
+  }
+  lines.push("  ]", "}");
+  return lines.join("\n") + "\n";
 }
 
 function serializeFleet(fleet) {
@@ -1031,6 +1139,16 @@ function dailyRowOf(d) {
            pmnf: d.pmnf, wasted_tokens: d.wasted_tokens };
 }
 
+function hourlyRowOf(d) {
+  if (!isPlainObject(d) || parseDay(d.date) === null) return null;
+  for (const key of ["requests", "losses"]) {
+    const col = d[key];
+    if (!Array.isArray(col) || col.length !== 24) return null;
+    for (let h = 0; h < 24; h++) if (!isCount(col[h])) return null;
+  }
+  return { date: d.date, requests: d.requests.slice(), losses: d.losses.slice() };
+}
+
 /* Union the daily rows by date and recompute the totals from the result.
  *
  * The incoming row wins for a date both cover: it is the fresher measurement
@@ -1053,6 +1171,29 @@ function dailyRowOf(d) {
    caller has to read before it may merge. Passing them in rather than reaching
    for `existing.daily` is what makes it impossible to "merge" against a row
    whose history was never loaded and silently rewrite its totals downward. */
+function mergeHourly(existingHourly, incoming) {
+  /* The hour rows follow the same per-date rule as the daily rows: the
+     incoming submission wins every date it covers — INCLUDING by absence.
+     A window resubmitted without the checkbox takes its dates' hours out,
+     which is the opt-out the check page promises. Kept dates keep theirs. */
+  const byDate = new Map();
+  (Array.isArray(existingHourly) ? existingHourly : []).forEach(function (h) {
+    const row = hourlyRowOf(h);
+    if (row) byDate.set(row.date, row);
+  });
+  const covered = new Set();
+  incoming.daily.forEach(function (d) { covered.add(d.date); });
+  covered.forEach(function (date) { byDate.delete(date); });
+  (Array.isArray(incoming.hourly) ? incoming.hourly : []).forEach(function (h) {
+    byDate.set(h.date, { date: h.date, requests: h.requests.slice(),
+                         losses: h.losses.slice() });
+  });
+  const out = Array.from(byDate.values()).sort(function (a, b) {
+    return a.date < b.date ? -1 : (a.date > b.date ? 1 : 0);
+  });
+  return out.length ? out : null;
+}
+
 function mergeRecord(existing, existingDaily, incoming) {
   const byDate = new Map();
   const exDaily = Array.isArray(existingDaily) ? existingDaily : [];
@@ -1224,6 +1365,79 @@ function applyFleetDelta(fleet, oldDaily, newDaily) {
   return { schema_version: FLEET_SCHEMA_VERSION, days: out };
 }
 
+function fleetHourlyRowOf(d) {
+  if (!isPlainObject(d) || parseDay(d.date) === null) return null;
+  for (const key of ["requests", "losses", "active"]) {
+    const col = d[key];
+    if (!Array.isArray(col) || col.length !== 24) return null;
+    for (let h = 0; h < 24; h++) if (!isCount(col[h])) return null;
+  }
+  if (!isCount(d.machines)) return null;
+  return { date: d.date, requests: d.requests.slice(), losses: d.losses.slice(),
+           active: d.active.slice(), machines: d.machines };
+}
+
+/* data/hourly.json, maintained as a delta exactly like data/daily.json: this
+   machine's OLD hour rows come out, its NEW ones go in. `active[h]` counts the
+   machines with any request in that hour — the number every heatmap cell's
+   credibility rests on, so the page can say "this cell is one machine". */
+function applyFleetHourlyDelta(doc, oldHourly, newHourly) {
+  const byDate = new Map();
+  const days = doc && Array.isArray(doc.days) ? doc.days : [];
+  for (let i = 0; i < days.length; i++) {
+    const row = fleetHourlyRowOf(days[i]);
+    if (!row) continue;           // hand-edited input must not poison the series
+    byDate.set(row.date, row);
+  }
+  (Array.isArray(oldHourly) ? oldHourly : []).forEach(function (h) {
+    const r = hourlyRowOf(h);
+    if (!r) return;
+    const cur = byDate.get(r.date);
+    if (!cur) return;
+    for (let hh = 0; hh < 24; hh++) {
+      cur.requests[hh] -= r.requests[hh];
+      cur.losses[hh] -= r.losses[hh];
+      if (r.requests[hh] > 0) cur.active[hh] -= 1;
+    }
+    cur.machines -= 1;
+  });
+  (Array.isArray(newHourly) ? newHourly : []).forEach(function (r) {
+    let cur = byDate.get(r.date);
+    if (!cur) {
+      cur = { date: r.date, requests: new Array(24), losses: new Array(24),
+              active: new Array(24), machines: 0 };
+      for (let hh = 0; hh < 24; hh++) {
+        cur.requests[hh] = 0; cur.losses[hh] = 0; cur.active[hh] = 0;
+      }
+      byDate.set(r.date, cur);
+    }
+    for (let hh = 0; hh < 24; hh++) {
+      cur.requests[hh] += r.requests[hh];
+      cur.losses[hh] += r.losses[hh];
+      if (r.requests[hh] > 0) cur.active[hh] += 1;
+    }
+    cur.machines += 1;
+  });
+  const out = [];
+  byDate.forEach(function (d) {
+    if (d.machines <= 0) return;  // a date nobody vouches for is dropped
+    for (let hh = 0; hh < 24; hh++) {
+      if (d.requests[hh] < 0) d.requests[hh] = 0;
+      if (d.losses[hh] < 0) d.losses[hh] = 0;
+      if (d.active[hh] < 0) d.active[hh] = 0;
+    }
+    out.push(d);
+  });
+  out.sort(function (a, b) { return a.date < b.date ? -1 : (a.date > b.date ? 1 : 0); });
+  return { schema_version: HOURLY_SCHEMA_VERSION, days: out };
+}
+
+function serializeFleetHourly(doc) {
+  return serializeRowFile([
+    ["schema_version", JSON.stringify(doc.schema_version)]
+  ], "days", doc.days, FLEET_HOURLY_ROW_KEYS);
+}
+
 function ghFetch(url, token, options) {
   const headers = {
     "Authorization": "Bearer " + token,
@@ -1327,7 +1541,7 @@ async function readState(api, token, branch) {
   if (root.status !== 200) return null;
   if (treeTruncated(root.body)) return null;
 
-  let indexSha = "", fleetSha = "", identitySha = "", subsSha = "";
+  let indexSha = "", fleetSha = "", identitySha = "", subsSha = "", hourlySha = "";
   const dataDir = treeEntry(root.body, "data", "tree");
   if (dataDir) {
     const dataTree = await ghJson(api + "/git/trees/" + dataDir.sha, token);
@@ -1337,10 +1551,12 @@ async function readState(api, token, branch) {
     const f = treeEntry(dataTree.body, "daily.json", "blob");
     const n = treeEntry(dataTree.body, "identity.json", "blob");
     const s = treeEntry(dataTree.body, "subs", "tree");
+    const hq = treeEntry(dataTree.body, "hourly.json", "blob");
     if (i) indexSha = i.sha;
     if (f) fleetSha = f.sha;
     if (n) identitySha = n.sha;
     if (s) subsSha = s.sha;
+    if (hq) hourlySha = hq.sha;
   }
 
   /* 🔴 M14.2: the three blobs are read TOGETHER. Their shas are all known by
@@ -1349,10 +1565,11 @@ async function readState(api, token, branch) {
      them was time this submission spent inside the window somebody else can
      move the branch in. Nothing else about the read changes: the guards below
      are the same guards, applied to the same three answers. */
-  const [indexBlob, fleetBlob, identityBlob] = await Promise.all([
+  const [indexBlob, fleetBlob, identityBlob, hourlyBlob] = await Promise.all([
     indexSha ? readJsonBlob(api, token, indexSha) : null,
     fleetSha ? readJsonBlob(api, token, fleetSha) : null,
-    identitySha ? readJsonBlob(api, token, identitySha) : null
+    identitySha ? readJsonBlob(api, token, identitySha) : null,
+    hourlySha ? readJsonBlob(api, token, hourlySha) : null
   ]);
 
   let index = { schema_version: INDEX_SCHEMA_VERSION, submissions: [] };
@@ -1376,7 +1593,18 @@ async function readState(api, token, branch) {
     if (!isPlainObject(doc) || !isPlainObject(doc.identities)) return null;
     identities = doc.identities;
   }
+  // M19: absent = nobody has opted in yet, a valid dataset (and the state of
+  // this repository before the first hourly submission). Present but
+  // unreadable is a hard failure, like the other three.
+  let hourly = { schema_version: HOURLY_SCHEMA_VERSION, days: [] };
+  if (hourlySha) {
+    const doc = hourlyBlob;
+    if (!isPlainObject(doc) || !Array.isArray(doc.days)) return null;
+    hourly = doc;
+  }
   return {
+    hourly: hourly,
+    hourlySha: hourlySha,
     headSha: headSha,
     rootTreeSha: rootTreeSha,
     subsSha: subsSha,
@@ -1436,7 +1664,20 @@ async function readDetailDaily(api, token, subsSha, id) {
     if (!row) return null;
     rows.push(row);
   }
-  return rows;
+  // M19: the hourly block rides along. Present-but-malformed is the same hard
+  // refusal as a malformed daily row — a lost date cannot be subtracted from
+  // the fleet's hour axis either.
+  let hourlyRows = null;
+  if ("hourly" in detail) {
+    if (!Array.isArray(detail.hourly)) return null;
+    hourlyRows = [];
+    for (let i = 0; i < detail.hourly.length; i++) {
+      const row = hourlyRowOf(detail.hourly[i]);
+      if (!row) return null;
+      hourlyRows.push(row);
+    }
+  }
+  return { daily: rows, hourly: hourlyRows };
 }
 
 /* blobs -> tree -> commit -> ref, in that order, which is what makes every file
@@ -1580,7 +1821,7 @@ async function commitSubmission(env, incoming, ident, issued, now) {
     const identity = buildIdentity(prevIdentity, ident,
       needsToken ? issued.tokenHash : "");
 
-    let id, submittedAt, updatedAt, fields, previousDaily;
+    let id, submittedAt, updatedAt, fields, previousDaily, previousHourly;
     if (merged) {
       // The id addresses a FILE now, so a row whose id is not the shape this
       // API mints is not merged into at all. Minting a fresh id here instead
@@ -1589,15 +1830,19 @@ async function commitSubmission(env, incoming, ident, issued, now) {
       id = typeof previous.id === "string" && SUB_ID_RE.test(previous.id)
         ? previous.id : "";
       if (!id) return { ok: false };
-      previousDaily = await readDetailDaily(api, token, state.subsSha, id);
-      if (previousDaily === null) return { ok: false };
+      const previousDetail = await readDetailDaily(api, token, state.subsSha, id);
+      if (previousDetail === null) return { ok: false };
+      previousDaily = previousDetail.daily;
+      previousHourly = previousDetail.hourly;
       fields = mergeRecord(previous, previousDaily, incoming);
+      fields.hourly = mergeHourly(previousHourly, incoming);
       submittedAt = typeof previous.submitted_at === "string" &&
         /^\d{4}-\d{2}-\d{2}$/.test(previous.submitted_at) ? previous.submitted_at : today;
       updatedAt = today;
     } else {
       id = newSubmissionId(now);
       previousDaily = [];
+      previousHourly = null;
       fields = incoming;
       submittedAt = today;
       updatedAt = "";
@@ -1643,6 +1888,17 @@ async function commitSubmission(env, incoming, ident, issued, now) {
         text: serializeFleet(applyFleetDelta(state.fleet, previousDaily, fields.daily)) },
       { path: detailPath(id), text: serializeDetail(buildDetail(id, fields)) }
     ];
+    /* M19: the hour axis is written only when this submission actually moves
+       it — its own hours going in, or stored hours being superseded out. An
+       ordinary submission neither creates the file nor touches it. */
+    const newHourly = Array.isArray(fields.hourly) ? fields.hourly : null;
+    if ((previousHourly && previousHourly.length) || (newHourly && newHourly.length)) {
+      files.push({
+        path: HOURLY_PATH,
+        text: serializeFleetHourly(
+          applyFleetHourlyDelta(state.hourly, previousHourly, newHourly))
+      });
+    }
 
     const written = await writeCommit(api, token, branch, state, files,
       commitMessage(record, merged));

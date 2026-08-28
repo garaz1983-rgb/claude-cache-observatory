@@ -115,6 +115,13 @@ V3_EXPECTED_TOTALS = {
 }
 V3_EXPECTED_DAILY = [{"date": "2026-08-20", "requests": 13, "losses": 5,
                       "pmnf": 2, "wasted_tokens": 540000}]
+# Every fixture record is stamped 10:0x-10:12Z, so the whole day collapses
+# into hour 10: 13 requests, and the 5 counted losses (r1, r2, r10, r11, r12).
+V3_EXPECTED_HOURLY = [{
+    "date": "2026-08-20",
+    "requests": [0] * 10 + [13] + [0] * 13,
+    "losses": [0] * 10 + [5] + [0] * 13,
+}]
 
 NODE_FALLBACKS = [
     r"C:\Program Files\nodejs\node.exe",
@@ -195,6 +202,11 @@ def check_detector(node, errors):
     if js.get("detector") != cli.get("detector"):
         errors.append("detector: js and cli blocks differ")
 
+    js_hourly = check_hourly("detector", js, "js", errors)
+    cli_hourly = check_hourly("detector", cli, "cli", errors)
+    if js_hourly != cli_hourly:
+        errors.append("detector: js and cli hourly rows differ")
+
     for key, want in sorted(DETECTOR_TOTALS.items()):
         for label, doc in (("js", js), ("cli", cli)):
             got = (doc.get("totals") or {}).get(key)
@@ -228,6 +240,35 @@ def check_v3(node, errors):
         p = got_totals.get("probable_losses") or 0
         if (got_totals.get("iron_losses") or 0) > c + p:
             errors.append("v3(%s): iron exceeds confirmed+probable" % label)
+        got_hourly = check_hourly("v3", doc, label, errors)
+        if got_hourly != V3_EXPECTED_HOURLY:
+            errors.append("v3 hourly(%s) != hand-computed expectation" % label)
+
+
+def check_hourly(tag, doc, label, errors, daily_key="daily"):
+    """The hourly rows must be the identity decomposition of the daily rows:
+    same dates, in order, each row exactly 24 non-negative ints, and each
+    row's sums equal to that daily row. Holds for ANY input."""
+    hourly = doc.get("hourly") if label == "cli" else doc.get("wire_hourly")
+    daily = doc.get(daily_key) or []
+    if not isinstance(hourly, list):
+        errors.append("%s(%s): no hourly block" % (tag, label))
+        return None
+    if [h.get("date") for h in hourly] != [d.get("date") for d in daily]:
+        errors.append("%s(%s): hourly dates differ from daily dates" % (tag, label))
+        return hourly
+    for h, d in zip(hourly, daily):
+        for key, want in (("requests", d.get("requests")),
+                          ("losses", d.get("losses"))):
+            col = h.get(key)
+            if (not isinstance(col, list) or len(col) != 24 or
+                    any((not isinstance(v, int)) or v < 0 for v in col)):
+                errors.append("%s(%s): hourly[%s].%s is not 24 non-negative ints"
+                              % (tag, label, h.get("date"), key))
+            elif sum(col) != want:
+                errors.append("%s(%s): hourly[%s].%s sums to %d, daily says %d"
+                              % (tag, label, h.get("date"), key, sum(col), want))
+    return hourly
 
 
 def parse_cli_output(out):
@@ -360,6 +401,12 @@ def main():
         if day_sums[day_key] != total_val:
             errors.append("daily sum %s=%r != totals.%s=%r"
                           % (day_key, day_sums[day_key], total_name, total_val))
+
+    # M19: the hourly decomposition. The identity check runs on the JS doc
+    # (the CLI's table mode has no hourly), and the fixture-level equality of
+    # the two engines' hourly rows is asserted in check_v3/check_detector,
+    # which drive both engines in --json mode.
+    check_hourly("main", js, "js", errors)
 
     # JS-only hostile fixtures: malformed cc must coerce to 0, never leak
     # a non-int into totals (the DOM XSS vector the coercion closes).

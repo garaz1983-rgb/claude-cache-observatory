@@ -37,5 +37,14 @@ if (!root) {
   process.stderr.write("usage: node run_parse.js <fixture_dir>\n");
   process.exit(2);
 }
-var result = engine.parseFiles(collect(root, "", []));
+/* M19: driven through createScan with the census on, because that is the
+   path the check page actually runs and the only one that emits wire_hourly.
+   The census itself is a Map (not JSON-serialisable) and is display-side, so
+   it is dropped before printing. */
+var files = collect(root, "", []);
+var scan = engine.createScan({ census: true });
+for (var i = 0; i < files.length; i++) scan.addFile(files[i].name, files[i].text);
+var result = scan.finish();
+delete result.files;
+delete result.census;
 process.stdout.write(JSON.stringify(result));

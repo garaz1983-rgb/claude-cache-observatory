@@ -349,8 +349,8 @@ MUTATIONS = [
      "    cur.requests -= r.requests;",
      "    cur.requests -= 0;", "contract"),
     ("S55_fleet_machines_not_counted", SUBMIT_JS_REL,
-     "    cur.machines += 1;",
-     "    cur.machines += 0;", "contract"),
+     "    cur.wasted_tokens += r.wasted_tokens;\n    cur.machines += 1;",
+     "    cur.wasted_tokens += r.wasted_tokens;\n    cur.machines += 0;", "contract"),
     # NOT mutated: the `machines <= 0` drop in applyFleetDelta. The merge unions
     # dates and never removes one, so that branch cannot be reached by any
     # sequence of submissions — mutating it would be an equivalent mutant, and
@@ -362,8 +362,8 @@ MUTATIONS = [
     # recomputes the row's totals from the incoming submission alone and
     # deletes that machine's history from a public file.
     ("S57_merge_without_history", SUBMIT_JS_REL,
-     "      if (previousDaily === null) return { ok: false };",
-     "      if (previousDaily === null) previousDaily = [];", "contract"),
+     "      if (previousDetail === null) return { ok: false };",
+     "      if (previousDetail === null) previousDetail = { daily: [], hourly: null };", "contract"),
     ("S58_detail_totals_zeroed", SUBMIT_JS_REL,
      "    totals: fields.totals,",
      "    totals: { requests: 0, in_ttl_losses: 0, iron_losses: 0, wasted_tokens: 0 },",
@@ -502,8 +502,8 @@ MUTATIONS = [
     # edit it, which is the universe these guards were written for. case31
     # reaches them, so they are covered instead of argued about.
     ("S80_fleet_phantom_day_kept", SUBMIT_JS_REL,
-     "    if (d.machines <= 0) return;",
-     "    if (false) return;", "contract"),
+     "    if (d.machines <= 0) return;\n    out.push({",
+     "    if (false) return;\n    out.push({", "contract"),
     ("S81_fleet_requests_not_clamped", SUBMIT_JS_REL,
      "      requests: Math.max(0, d.requests),",
      "      requests: d.requests,", "contract"),
@@ -668,6 +668,42 @@ MUTATIONS = [
     ("V10_pmnf_sum_unchecked", SUBMIT_JS_REL,
      "  if (sumPmnf !== t.pmnf_losses) {",
      "  if (false) {", "contract"),
+    # -- M19: the opt-in hour channel. H-series = arithmetic and merge; the
+    # C-pair is the privacy gate itself — a page that ships hours with the
+    # checkbox unchecked is the one failure this milestone exists to prevent,
+    # and the localtime probe asserts absence on the unchecked build.
+    ("H01_loss_hour_shifted", PARSE_JS_REL,
+     "          lh[new Date(r.epochMs + r.offsetMinutes * 60000).getUTCHours()] += 1;",
+     "          lh[(new Date(r.epochMs + r.offsetMinutes * 60000).getUTCHours() + 1) % 24] += 1;",
+     "parity"),
+    ("H02_wire_hourly_dead", PARSE_JS_REL,
+     "        out.wire_hourly = wire;",
+     "        void wire;", "parity"),
+    ("H03_cli_hour_shifted", CLI_PY_REL,
+     "        hours_req[dt.strftime(\"%Y-%m-%d\")][dt.hour] += 1",
+     "        hours_req[dt.strftime(\"%Y-%m-%d\")][(dt.hour + 1) % 24] += 1",
+     "parity"),
+    ("H04_sum_gate_dead", SUBMIT_JS_REL,
+     "      if (hr !== day.requests) {",
+     "      if (false) {", "contract"),
+    ("H05_partial_coverage_allowed", SUBMIT_JS_REL,
+     "    if (errors.length === 0 && seenHourly.size !== body.daily.length) {",
+     "    if (false) {", "contract"),
+    ("H06_fleet_subtract_skipped", SUBMIT_JS_REL,
+     "      cur.requests[hh] -= r.requests[hh];",
+     "      cur.requests[hh] -= 0;", "contract"),
+    ("H07_active_never_counted", SUBMIT_JS_REL,
+     "      if (r.requests[hh] > 0) cur.active[hh] += 1;",
+     "      if (false) cur.active[hh] += 1;", "contract"),
+    ("H08_optout_keeps_hours", SUBMIT_JS_REL,
+     "  covered.forEach(function (date) { byDate.delete(date); });",
+     "  void covered;", "contract"),
+    ("C54_hourly_gate_forced_on", CHECK_HTML_REL,
+     "  if(hEl && hEl.checked && Array.isArray(r.wire_hourly)){",
+     "  if(Array.isArray(r.wire_hourly)){", "localtime"),
+    ("C55_hourly_gate_forced_on_ko", CHECK_HTML_KO_REL,
+     "  if(hEl && hEl.checked && Array.isArray(r.wire_hourly)){",
+     "  if(Array.isArray(r.wire_hourly)){", "localtime"),
 ]
 
 

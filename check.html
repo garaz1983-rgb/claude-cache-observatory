@@ -460,6 +460,10 @@ a{color:inherit}
           </select>
         </div>
       </div>
+      <div class="hourly-opt">
+        <label><input type="checkbox" id="subHourly"> Also publish the hour-by-hour counts (24 UTC columns)</label>
+        <p class="tz-note">When checked, this submission's requests and losses are published per hour of the day, which means <b>the hours you tend to work become visible in a public repository</b>. Off by default. Resubmitting the same window later with this unchecked removes that window's hours.</p>
+      </div>
       <details class="preview">
         <summary>Exact JSON that will be sent</summary>
         <p class="tz-mismatch" id="tzPayloadNote"></p>
@@ -838,7 +842,7 @@ function validateCliJson(text){
   catch(e){ return { errors: ["Not valid JSON: " + e.message] }; }
   if(!isObj(o)) return { errors: ["Top level must be a JSON object (run the script with --json and paste its whole output)"] };
   Object.keys(o).forEach(function(k){
-    if(["script_version", "totals", "daily", "detector"].indexOf(k) === -1) errs.push("unexpected field: " + k);
+    if(["script_version", "totals", "daily", "detector", "hourly"].indexOf(k) === -1) errs.push("unexpected field: " + k);
   });
   var t = o.totals;
   if(!isObj(t)){
@@ -895,6 +899,41 @@ function validateCliJson(text){
     errs.push("script_version: must be a short tag like cli-3.0");
   }
   var det = validateDetector(o.detector, errs);
+  /* M19: the CLI's --json always carries hourly. Checked against the same
+     identity the server enforces: daily's date set, 24 non-negative ints,
+     column sums equal to that daily row. */
+  var hv = null;
+  if(o.hourly !== undefined){
+    if(!Array.isArray(o.hourly)){
+      errs.push("hourly: must be an array");
+    } else {
+      var hByDate = {};
+      (Array.isArray(d) ? d : []).forEach(function(e){ if(e && e.date) hByDate[e.date] = e; });
+      var hSeen = {};
+      o.hourly.forEach(function(h, i){
+        if(!isObj(h) || typeof h.date !== "string"){ errs.push("hourly[" + i + "]: malformed row"); return; }
+        if(hSeen[h.date]){ errs.push("hourly[" + i + "].date: duplicate " + h.date); return; }
+        hSeen[h.date] = true;
+        var day = hByDate[h.date];
+        if(!day){ errs.push("hourly[" + i + "].date " + h.date + ": no daily row"); return; }
+        ["requests", "losses"].forEach(function(k){
+          var col = h[k];
+          if(!Array.isArray(col) || col.length !== 24 || col.some(function(v){ return !isCountInt(v); })){
+            errs.push("hourly[" + h.date + "]." + k + ": must be 24 non-negative integers");
+            return;
+          }
+          var sum = col.reduce(function(a, b){ return a + b; }, 0);
+          if(sum !== day[k]){
+            errs.push("hourly[" + h.date + "]." + k + " sums to " + sum + ", daily says " + day[k]);
+          }
+        });
+      });
+      if(!errs.length && o.hourly.length !== d.length){
+        errs.push("hourly covers " + o.hourly.length + " of " + d.length + " daily dates");
+      }
+      hv = o.hourly;
+    }
+  }
   if(errs.length) return { errors: errs };
   return {
     errors: [],
@@ -903,7 +942,8 @@ function validateCliJson(text){
       totals: { requests: t.requests, confirmed_losses: t.confirmed_losses, probable_losses: t.probable_losses, iron_losses: t.iron_losses, wasted_tokens: t.wasted_tokens, pmnf_losses: t.pmnf_losses },
       daily: d.map(function(e){ return { date: e.date, requests: e.requests, losses: e.losses, pmnf: e.pmnf, wasted_tokens: e.wasted_tokens }; }),
       events: [],
-      detector: det
+      detector: det,
+      wire_hourly: hv
     }
   };
 }
@@ -1357,6 +1397,18 @@ function buildSubmitPayload(){
   payload.period_end = slice.period_end;
   payload.totals = slice.totals;
   payload.daily = slice.daily;
+  /* M19 opt-in hour channel. The checkbox is the whole gate: unchecked (or
+     missing, or a source with no hourly rows) sends nothing, and the rows
+     sent are cut to the same window as the daily rows so the server's
+     decomposition identity holds. */
+  var hEl = document.getElementById("subHourly");
+  if(hEl && hEl.checked && Array.isArray(r.wire_hourly)){
+    payload.hourly = r.wire_hourly.filter(function(h){
+      return h.date >= slice.period_start && h.date <= slice.period_end;
+    }).map(function(h){
+      return { date: h.date, requests: h.requests.slice(), losses: h.losses.slice() };
+    });
+  }
   // Pasted CLI results carry the CLI's own version tag (e.g. cli-2.1).
   payload.script_version = LAST.source_version || CacheObservatory.SCRIPT_VERSION;
   /* M13 identity. Both are about the MACHINE, not the selected window, so they
@@ -1571,6 +1623,7 @@ document.getElementById("subLast92").addEventListener("click", function(){
 });
 /* Escape hatch from the incremental default: the widest window the API
    accepts, ending on the newest scanned day. */
+document.getElementById("subHourly").addEventListener("change", function(){ updateSubmitCard(); });
 document.getElementById("subFullRange").addEventListener("click", function(){
   if(!RANGE_READY) return;
   var w = CacheObservatory.clampRange(dailyDates(), MAX_PERIOD_DAYS);

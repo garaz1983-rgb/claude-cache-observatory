@@ -493,6 +493,14 @@ a{color:inherit}
     <canvas id="fleet" height="260"></canvas>
     <div class="legend" id="fleetLegend"></div>
   </div>
+
+  <h3 class="sub-h">Hour by hour <span class="badge real h2-badge">Real submissions · opt-in</span></h3>
+  <p class="desc">Only machines that <b>chose to publish their hours</b> appear here (a checkbox on the check page, off by default). Cells rest on different numbers of machines, so every cell's tooltip says how many; a one-machine cell is that one machine's record. Every column is a <b>UTC hour</b>.</p>
+  <div class="card">
+    <p class="notice" id="hourlyEmpty" hidden>No machine has opted into hourly publication yet. Check "also publish the hour-by-hour counts" on the check page and submit, and this section starts here.</p>
+    <div class="hm-scroll" id="hourlyWrap" hidden><table class="hm" id="fleetHourly"></table></div>
+    <div class="legend" id="hourlyLegend" hidden><span id="hourlyLgUse"></span></div>
+  </div>
 </section>
 
 <section id="secEnv">
@@ -1497,6 +1505,30 @@ document.addEventListener("mousedown", function(ev){
    breakdown; the fleet series backs the chart — so one being unreadable must
    leave the other's section rendered and say which one is missing, rather than
    blanking a page that is mostly prose either way. */
+/* M19: the opt-in hour axis. An absent file (nobody opted in) gets the
+   empty-state sentence, which is the dataset's default state, not an error. */
+function renderFleetHourly(doc){
+  var empty = document.getElementById("hourlyEmpty");
+  var wrap = document.getElementById("hourlyWrap");
+  var legend = document.getElementById("hourlyLegend");
+  if(!doc || !Array.isArray(doc.days) || !doc.days.length){
+    empty.hidden = false; wrap.hidden = true; legend.hidden = true;
+    return;
+  }
+  empty.hidden = true; wrap.hidden = false; legend.hidden = false;
+  var rows = doc.days.map(function(dy){
+    return { key: dy.date, label: mdLabel(dy.date), usage: dy.requests,
+             losses: dy.losses, active: dy.active, machines: dy.machines };
+  });
+  ObservatoryCharts.renderUsageHeatmap(document.getElementById("fleetHourly"), rows, {
+    cellTitle: function(row, hour, rq, v){
+      return "UTC " + hh(hour) + ":00 · " + row.key + " · " + rq + " request" + (rq === 1 ? "" : "s") +
+        " across " + row.active[hour] + " machine" + (row.active[hour] === 1 ? "" : "s") + " · " + v + " loss" + (v === 1 ? "" : "es");
+    },
+    usageLegendEl: document.getElementById("hourlyLgUse")
+  });
+}
+
 function fetchJson(url){
   return fetch(url).then(function(r){
     if(!r.ok) throw new Error("HTTP " + r.status);
@@ -1506,9 +1538,11 @@ function fetchJson(url){
 
 Promise.all([
   fetchJson(DATA_BASE + "submissions.json").catch(function(){ return null; }),
-  fetchJson(DATA_BASE + "daily.json").catch(function(){ return null; })
+  fetchJson(DATA_BASE + "daily.json").catch(function(){ return null; }),
+  fetchJson(DATA_BASE + "hourly.json").catch(function(){ return null; })
 ]).then(function(res){
   var doc = res[0], fleet = res[1];
+  renderFleetHourly(res[2]);
 
   if(doc && Array.isArray(doc.submissions)){
     SUBS = doc.submissions;

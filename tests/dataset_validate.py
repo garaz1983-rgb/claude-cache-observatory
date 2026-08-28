@@ -63,6 +63,7 @@ DATA_DIR = os.path.join(SITE_DIR, "data")
 
 INDEX_PATH = "data/submissions.json"
 DAILY_PATH = "data/daily.json"
+HOURLY_PATH = "data/hourly.json"
 IDENTITY_PATH = "data/identity.json"
 SUBS_DIR = "data/subs"
 
@@ -176,7 +177,7 @@ def _check_identity_entry(sub_id, entry, err):
                    "was lost', which is not the same as having none" % sub_id)
 
 
-def validate(index_doc, daily_doc, details, identity_doc=None):
+def validate(index_doc, daily_doc, details, identity_doc=None, hourly_doc=None):
     """index_doc:    parsed data/submissions.json
        daily_doc:    parsed data/daily.json
        details:      {submission id -> parsed data/subs/<id>.json}
@@ -198,6 +199,8 @@ def validate(index_doc, daily_doc, details, identity_doc=None):
     seen_ids = set()
     # date -> [summed requests, losses, wasted, machines]
     fleet = {}
+    # M19: date -> [req[24] sums, loss[24] sums, active[24], machines]
+    fleet_hourly = {}
 
     for row in rows:
         if not isinstance(row, dict):
@@ -382,6 +385,53 @@ def validate(index_doc, daily_doc, details, identity_doc=None):
             slot[3] += d["wasted_tokens"]
             slot[4] += 1
 
+        # -- M19: the optional hourly block is a DECOMPOSITION of the daily
+        # rows this file just proved: dates a subset of daily (a merge keeps
+        # un-superseded days that never had hours), no duplicates, sorted,
+        # each row exactly 24 non-negative ints per column, and each row
+        # summing to its own daily row.
+        hrows = detail.get("hourly")
+        if hrows is not None:
+            if not isinstance(hrows, list) or not hrows:
+                err.append("%s: hourly is present but not a non-empty array"
+                           % want_detail)
+                hrows = []
+            by_day = {d["date"]: d for d in daily}
+            seen_h = []
+            for h in hrows:
+                shaped = (isinstance(h, dict)
+                          and set(h.keys()) == {"date", "requests", "losses"}
+                          and isinstance(h.get("date"), str)
+                          and all(isinstance(h.get(k), list) and len(h[k]) == 24
+                                  and all(_is_count(v) for v in h[k])
+                                  for k in ("requests", "losses")))
+                if not shaped:
+                    err.append("%s: a malformed hourly row" % want_detail)
+                    continue
+                if h["date"] in seen_h:
+                    err.append("%s: hourly date %s appears twice"
+                               % (want_detail, h["date"]))
+                    continue
+                seen_h.append(h["date"])
+                day = by_day.get(h["date"])
+                if day is None:
+                    err.append("%s: hourly date %s has no daily row"
+                               % (want_detail, h["date"]))
+                    continue
+                if sum(h["requests"]) != day["requests"] or                         sum(h["losses"]) != day["losses"]:
+                    err.append("%s: hourly[%s] does not sum to its daily row"
+                               % (want_detail, h["date"]))
+                slot = fleet_hourly.setdefault(
+                    h["date"], [[0] * 24, [0] * 24, [0] * 24, 0])
+                for i in range(24):
+                    slot[0][i] += h["requests"][i]
+                    slot[1][i] += h["losses"][i]
+                    if h["requests"][i] > 0:
+                        slot[2][i] += 1
+                slot[3] += 1
+            if seen_h != sorted(seen_h):
+                err.append("%s: hourly dates are not sorted" % want_detail)
+
     orphans = sorted(set(details) - seen_ids)
     for oid in orphans:
         err.append("%s: a detail file no index row points at" % detail_path(oid))
@@ -437,6 +487,56 @@ def validate(index_doc, daily_doc, details, identity_doc=None):
     for missing in sorted(set(fleet) - set(seen_days)):
         err.append("daily/%s: a day the detail files cover is missing from the "
                    "fleet series" % missing)
+    # -- M19: data/hourly.json equals the sum across the detail files that
+    # carry hours, cell by cell, with `machines` = how many carry that date
+    # and `active[h]` = how many had any request in that hour. The file
+    # exists exactly when at least one detail file has hours.
+    if hourly_doc is None:
+        for date in sorted(fleet_hourly):
+            err.append("hourly/%s: detail files carry hours for this date but "
+                       "%s is absent" % (date, HOURLY_PATH))
+    else:
+        if not isinstance(hourly_doc, dict):
+            return err + ["hourly: not a JSON object"]
+        if hourly_doc.get("schema_version") != 1:
+            err.append("hourly: schema_version %r, want 1"
+                       % (hourly_doc.get("schema_version"),))
+        hdays = hourly_doc.get("days")
+        if not isinstance(hdays, list):
+            return err + ["hourly: days is not an array"]
+        seen_hdates = []
+        for d in hdays:
+            shaped = (isinstance(d, dict) and _is_day(d.get("date"))
+                      and _is_count(d.get("machines"))
+                      and all(isinstance(d.get(k), list) and len(d[k]) == 24
+                              and all(_is_count(v) for v in d[k])
+                              for k in ("requests", "losses", "active")))
+            if not shaped:
+                err.append("hourly: a malformed day row")
+                continue
+            date = d["date"]
+            seen_hdates.append(date)
+            want = fleet_hourly.get(date)
+            if want is None:
+                err.append("hourly/%s: the hour series carries a date no "
+                           "detail file's hours cover" % date)
+                continue
+            if d["requests"] != want[0] or d["losses"] != want[1]:
+                err.append("hourly/%s: cells do not equal the sum across the "
+                           "detail files" % date)
+            if d["active"] != want[2]:
+                err.append("hourly/%s: active does not equal the per-hour "
+                           "machine count" % date)
+            if d["machines"] != want[3]:
+                err.append("hourly/%s: machines says %r but %d detail file(s) "
+                           "carry hours for that date"
+                           % (date, d["machines"], want[3]))
+        if seen_hdates != sorted(seen_hdates) or                 len(set(seen_hdates)) != len(seen_hdates):
+            err.append("hourly: dates not sorted/unique")
+        for date in sorted(set(fleet_hourly) - set(seen_hdates)):
+            err.append("hourly/%s: detail files carry hours for this date but "
+                       "the hour series has no row" % date)
+
     return err
 
 
@@ -457,6 +557,8 @@ def load_from_disk(site_dir=SITE_DIR):
     # has an identity", because only one of those two is the truth on disk.
     identity_path = os.path.join(site_dir, "data", "identity.json")
     identity_doc = _read_json(identity_path) if os.path.isfile(identity_path) else None
+    hourly_path = os.path.join(site_dir, "data", "hourly.json")
+    hourly_doc = _read_json(hourly_path) if os.path.isfile(hourly_path) else None
     details = {}
     subs_dir = os.path.join(site_dir, "data", "subs")
     if os.path.isdir(subs_dir):
@@ -464,7 +566,7 @@ def load_from_disk(site_dir=SITE_DIR):
             if not name.endswith(".json"):
                 continue
             details[name[:-5]] = _read_json(os.path.join(subs_dir, name))
-    return index_doc, daily_doc, details, identity_doc
+    return index_doc, daily_doc, details, identity_doc, hourly_doc
 
 
 def main():
@@ -473,11 +575,11 @@ def main():
     except AttributeError:
         pass
     try:
-        index_doc, daily_doc, details, identity_doc = load_from_disk()
+        index_doc, daily_doc, details, identity_doc, hourly_doc = load_from_disk()
     except (OSError, ValueError) as exc:
         print("FATAL: could not read the dataset: %s" % exc)
         return 2
-    errors = validate(index_doc, daily_doc, details, identity_doc)
+    errors = validate(index_doc, daily_doc, details, identity_doc, hourly_doc)
     if errors:
         print("DATASET_INVALID: %d violation(s)" % len(errors))
         for e in errors:
@@ -498,6 +600,12 @@ def main():
           % (IDENTITY_PATH,
              "absent" if identity_doc is None else "present",
              len(entries), len(without)))
+    opted = sum(1 for d in details.values() if "hourly" in d)
+    print("hourly     %s: %s, %d machine(s) opted in"
+          % (HOURLY_PATH,
+             "absent" if hourly_doc is None
+             else "%d day(s)" % len(hourly_doc.get("days", [])),
+             opted))
     print("DATASET_OK")
     return 0
 

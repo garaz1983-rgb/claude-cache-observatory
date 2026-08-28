@@ -47,6 +47,7 @@ Checklist for a page change:
 - **iron** flags a counted loss with the gap under 300 s;
 - the v2.1 series is computed alongside, rule unchanged (`previous_message_not_found` with the gap under the TTL), as `pmnf_losses` and per-day `pmnf` — coexistence, not judgment;
 - dedup by `requestId` falling back to `message.id`, with later records of a seen request only back-filling a missing reason (same file only);
+- the hourly decomposition (M19) rides the same grid as the daily rows (the record's own stamp — the census grid): `wire_hourly` per date is 24 request columns (the census row) and 24 loss columns (counted losses only), and each row's sums equal its daily row by construction. `tests/parity_check.py` holds both engines to it and to a hand computation;
 - wasted tokens = `cache_creation_input_tokens` of each counted loss.
 
 Since M15 both engines also emit a `detector` block: a census of every

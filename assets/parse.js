@@ -214,6 +214,11 @@
     var events = [];
     var reasonCensus = new Map();
     var versionCensus = new Map();
+    // M19: the loss half of the hourly decomposition, on the same grid as
+    // dateKeyOf()/the census (the record's own stamp). The request half IS
+    // the census. Only counted losses land here — excused rebuilds and the
+    // pmnf series are not losses, so they have no hour.
+    var lossHourly = new Map();
     var detector = { diagnosed_requests: 0, unknown_reasons: 0, cold_writes: 0 };
     var fileCount = 0;
 
@@ -363,6 +368,11 @@
         }
         var tier = r.cr === 0 ? "confirmed" : "probable";
         var iron = gap < IRON_SECONDS;
+        if (hourly) {
+          var lh = lossHourly.get(date);
+          if (!lh) { lh = new Array(24); for (var z = 0; z < 24; z++) lh[z] = 0; lossHourly.set(date, lh); }
+          lh[new Date(r.epochMs + r.offsetMinutes * 60000).getUTCHours()] += 1;
+        }
         if (tier === "confirmed") totals.confirmed_losses += 1;
         else totals.probable_losses += 1;
         if (iron) totals.iron_losses += 1;
@@ -396,7 +406,30 @@
                   detector: detector, files: fileCount };
       // Only when asked for, so parseFiles()'s result shape is unchanged and
       // nothing that consumed it before has a new key to reason about.
-      if (hourly) out.census = hourly;
+      if (hourly) {
+        out.census = hourly;
+        // M19: the submission-shaped hourly rows — the census IS the request
+        // half (same grid as the daily rows), the loss half was tallied in
+        // the judgment loop. Same date set as daily; zero rows for dates the
+        // loss map never touched.
+        var wire = [];
+        for (var wd = 0; wd < daily.length; wd++) {
+          var wdate = daily[wd].date;
+          var reqRow = hourly.get(wdate);
+          var lossRow = lossHourly.get(wdate);
+          var zeros = null;
+          if (!reqRow || !lossRow) {
+            zeros = new Array(24);
+            for (var wz = 0; wz < 24; wz++) zeros[wz] = 0;
+          }
+          wire.push({
+            date: wdate,
+            requests: (reqRow || zeros).slice(),
+            losses: (lossRow || zeros).slice()
+          });
+        }
+        out.wire_hourly = wire;
+      }
       return out;
     }
 

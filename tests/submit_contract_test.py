@@ -272,6 +272,7 @@ def guarded_delete_scratch(path):
 INDEX_PATH = "data/submissions.json"
 FLEET_PATH = "data/daily.json"
 IDENTITY_PATH = "data/identity.json"
+HOURLY_PATH = "data/hourly.json"
 EMPTY_INDEX = {"schema_version": 2, "submissions": []}
 EMPTY_FLEET = {"schema_version": 1, "days": []}
 MOCK_BRANCH = "master"
@@ -926,6 +927,13 @@ def fleet_doc(files=None):
     return _parse(files or repo_files(), FLEET_PATH)
 
 
+def hourly_doc(files=None):
+    """None when absent — the valid state of every stage until a submission
+    opts in, and of the whole dataset today."""
+    files = files or repo_files()
+    return None if HOURLY_PATH not in files else _parse(files, HOURLY_PATH)
+
+
 def identity_doc(files=None):
     """None when the file is not there, which is a valid dataset and the state
     every stage starts in — not a failure to be papered over with an empty
@@ -974,7 +982,8 @@ def check_file_arithmetic(tag):
     try:
         errors = dataset_validate.validate(index_doc(files), fleet_doc(files),
                                            detail_docs(files),
-                                           identity_doc(files))
+                                           identity_doc(files),
+                                           hourly_doc(files))
     except ContractFail:
         raise
     except Exception as exc:                      # a shape the validator cannot walk
@@ -1304,6 +1313,117 @@ MASK_LEAK_PROBES = ["contract-test", "가나다라",
                     "\U0001F41B\U0001F41Ex", "padded"]
 
 
+def run_hourly_cases():
+    """M19: the opt-in hour channel. Privacy first: a submission WITHOUT the
+    field must neither create nor touch data/hourly.json — absence is the
+    default and the promise. Then the arithmetic: the fleet file equals the
+    opted-in detail files cell by cell (checked by the shared validator after
+    every accepted case), machines/active count per cell, and resubmitting a
+    window without hours takes that window's hours out (the opt-out path)."""
+    # -- a fresh stage; an ordinary submission leaves no hourly file ---------
+    reset_doc()
+    ip = "198.51.100.60"
+    a = anchor_set("machine-hourly-a", 16, 0)
+    status, data = submit(scan_payload("2026-10-01", 3, 100, 5, 700, 2, anchors=a), ip)
+    expect_ok("case33 plain", status, data)
+    check_file_arithmetic("case33 plain")
+    check(hourly_doc() is None,
+          "🔴 case33: a submission that never opted in produced %s" % HOURLY_PATH)
+
+    # -- the same machine opts in on a re-scan -------------------------------
+    status, data = submit(
+        with_hourly(scan_payload("2026-10-01", 3, 100, 5, 700, 2, anchors=a), 12), ip)
+    expect_ok("case33 optin", status, data)
+    check(data.get("merged") is True, "case33: the opt-in re-scan did not merge")
+    check_file_arithmetic("case33 optin")
+    doc = hourly_doc()
+    check(doc is not None and len(doc["days"]) == 3,
+          "case33: expected 3 hourly days, got %r"
+          % (doc and len(doc["days"])))
+    day = doc["days"][0]
+    check(day["requests"][12] == 100 and day["losses"][12] == 5 and
+          day["machines"] == 1 and day["active"][12] == 1 and
+          day["active"][11] == 0,
+          "case33: first hourly day wrong: %r" % (day,))
+
+    # -- a second machine opts in on a shared date ---------------------------
+    b = anchor_set("machine-hourly-b", 16, 40)
+    status, data = submit(
+        with_hourly(scan_payload("2026-10-03", 2, 40, 1, 300, 1, anchors=b), 12),
+        "198.51.100.61")
+    expect_ok("case33 second", status, data)
+    check_file_arithmetic("case33 second")
+    days = {d["date"]: d for d in hourly_doc()["days"]}
+    shared = days["2026-10-03"]
+    check(shared["machines"] == 2 and shared["active"][12] == 2 and
+          shared["requests"][12] == 140 and shared["losses"][12] == 6,
+          "case33: shared hourly date is not the sum of both machines: %r"
+          % (shared,))
+
+    # -- opting out: the window resubmitted WITHOUT hours removes them -------
+    status, data = submit(scan_payload("2026-10-02", 2, 10, 0, 0, 0, anchors=a), ip)
+    expect_ok("case33 optout", status, data)
+    check_file_arithmetic("case33 optout")
+    days = {d["date"]: d for d in hourly_doc()["days"]}
+    check("2026-10-02" not in days,
+          "case33: a window resubmitted without hours kept its hours — the "
+          "opt-out the check page promises did not happen")
+    # A's opt-out window covered 10-03 too, so A's hours leave that date and
+    # ONLY machine B's remain: the per-date rule applies machine by machine.
+    shared2 = days.get("2026-10-03")
+    check(shared2 is not None and shared2["machines"] == 1 and
+          shared2["requests"][12] == 40 and shared2["losses"][12] == 1 and
+          shared2["active"][12] == 1,
+          "case33: after A's opt-out the shared date should hold exactly B's "
+          "hours: %r" % (shared2,))
+    check("2026-10-01" in days and days["2026-10-01"]["machines"] == 1,
+          "case33: the opt-out took out a kept date outside its window")
+
+    # -- the 400 family: an hourly block that is not the identity
+    #    decomposition of the daily rows publishes nothing ------------------
+    snap = repo_snapshot()
+    bad_cases = []
+    p = with_hourly(valid_payload())
+    p["hourly"][0]["requests"][0] += 1          # sum != daily
+    bad_cases.append(("requests sum off by one", p))
+    p = with_hourly(valid_payload())
+    p["hourly"][0]["losses"][0] += 1
+    bad_cases.append(("losses sum off by one", p))
+    p = with_hourly(valid_payload())
+    p["hourly"][0]["requests"] = p["hourly"][0]["requests"][:23]
+    bad_cases.append(("23 columns", p))
+    p = with_hourly(valid_payload())
+    p["hourly"][0]["requests"] = p["hourly"][0]["requests"] + [0]
+    bad_cases.append(("25 columns", p))
+    p = with_hourly(valid_payload())
+    p["hourly"][0]["losses"][3] = -1
+    bad_cases.append(("a negative cell", p))
+    p = with_hourly(valid_payload())
+    p["hourly"][0]["date"] = "2026-01-01"
+    bad_cases.append(("a date with no daily row", p))
+    p = with_hourly(valid_payload())
+    p["hourly"] = [p["hourly"][0], dict(p["hourly"][0])]
+    bad_cases.append(("a duplicated date", p))
+    p = with_hourly(valid_payload())
+    p["hourly"] = p["hourly"][:1]
+    bad_cases.append(("partial coverage (opt-in is all-or-nothing)", p))
+    p = with_hourly(valid_payload())
+    p["hourly"][0]["extra"] = 1
+    bad_cases.append(("an undefined row field", p))
+    p = valid_payload()
+    p["hourly"] = {"date": "2026-08-01"}
+    bad_cases.append(("hourly is not an array", p))
+    for name, payload in bad_cases:
+        status, data = http_json("POST", BASE + "/api/submit", payload,
+                                 headers={"X-Forwarded-For": "198.51.100.62"})
+        expect_schema_400("case33 " + name, status, data)
+    check(repo_snapshot() == snap,
+          "case33: a refused hourly payload changed the repository")
+    print("PASS case33 hourly: absent by default, summed per cell with "
+          "machines/active counts, opt-out removes the window, and %d "
+          "malformed blocks -> 400 with nothing published" % len(bad_cases))
+
+
 def run_mask_cases():
     """Every case is a real accepted submission, so they are spread across
     several IP hashes: 3 per hour per IP is the contract's own limit and the
@@ -1391,6 +1511,24 @@ def scan_payload(start, days, requests, losses, wasted, iron, **over):
                 "probable_losses": 0, "iron_losses": iron,
                 "wasted_tokens": wasted * days, "pmnf_losses": losses * days})
     payload.update(over)
+    return payload
+
+
+def hourly_for(payload, hour=12):
+    """The identity decomposition of a payload's daily rows: everything lands
+    in one hour, so the sums match by construction."""
+    rows = []
+    for d in payload["daily"]:
+        req = [0] * 24
+        loss = [0] * 24
+        req[hour] = d["requests"]
+        loss[hour] = d["losses"]
+        rows.append({"date": d["date"], "requests": req, "losses": loss})
+    return rows
+
+
+def with_hourly(payload, hour=12):
+    payload["hourly"] = hourly_for(payload, hour)
     return payload
 
 
@@ -2215,6 +2353,8 @@ def run_m142_cases():
 # ---------------------------------------------------------------------------
 
 def run_detector_cases():
+    run_hourly_cases()
+
     # -- case32: the detector vocabulary, the one published field that starts
     # life as free text on a stranger's disk -------------------------------
     #

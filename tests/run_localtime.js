@@ -307,7 +307,18 @@ if (!root) {
 var offsets = JSON.parse(process.argv[3] || "[0]");
 
 var files = collect(root, "", []);
-var result = engine.parseFiles(files);
+/* M19: the page runs the census path, and the payload block reads
+   result.wire_hourly off it — so the probe's LAST has to be built the same
+   way, or the opt-in gate would be tested against a result the page never
+   produces. parseFiles() (no census, no wire_hourly) is exactly the
+   restored-run degradation, which the unchecked probes still cover. */
+var result = (function () {
+  var scan = engine.createScan({ census: true });
+  for (var i = 0; i < files.length; i++) scan.addFile(files[i].name, files[i].text);
+  var out = scan.finish();
+  delete out.files;
+  return out;
+})();
 var census = usageCensus(files);
 
 /* M16: the hourly census moved into assets/parse.js so the folder scan walks
@@ -415,10 +426,17 @@ var pagePayload = {};
   // never invented, guessed or defaulted.
   var bare = { result: result, census: census, source_version: null,
                detail_dropped: false, anchors: [], link_token: "" };
+  // M19: the privacy gate, both states. The stub's default element has no
+  // `checked`, so every probe above is the unchecked page — hourly must be
+  // ABSENT there. `opted` is the same ranged build with the box checked.
+  var opted = {};
+  Object.keys(ranged).forEach(function (k) { opted[k] = ranged[k]; });
+  opted.subHourly = { checked: true };
   pagePayload[rel] = {
     whole: payloadOf(rel, last, pagePayloadView, blank, false),
     ranged: payloadOf(rel, last, pagePayloadView, ranged, true),
     bare: payloadOf(rel, bare, pagePayloadView, ranged, true),
+    opted: payloadOf(rel, last, pagePayloadView, opted, true),
     view_daily: pagePayloadView.daily,
     view_period: pagePayloadView.period
   };

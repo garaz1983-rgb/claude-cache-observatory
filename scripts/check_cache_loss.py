@@ -92,6 +92,11 @@ KNOWN_REASONS = frozenset([PMNF, "unavailable"]) | EXCUSED_REASONS
 
 months = defaultdict(lambda: defaultdict(int))
 days = defaultdict(lambda: defaultdict(int))
+# M19: the hourly decomposition of the daily rows, on the SAME grid (the
+# record's own stamp): requests per hour for every request, losses per hour
+# for counted losses only. sum over 24 == the daily row, by construction.
+hours_req = defaultdict(lambda: [0] * 24)
+hours_loss = defaultdict(lambda: [0] * 24)
 seen = set()
 nfiles = 0
 
@@ -221,6 +226,7 @@ for f in glob.glob(os.path.join(ROOT, "**", "*.jsonl"), recursive=True):
         d["req"] += 1
         d["cc"] += cc
         dd["req"] += 1
+        hours_req[dt.strftime("%Y-%m-%d")][dt.hour] += 1
         gap = (dt - reqs[i - 1][0]).total_seconds() if i > 0 else None
 
         # --- v2.1 legacy series, rule unchanged: PMNF and gap under TTL ---
@@ -243,6 +249,7 @@ for f in glob.glob(os.path.join(ROOT, "**", "*.jsonl"), recursive=True):
         tier = "conf" if cr == 0 else "prob"
         d[tier] += 1
         dd[tier] += 1
+        hours_loss[dt.strftime("%Y-%m-%d")][dt.hour] += 1
         d["loss_cc"] += cc
         dd["loss_cc"] += cc
         if gap < 300:
@@ -269,6 +276,14 @@ if JSON_MODE:
              "losses": days[k]["conf"] + days[k]["prob"],
              "pmnf": days[k]["pmnf"],
              "wasted_tokens": days[k]["loss_cc"]}
+            for k in sorted(days)
+        ],
+        # M19: same dates as daily, and each row's 24-column sums equal that
+        # daily row. Whether this leaves the machine is the check page's
+        # opt-in; the CLI is local output, so it always prints it.
+        "hourly": [
+            {"date": k, "requests": hours_req[k],
+             "losses": hours_loss[k]}
             for k in sorted(days)
         ],
         "detector": {

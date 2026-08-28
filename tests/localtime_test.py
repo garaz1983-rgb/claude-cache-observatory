@@ -566,6 +566,22 @@ def check_payload(tag, data, discriminating):
     utc_daily = [{k: d[k] for k in ("date", "requests", "losses", "pmnf",
                                "wasted_tokens")}
                  for d in data["utc_daily"]]
+    for page in PAGES:
+        got = data["page_payload"].get(page)
+        opted = got and got.get("opted")
+        if opted is not None:
+            hourly = opted.get("hourly")
+            check(isinstance(hourly, list) and
+                  [h["date"] for h in hourly] == [d["date"] for d in opted["daily"]],
+                  "%s %s: opted payload hourly dates != its daily dates"
+                  % (tag, page))
+            by = {d["date"]: d for d in opted["daily"]}
+            for h in (hourly or []):
+                check(len(h["requests"]) == 24 and len(h["losses"]) == 24 and
+                      sum(h["requests"]) == by[h["date"]]["requests"] and
+                      sum(h["losses"]) == by[h["date"]]["losses"],
+                      "%s %s: opted hourly[%s] is not the identity "
+                      "decomposition of its daily row" % (tag, page, h["date"]))
     first, last = utc_daily[0]["date"], utc_daily[-1]["date"]
     for page in PAGES:
         got = data["page_payload"].get(page)
@@ -613,6 +629,12 @@ def check_payload(tag, data, discriminating):
             check(pay.get("detector") == want_vocab,
                   "%s %s (%s): payload.detector %r, want the engine's census "
                   "keys %r" % (tag, page, path, pay.get("detector"), want_vocab))
+            # M19 privacy gate: with the checkbox unchecked (the stub's
+            # default), the payload must not carry hours at all — absence IS
+            # the default the page promises.
+            check("hourly" not in pay,
+                  "🔴 %s %s (%s): the payload carries hourly with the opt-in "
+                  "checkbox unchecked" % (tag, page, path))
             # Narrowing the period must not touch either: they identify the
             # machine, not the window.
             check(pay.get("anchors") == got["whole"].get("anchors"),

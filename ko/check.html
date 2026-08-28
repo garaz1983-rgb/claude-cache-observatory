@@ -456,6 +456,10 @@ a{color:inherit}
           </select>
         </div>
       </div>
+      <div class="hourly-opt">
+        <label><input type="checkbox" id="subHourly"> 시간대별(UTC 24칸)도 함께 공개</label>
+        <p class="tz-note">켜면 이 제출 기간의 요청·유실 수가 시간대별 24칸으로 공개 데이터셋에 남는다. <b>주로 몇 시에 작업하는지가 공개 저장소에 보이게 된다는 뜻</b>이다. 기본은 끔. 나중에 같은 기간을 끈 채 다시 제출하면 그 기간의 시간대 데이터는 제거된다.</p>
+      </div>
       <details class="preview">
         <summary>전송될 JSON 전문 보기</summary>
         <p class="tz-mismatch" id="tzPayloadNote"></p>
@@ -826,7 +830,7 @@ function validateCliJson(text){
   catch(e){ return { errors: ["유효한 JSON이 아니다: " + e.message] }; }
   if(!isObj(o)) return { errors: ["최상위는 JSON 객체여야 한다 (--json으로 실행한 출력 전체를 붙여넣을 것)"] };
   Object.keys(o).forEach(function(k){
-    if(["script_version", "totals", "daily", "detector"].indexOf(k) === -1) errs.push("정의되지 않은 필드: " + k);
+    if(["script_version", "totals", "daily", "detector", "hourly"].indexOf(k) === -1) errs.push("정의되지 않은 필드: " + k);
   });
   var t = o.totals;
   if(!isObj(t)){
@@ -883,6 +887,40 @@ function validateCliJson(text){
     errs.push("script_version: cli-3.0 같은 짧은 태그여야 한다");
   }
   var det = validateDetector(o.detector, errs);
+  /* M19: CLI --json은 hourly를 항상 싣는다. 서버와 같은 항등을 검사한다.
+     일별과 같은 날짜 집합, 24칸 비음수 정수, 칸 합 == 그 일별 행. */
+  var hv = null;
+  if(o.hourly !== undefined){
+    if(!Array.isArray(o.hourly)){
+      errs.push("hourly: 배열이어야 한다");
+    } else {
+      var hByDate = {};
+      (Array.isArray(d) ? d : []).forEach(function(e){ if(e && e.date) hByDate[e.date] = e; });
+      var hSeen = {};
+      o.hourly.forEach(function(h, i){
+        if(!isObj(h) || typeof h.date !== "string"){ errs.push("hourly[" + i + "]: 형식 오류"); return; }
+        if(hSeen[h.date]){ errs.push("hourly[" + i + "].date: 중복 " + h.date); return; }
+        hSeen[h.date] = true;
+        var day = hByDate[h.date];
+        if(!day){ errs.push("hourly[" + i + "].date " + h.date + ": daily에 없는 날짜"); return; }
+        ["requests", "losses"].forEach(function(k){
+          var col = h[k];
+          if(!Array.isArray(col) || col.length !== 24 || col.some(function(v){ return !isCountInt(v); })){
+            errs.push("hourly[" + h.date + "]." + k + ": 24칸 비음수 정수 배열이어야 한다");
+            return;
+          }
+          var sum = col.reduce(function(a, b){ return a + b; }, 0);
+          if(sum !== day[k === "requests" ? "requests" : "losses"]){
+            errs.push("hourly[" + h.date + "]." + k + " 합 " + sum + " != daily " + day[k === "requests" ? "requests" : "losses"]);
+          }
+        });
+      });
+      if(!errs.length && o.hourly.length !== d.length){
+        errs.push("hourly가 daily " + d.length + "일 중 " + o.hourly.length + "일만 덮는다");
+      }
+      hv = o.hourly;
+    }
+  }
   if(errs.length) return { errors: errs };
   return {
     errors: [],
@@ -891,7 +929,8 @@ function validateCliJson(text){
       totals: { requests: t.requests, confirmed_losses: t.confirmed_losses, probable_losses: t.probable_losses, iron_losses: t.iron_losses, wasted_tokens: t.wasted_tokens, pmnf_losses: t.pmnf_losses },
       daily: d.map(function(e){ return { date: e.date, requests: e.requests, losses: e.losses, pmnf: e.pmnf, wasted_tokens: e.wasted_tokens }; }),
       events: [],
-      detector: det
+      detector: det,
+      wire_hourly: hv
     }
   };
 }
@@ -1324,6 +1363,18 @@ function buildSubmitPayload(){
   payload.period_end = slice.period_end;
   payload.totals = slice.totals;
   payload.daily = slice.daily;
+  /* M19 opt-in hour channel. The checkbox is the whole gate: unchecked (or
+     missing, or a source with no hourly rows) sends nothing, and the rows
+     sent are cut to the same window as the daily rows so the server's
+     decomposition identity holds. */
+  var hEl = document.getElementById("subHourly");
+  if(hEl && hEl.checked && Array.isArray(r.wire_hourly)){
+    payload.hourly = r.wire_hourly.filter(function(h){
+      return h.date >= slice.period_start && h.date <= slice.period_end;
+    }).map(function(h){
+      return { date: h.date, requests: h.requests.slice(), losses: h.losses.slice() };
+    });
+  }
   // 붙여넣기 경로의 결과는 CLI 자체 버전 태그(예: cli-2.1)를 가져간다.
   payload.script_version = LAST.source_version || CacheObservatory.SCRIPT_VERSION;
   /* M13 신원. 둘 다 선택한 기간이 아니라 기계에 대한 값이라, LAST에서 통째로
@@ -1530,6 +1581,7 @@ document.getElementById("subLast92").addEventListener("click", function(){
 });
 /* 증분 기본값에서 빠져나오는 경로: API가 받아 주는 가장 넓은 창을
    스캔의 마지막 날 기준으로 다시 잡는다. */
+document.getElementById("subHourly").addEventListener("change", function(){ updateSubmitCard(); });
 document.getElementById("subFullRange").addEventListener("click", function(){
   if(!RANGE_READY) return;
   var w = CacheObservatory.clampRange(dailyDates(), MAX_PERIOD_DAYS);
