@@ -75,7 +75,7 @@
 })(typeof self !== "undefined" ? self : this, function () {
   "use strict";
 
-  var SCRIPT_VERSION = "web-1.0";
+  var SCRIPT_VERSION = "web-2.0";
   var PMNF_REASON = "previous_message_not_found";
   var MAIN_TTL_SECONDS = 1800;
   var SUBAGENT_TTL_SECONDS = 300;

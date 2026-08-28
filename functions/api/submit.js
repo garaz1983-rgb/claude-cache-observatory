@@ -478,7 +478,7 @@ function validateSchema(body) {
       body.script_version.length === 0 ||
       body.script_version.length > 32 ||
       !/^[A-Za-z0-9._-]+$/.test(body.script_version)) {
-    errors.push("script_version: must be a short version tag (e.g. web-1.0)");
+    errors.push("script_version: must be a short version tag (e.g. web-2.0)");
   }
 
   /* M13 identity. Both are optional and both are shape-checked hard: an
