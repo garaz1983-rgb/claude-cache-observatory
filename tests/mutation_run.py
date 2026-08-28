@@ -361,13 +361,20 @@ MUTATIONS = [
     # away: no daily rows, no merge. Merging against rows that failed to load
     # recomputes the row's totals from the incoming submission alone and
     # deletes that machine's history from a public file.
-    # previousDetail is a const, so the tolerant-assignment form of this mutant
-    # no longer BUILDS (it took the whole gate down as an infra failure). The
-    # dead-guard form expresses the same defect - a missing history flows on -
-    # and stays valid code.
+    # Two earlier forms of this mutant failed for opposite reasons: assigning
+    # to the const does not BUILD, and a dead guard just crashes on null a few
+    # lines later, which surfaces as the same 502 the real refusal sends - an
+    # equivalent mutant. The defect worth pinning is TOLERATION: a missing or
+    # unreadable history quietly treated as an empty one, which merges against
+    # nothing and double-counts the fleet. That needs the reads to survive, so
+    # the anchor spans the guard and both reads.
     ("S57_merge_without_history", SUBMIT_JS_REL,
-     "      if (previousDetail === null) return { ok: false };",
-     "      if (false) return { ok: false };", "contract"),
+     "      if (previousDetail === null) return { ok: false };\n"
+     "      previousDaily = previousDetail.daily;\n"
+     "      previousHourly = previousDetail.hourly;",
+     "      previousDaily = previousDetail === null ? [] : previousDetail.daily;\n"
+     "      previousHourly = previousDetail === null ? null : previousDetail.hourly;",
+     "contract"),
     ("S58_detail_totals_zeroed", SUBMIT_JS_REL,
      "    totals: fields.totals,",
      "    totals: { requests: 0, in_ttl_losses: 0, iron_losses: 0, wasted_tokens: 0 },",
