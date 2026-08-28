@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Cache Eviction Observatory</title>
-<meta name="description" content="Community observatory tracking Claude Code in-TTL prompt-cache losses from volunteer-submitted, locally-parsed aggregates.">
+<meta name="description" content="Community observatory tracking Claude Code prompt-cache losses from volunteer-submitted, locally-parsed aggregates.">
 <meta property="og:type" content="website">
 <meta property="og:title" content="Cache Eviction Observatory">
 <meta property="og:description" content="Self-check your Claude Code prompt-cache losses in the browser — nothing leaves your machine">
@@ -413,12 +413,12 @@ a{color:inherit}
 
 <header>
   <h1>Cache Eviction Observatory</h1>
-  <p class="sub">Tracking Claude Code in-TTL <span class="mono">previous_message_not_found</span> prompt-cache losses across the machines that report them: every data point below was parsed locally in a volunteer's browser and submitted as approved aggregate numbers only. One machine is one row — a second submission from the same machine updates its row instead of adding another.</p>
+  <p class="sub">Tracking Claude Code prompt-cache losses, judged from each request's own billing fields, across the machines that report them: every data point below was parsed locally in a volunteer's browser and submitted as approved aggregate numbers only. One machine is one row — a second submission from the same machine updates its row instead of adding another.</p>
 </header>
 
 <div class="kpis">
   <div class="kpi"><div class="label">Machines reporting</div><div class="val" id="kpiMachines">–</div><div class="note">one row per machine, not per person</div></div>
-  <div class="kpi crit"><div class="label">Observed in-TTL losses</div><div class="val" id="kpiLosses">–</div><div class="note">legitimate TTL expiries excluded</div></div>
+  <div class="kpi crit"><div class="label">Observed losses</div><div class="val" id="kpiLosses">–</div><div class="note">confirmed + probable; expiries and declared prompt changes excluded</div></div>
   <div class="kpi crit"><div class="label">Re-billed tokens</div><div class="val" id="kpiTokens">–</div><div class="note">cache writes charged again after a loss</div></div>
   <div class="kpi"><div class="label">Observation period</div><div class="val" id="kpiPeriod" style="font-size:1.05rem">–</div><div class="note">earliest to latest submitted day</div></div>
 </div>
@@ -446,15 +446,15 @@ a{color:inherit}
 
 <section id="secPreview">
   <h2>What a diagnosis shows you <span class="badge real h2-badge">Measured, one machine</span></h2>
-  <p class="desc">Point the check at your own logs and this is the shape of what comes back. Nothing in the framed block below is invented: it is <b>91 days measured on one real machine</b>, the maintainer's (2026-05-28 to 2026-08-27, UTC+9). The frame is there because it is one machine rather than the fleet. How it was built is in <span class="mono">scripts/build_preview.js</span>; what it produced is <span class="mono">assets/preview.js</span>.</p>
+  <p class="desc">Point the check at your own logs and this is the shape of what comes back. Nothing in the framed block below is invented: it is <b>measured on one real machine</b>, the maintainer's (<span id="pvPeriod">the window the data file names</span>). The frame is there because it is one machine rather than the fleet. How it was built is in <span class="mono">scripts/build_preview.js</span>; what it produced is <span class="mono">assets/preview.js</span>.</p>
   <div class="demo">
     <p class="demo-note"><b>Why hours appear here and nowhere else:</b> the submission schema carries daily aggregates only and has no hour-level field, on purpose, so that submitting cannot reveal when you work. That decision stands. The hours below are the maintainer publishing their own machine by choice, not data collected from anybody — a submitter's hours are never gathered in the first place. No requestId and no log path is in this file: the generator aborts rather than write one that contains either.</p>
     <div class="kpis">
       <div class="kpi"><div class="label">Requests scanned</div><div class="val" id="dRequests">–</div></div>
-      <div class="kpi crit"><div class="label">In-TTL losses</div><div class="val" id="dLosses">–</div><div class="note">inside 30 min (main) / 5 min (subagent)</div></div>
+      <div class="kpi crit"><div class="label">Losses</div><div class="val" id="dLosses">–</div><div class="note">confirmed + probable, inside 30 min (main) / 5 min (subagent)</div></div>
       <div class="kpi crit"><div class="label">Iron losses</div><div class="val" id="dIron">–</div><div class="note">idle gap under 5 minutes</div></div>
       <div class="kpi crit"><div class="label">Re-billed tokens</div><div class="val" id="dTokens">–</div><div class="note">cache writes charged again</div></div>
-      <div class="kpi"><div class="label">Loss rate</div><div class="val" id="dRate">–</div><div class="note">in-TTL losses / requests</div></div>
+      <div class="kpi"><div class="label">Loss rate</div><div class="val" id="dRate">–</div><div class="note">losses / requests</div></div>
     </div>
     <div class="card">
       <canvas id="demoDaily" height="230"></canvas>
@@ -486,7 +486,7 @@ a{color:inherit}
 
 <section id="secFleet">
   <h2>Fleet daily loss rate <span class="badge real h2-badge">Real submissions</span></h2>
-  <p class="desc">In-TTL losses as a share of that day's requests, <b>every reporting machine pooled into one line</b>. A rising line means the fleet is losing a larger share of what it sends, not that more people are submitting: the denominator is that same day's requests. A step down that holds points at a fix being deployed. <b>Every day on this axis is a UTC day</b>, the same cut for every submission — which is what makes summing machines on the same date mean anything. A day carried by one machine is one machine's rate, so how many reported each day is drawn too: once the count varies from day to day it appears as a faint column behind each date, and while every day has the same number the legend prints that number instead.</p>
+  <p class="desc">Counted losses as a share of that day's requests, <b>every reporting machine pooled into one line</b>. A rising line means the fleet is losing a larger share of what it sends, not that more people are submitting: the denominator is that same day's requests. A step down that holds points at a fix being deployed. <b>Every day on this axis is a UTC day</b>, the same cut for every submission — which is what makes summing machines on the same date mean anything. A day carried by one machine is one machine's rate, so how many reported each day is drawn too: once the count varies from day to day it appears as a faint column behind each date, and while every day has the same number the legend prints that number instead.</p>
   <p class="desc">One line each was the previous design. It is readable at one submission and unreadable at fifty, and it cost every visitor a download of every submitter's entire daily history. The per-machine numbers did not go away: each row in <a href="#secSubs">Submissions</a> links the file its own totals are the sum of.</p>
   <div class="card">
     <div class="err" id="fleetErr" hidden>Could not load <a class="mono" href="data/daily.json">data/daily.json</a>. The fleet series is missing or unreadable, so this chart is empty; the rest of the page is unaffected.</div>
@@ -517,7 +517,7 @@ a{color:inherit}
       <div class="tbl-scroll">
         <table class="subs env" id="envExampleTable">
           <thead><tr>
-            <th>Value <span class="mono">(example)</span></th><th>Submissions (n)</th><th>Requests</th><th>In-TTL losses</th><th>Loss rate</th>
+            <th>Value <span class="mono">(example)</span></th><th>Submissions (n)</th><th>Requests</th><th>Losses</th><th>Loss rate</th>
           </tr></thead>
           <tbody></tbody>
         </table>
@@ -526,7 +526,7 @@ a{color:inherit}
     <div class="tbl-scroll" id="envTableWrap">
       <table class="subs env" id="envTable">
         <thead><tr>
-          <th>Value</th><th>Submissions (n)</th><th>Requests</th><th>In-TTL losses</th><th>Loss rate</th>
+          <th>Value</th><th>Submissions (n)</th><th>Requests</th><th>Losses</th><th>Loss rate</th>
         </tr></thead>
         <tbody></tbody>
       </table>
@@ -536,7 +536,7 @@ a{color:inherit}
       <div class="body tbl-scroll">
         <table class="subs">
           <thead><tr>
-            <th>Nickname</th><th>Client</th><th>Plan</th><th>Sessions</th><th>Requests</th><th>In-TTL</th><th>Loss rate</th>
+            <th>Nickname</th><th>Client</th><th>Plan</th><th>Sessions</th><th>Requests</th><th>Losses</th><th>Loss rate</th>
           </tr></thead>
           <tbody></tbody>
         </table>
@@ -595,7 +595,7 @@ a{color:inherit}
         <th aria-sort="none"><button type="button" class="sort-btn" data-sort="nickname">Nickname<span class="sort-ind" aria-hidden="true">↕</span></button></th>
         <th aria-sort="none"><button type="button" class="sort-btn" data-sort="period">Period<span class="sort-ind" aria-hidden="true">↕</span></button></th>
         <th aria-sort="none"><button type="button" class="sort-btn" data-sort="requests">Requests<span class="sort-ind" aria-hidden="true">↕</span></button></th>
-        <th aria-sort="none"><button type="button" class="sort-btn" data-sort="in_ttl">In-TTL<span class="sort-ind" aria-hidden="true">↕</span></button></th>
+        <th aria-sort="none"><button type="button" class="sort-btn" data-sort="in_ttl">Losses<span class="sort-ind" aria-hidden="true">↕</span></button></th>
         <th aria-sort="none"><button type="button" class="sort-btn" data-sort="iron">Iron<span class="sort-ind" aria-hidden="true">↕</span></button></th>
         <th aria-sort="none"><button type="button" class="sort-btn" data-sort="tokens">Re-billed tokens<span class="sort-ind" aria-hidden="true">↕</span></button></th>
         <th aria-sort="none"><button type="button" class="sort-btn" data-sort="rate">Loss rate<span class="sort-ind" aria-hidden="true">↕</span></button></th>
@@ -614,9 +614,11 @@ a{color:inherit}
   <p class="desc">What counts as a loss, and why you can verify every step yourself.</p>
   <div class="card">
     <ul class="rules">
-      <li><b>Source of truth</b>: the server-stamped diagnostic <span class="mono">message.diagnostics.cache_miss_reason = previous_message_not_found</span> in your local session logs (<span class="mono">~/.claude/projects/**/*.jsonl</span>). Nothing is inferred; only records the server itself marked are candidates.</li>
-      <li><b>TTL-strict judgment</b>: a candidate counts as a loss only if the idle gap to the previous request in the same session file is <b>under 30 minutes</b> (main session) or <b>under 5 minutes</b> (subagent). Anything longer is a legitimate TTL expiry and is <b>excluded</b>.</li>
-      <li><b>Iron losses</b>: the subset with an idle gap <b>under 5 minutes</b>, where the cache could not have expired under any published TTL.</li>
+      <li><b>Source of truth (v3)</b>: the billing fields of every request in your local session logs (<span class="mono">~/.claude/projects/**/*.jsonl</span>) — <span class="mono">cache_read_input_tokens</span> and <span class="mono">cache_creation_input_tokens</span>. They are the bill itself. The server's <span class="mono">cache_miss_reason</span> annotation describes the diagnostic, not the cache (per Anthropic support, 2026-08), so no reason name is required to count a loss — the four <span class="mono">*_changed</span> names have exactly one power, excusing a rebuild as a declared prompt change.</li>
+      <li><b>Judgment</b>: with the idle gap to the previous request in the same session file <b>under 30 minutes</b> (main) / <b>under 5 minutes</b> (subagent) and no excusing reason — <b>confirmed</b> if <span class="mono">cache_read</span> is 0 with cache written (the whole cache was gone), <b>probable</b> if the prefix read back but <b>100,000+ tokens</b> were re-created (fleet median write ~1,500; p99 ~84,000). Longer gaps are legitimate expiries and are <b>excluded</b>.</li>
+      <li><b>Iron losses</b>: the counted-loss subset with an idle gap <b>under 5 minutes</b>, where the cache could not have expired under any published TTL.</li>
+      <li><b>The v2.1 series is kept</b>: the old reason-based count (<span class="mono">previous_message_not_found</span> + in-TTL gap) is still computed as <span class="mono">pmnf</span> per day and per row. A series measured with the same ruler for months is worth more than a corrected ruler with no history.</li>
+      <li><b>Restatement (2026-08)</b>: the rules above replaced the v2.1 reason-based judgment after Anthropic support confirmed the reason field cannot carry that weight. The numbers on this page are v3 numbers; they differ from what this page showed before the change, in both directions — reason-only events with negligible re-billing dropped out, and rebuilds the old rule was blind to (renamed or absent reasons over a loss-shaped bill) came in. Changing the ruler silently would have been cheaper and worse.</li>
       <li><b>Dedup &amp; cost</b>: events are deduplicated by <span class="mono">requestId</span>; the re-billed cost of a loss is that request's <span class="mono">cache_creation_input_tokens</span>.</li>
       <li><b>Which day a request counts on</b>: this observatory, and every submission in it, cuts days by <b>UTC</b>. Submissions from many countries are summed day by day, and cutting each one by its own local date would scramble the fleet's daily totals. The <a href="check.html">check page</a> is the other way round on purpose: it is one person's own diagnosis, so its charts, heatmap and per-event times are drawn in <b>the reader's own timezone</b>, detected from their browser and named on screen. Same requests, same totals; only the day boundary moves, so a request near midnight can appear on one date there and the neighbouring date here. The payload preview on that page says so before you send it.</li>
     </ul>
@@ -643,7 +645,7 @@ a{color:inherit}
       </ul>
     </div></details>
     <details class="faq"><summary>Does running this affect my Claude account?</summary><div class="body">No. It only reads log files. It makes no contact with your Anthropic account or the API.</div></details>
-    <details class="faq"><summary>I got in-TTL losses. What now?</summary><div class="body">Please leave your result on <a href="https://github.com/anthropics/claude-code/issues/87966">anthropics/claude-code#87966</a>. A zero result is equally valuable data: knowing healthy accounts exist also helps narrow down the cause.</div></details>
+    <details class="faq"><summary>I got losses. What now?</summary><div class="body">Please leave your result on <a href="https://github.com/anthropics/claude-code/issues/87966">anthropics/claude-code#87966</a>. A zero result is equally valuable data: knowing healthy accounts exist also helps narrow down the cause.</div></details>
     <details class="faq"><summary>What becomes public if I submit?</summary><div class="body">Only the aggregate and daily numbers you approved in the preview, plus the optional nickname. Every submission lands as a public commit in the repo, so the full submission history is auditable.</div></details>
     <details class="faq"><summary>Is this an official Anthropic site?</summary><div class="body">No. This is a community tool with no affiliation with Anthropic.</div></details>
     <div class="links">
@@ -744,7 +746,7 @@ function buildFleetModel(days){
 function renderKpis(subs){
   var losses = 0, tokens = 0, minD = null, maxD = null;
   subs.forEach(function(s){
-    losses += s.totals.in_ttl_losses;
+    losses += s.totals.confirmed_losses + s.totals.probable_losses;
     tokens += s.totals.wasted_tokens;
     if(minD === null || s.period_start < minD) minD = s.period_start;
     if(maxD === null || s.period_end > maxD) maxD = s.period_end;
@@ -781,7 +783,7 @@ function renderLegend(days){
     : "no days reported yet";
   el.innerHTML =
     "<span><i class='chip line' style='background:" + ObservatoryCharts.PALETTE[0] +
-      "'></i>fleet loss rate: that day's in-TTL losses ÷ that day's requests, " +
+      "'></i>fleet loss rate: that day's counted losses ÷ that day's requests, " +
       "all machines pooled</span>" +
     "<span>" + (uniform ? "" :
       "<i class='chip' style='background:var(--ink);opacity:.16'></i>") +
@@ -837,10 +839,10 @@ var SORT_KEYS = {
   nickname: { num:false, get:function(s){ return String(s.nickname || "anonymous").toLowerCase(); } },
   period:   { num:false, get:function(s){ return String(s.period_start) + "|" + String(s.period_end); } },
   requests: { num:true,  get:function(s){ return s.totals.requests; } },
-  in_ttl:   { num:true,  get:function(s){ return s.totals.in_ttl_losses; } },
+  in_ttl:   { num:true,  get:function(s){ return s.totals.confirmed_losses + s.totals.probable_losses; } },
   iron:     { num:true,  get:function(s){ return s.totals.iron_losses; } },
   tokens:   { num:true,  get:function(s){ return s.totals.wasted_tokens; } },
-  rate:     { num:true,  get:function(s){ return s.totals.requests > 0 ? 100 * s.totals.in_ttl_losses / s.totals.requests : null; } },
+  rate:     { num:true,  get:function(s){ return s.totals.requests > 0 ? 100 * (s.totals.confirmed_losses + s.totals.probable_losses) / s.totals.requests : null; } },
   plan:     { num:false, get:function(s){ return String(s.plan || "unknown"); } },
   client:   { num:false, get:function(s){ return String(s.client || "unknown"); } },
   sessions: { num:false, get:function(s){ return String(s.concurrent_sessions || "unknown"); } }
@@ -1017,14 +1019,15 @@ function renderDetectorFleet(subs){
 function renderTable(subs){
   var tb = document.querySelector("#subsTable tbody");
   tb.innerHTML = sortedForTable(subs).map(function(s){
-    var rate = s.totals.requests > 0 ? 100 * s.totals.in_ttl_losses / s.totals.requests : null;
+    var lossesOf = s.totals.confirmed_losses + s.totals.probable_losses;
+    var rate = s.totals.requests > 0 ? 100 * lossesOf / s.totals.requests : null;
     var mine = MINE_IDS.has(s.id);
     return "<tr" + (mine ? " class='mine'" : "") + ">" +
       "<td class='nick'>" + esc(s.nickname || "anonymous") +
         (mine ? "<span class='mine-tag'>your submission</span>" : "") + "</td>" +
       "<td>" + esc(s.period_start) + " → " + esc(s.period_end) + "</td>" +
       "<td>" + fmtInt(s.totals.requests) + "</td>" +
-      "<td class='crit'>" + fmtInt(s.totals.in_ttl_losses) + "</td>" +
+      "<td class='crit'>" + fmtInt(lossesOf) + "</td>" +
       "<td>" + fmtInt(s.totals.iron_losses) + "</td>" +
       "<td class='crit'>" + fmtInt(s.totals.wasted_tokens) + "</td>" +
       (rate === null ? "<td class='na'>not enough data</td>"
@@ -1094,7 +1097,7 @@ function envGroups(subs, axis){
     if(!g){ g = { value: k, n: 0, requests: 0, losses: 0 }; m.set(k, g); }
     g.n++;
     g.requests += s.totals.requests;
-    g.losses += s.totals.in_ttl_losses;
+    g.losses += s.totals.confirmed_losses + s.totals.probable_losses;
   });
   var out = Array.from(m.values());
   out.forEach(function(g){
@@ -1255,14 +1258,15 @@ function renderEnv(){
     // cannot be computed, so it is withheld rather than printed as 0.00%. This
     // line said ": 0" until M11.2, which left the two tables disagreeing about
     // the same submission - and this is the table a reader opens to check.
-    var rate = s.totals.requests > 0 ? 100 * s.totals.in_ttl_losses / s.totals.requests : null;
+    var lossesOf = s.totals.confirmed_losses + s.totals.probable_losses;
+    var rate = s.totals.requests > 0 ? 100 * lossesOf / s.totals.requests : null;
     return "<tr>" +
       "<td class='nick'>" + esc(s.nickname || "anonymous") + "</td>" +
       "<td>" + esc(s.client || "unknown") + "</td>" +
       "<td>" + esc(s.plan || "unknown") + "</td>" +
       "<td>" + esc(s.concurrent_sessions || "unknown") + "</td>" +
       "<td>" + fmtInt(s.totals.requests) + "</td>" +
-      "<td class='crit'>" + fmtInt(s.totals.in_ttl_losses) + "</td>" +
+      "<td class='crit'>" + fmtInt(lossesOf) + "</td>" +
       (rate === null ? "<td class='na'>not enough data</td>"
                      : "<td>" + fmtPct(rate) + "</td>") +
       "</tr>";
@@ -1341,6 +1345,12 @@ function drawAll(){
 
 function renderDemoKpis(){
   var t = window.ObservatoryPreview.totals;
+  var pv = document.getElementById("pvPeriod");
+  if(pv && window.ObservatoryPreview.period){
+    var P0 = window.ObservatoryPreview;
+    pv.textContent = P0.period.start + " to " + P0.period.end + ", " +
+      P0.days.length + " days, " + P0.offsetLabel;
+  }
   document.getElementById("dRequests").textContent = fmtInt(t.requests);
   document.getElementById("dLosses").textContent = fmtInt(t.losses);
   document.getElementById("dIron").textContent = fmtInt(t.iron);

@@ -229,8 +229,9 @@ const TOP_REQUIRED = [
   "plan", "client", "concurrent_sessions",
   "period_start", "period_end", "totals", "daily", "script_version"
 ];
-const TOTALS_FIELDS = ["requests", "in_ttl_losses", "iron_losses", "wasted_tokens"];
-const DAILY_FIELDS = ["date", "requests", "losses", "wasted_tokens"];
+const TOTALS_FIELDS = ["requests", "confirmed_losses", "probable_losses",
+                       "iron_losses", "wasted_tokens", "pmnf_losses"];
+const DAILY_FIELDS = ["date", "requests", "losses", "pmnf", "wasted_tokens"];
 
 /* M15 detector vocabulary. VOCABULARY ONLY — no counts.
  *
@@ -312,8 +313,8 @@ const CONFLICT_DEADLINE_MS = 25000;
 const CONFLICT_RETRY_AFTER_MIN = 2;
 const CONFLICT_RETRY_AFTER_MAX = 6;
 const BLOB_MODE = "100644";
-const DETAIL_ROW_KEYS = ["date", "requests", "losses", "wasted_tokens"];
-const FLEET_ROW_KEYS = ["date", "requests", "losses", "wasted_tokens", "machines"];
+const DETAIL_ROW_KEYS = ["date", "requests", "losses", "pmnf", "wasted_tokens"];
+const FLEET_ROW_KEYS = ["date", "requests", "losses", "pmnf", "wasted_tokens", "machines"];
 
 function jsonResponse(status, body) {
   return new Response(JSON.stringify(body), {
@@ -465,7 +466,7 @@ function validateSchema(body) {
       if (parseDay(entry.date) === null) {
         errors.push("daily[" + i + "].date: must be a valid YYYY-MM-DD date");
       }
-      for (const key of ["requests", "losses", "wasted_tokens"]) {
+      for (const key of ["requests", "losses", "pmnf", "wasted_tokens"]) {
         if (!isCount(entry[key])) {
           errors.push("daily[" + i + "]." + key + ": must be a non-negative integer");
         }
@@ -554,11 +555,16 @@ function validateVocabulary(v, label, errors) {
 function validateSanity(body) {
   const errors = [];
   const t = body.totals;
-  if (t.in_ttl_losses > t.requests) {
-    errors.push("totals.in_ttl_losses exceeds totals.requests");
+  const losses = t.confirmed_losses + t.probable_losses;
+  if (losses > t.requests) {
+    errors.push("totals.confirmed_losses + probable_losses exceeds totals.requests");
   }
-  if (t.iron_losses > t.in_ttl_losses) {
-    errors.push("totals.iron_losses exceeds totals.in_ttl_losses");
+  if (t.iron_losses > losses) {
+    errors.push("totals.iron_losses exceeds confirmed_losses + probable_losses");
+  }
+  // The two series overlap but each is bounded by the same requests.
+  if (t.pmnf_losses > t.requests) {
+    errors.push("totals.pmnf_losses exceeds totals.requests");
   }
 
   const start = parseDay(body.period_start);
@@ -578,11 +584,15 @@ function validateSanity(body) {
   const seenDates = new Set();
   let sumRequests = 0;
   let sumLosses = 0;
+  let sumPmnf = 0;
   let sumWasted = 0;
   body.daily.forEach(function (entry, i) {
     const day = parseDay(entry.date);
     if (entry.losses > entry.requests) {
       errors.push("daily[" + i + "].losses exceeds daily[" + i + "].requests");
+    }
+    if (entry.pmnf > entry.requests) {
+      errors.push("daily[" + i + "].pmnf exceeds daily[" + i + "].requests");
     }
     if (start <= end && (day < start || day > end)) {
       errors.push("daily[" + i + "].date is outside the submission period");
@@ -593,6 +603,7 @@ function validateSanity(body) {
     seenDates.add(entry.date);
     sumRequests += entry.requests;
     sumLosses += entry.losses;
+    sumPmnf += entry.pmnf;
     sumWasted += entry.wasted_tokens;
   });
   // daily must sum to totals — blocks inflating totals alone (codex review).
@@ -600,9 +611,13 @@ function validateSanity(body) {
     errors.push("daily requests sum " + sumRequests +
       " != totals.requests " + t.requests);
   }
-  if (sumLosses !== t.in_ttl_losses) {
+  if (sumLosses !== losses) {
     errors.push("daily losses sum " + sumLosses +
-      " != totals.in_ttl_losses " + t.in_ttl_losses);
+      " != totals confirmed+probable " + losses);
+  }
+  if (sumPmnf !== t.pmnf_losses) {
+    errors.push("daily pmnf sum " + sumPmnf +
+      " != totals.pmnf_losses " + t.pmnf_losses);
   }
   if (sumWasted !== t.wasted_tokens) {
     errors.push("daily wasted_tokens sum " + sumWasted +
@@ -736,15 +751,18 @@ function buildIncoming(body) {
     period_end: body.period_end,
     totals: {
       requests: body.totals.requests,
-      in_ttl_losses: body.totals.in_ttl_losses,
+      confirmed_losses: body.totals.confirmed_losses,
+      probable_losses: body.totals.probable_losses,
       iron_losses: body.totals.iron_losses,
-      wasted_tokens: body.totals.wasted_tokens
+      wasted_tokens: body.totals.wasted_tokens,
+      pmnf_losses: body.totals.pmnf_losses
     },
     daily: body.daily.map(function (d) {
       return {
         date: d.date,
         requests: d.requests,
         losses: d.losses,
+        pmnf: d.pmnf,
         wasted_tokens: d.wasted_tokens
       };
     }),
@@ -902,7 +920,8 @@ function commitMessage(submission, merged) {
   return "data: " + (merged ? "update" : "submission") + " " + submission.id +
     " — " + submission.nickname +
     ", " + submission.period_start + "~" + submission.period_end +
-    ", " + submission.totals.in_ttl_losses + " losses / " +
+    ", " + (submission.totals.confirmed_losses +
+            submission.totals.probable_losses) + " losses / " +
     submission.totals.requests + " req";
 }
 
@@ -1006,23 +1025,28 @@ function buildIdentity(previous, ident, issuedTokenHash) {
 
 function dailyRowOf(d) {
   if (!isPlainObject(d) || parseDay(d.date) === null) return null;
-  if (!isCount(d.requests) || !isCount(d.losses) || !isCount(d.wasted_tokens)) return null;
-  return { date: d.date, requests: d.requests, losses: d.losses, wasted_tokens: d.wasted_tokens };
+  if (!isCount(d.requests) || !isCount(d.losses) || !isCount(d.pmnf) ||
+      !isCount(d.wasted_tokens)) return null;
+  return { date: d.date, requests: d.requests, losses: d.losses,
+           pmnf: d.pmnf, wasted_tokens: d.wasted_tokens };
 }
 
 /* Union the daily rows by date and recompute the totals from the result.
  *
  * The incoming row wins for a date both cover: it is the fresher measurement
- * of the same day. `iron_losses` is the one total that cannot be recomputed —
- * there is no per-day iron column — so it is carried conservatively:
+ * of the same day. Two totals cannot be recomputed from the merged rows —
+ * there is no per-day iron column and no per-day tier column — so both are
+ * carried conservatively, by the same formula:
  *
- *     kept = max(0, existing.iron_losses - losses on the superseded days)
+ *     kept = max(0, existing.count - losses on the superseded days)
  *
  * which is EXACT in both flows that matter (a disjoint increment supersedes
  * nothing, so all of it is kept; a full re-scan supersedes every existing day,
  * so none of it is and the fresh count stands alone) and never over-claims in
- * between. Iron is the worst subset of the losses, so under-counting it is the
- * direction that cannot flatter the site's own headline.
+ * between. `probable` is then the remainder against the merged loss sum, so
+ * confirmed + probable == sum(daily.losses) holds by construction rather than
+ * by luck. Under-counting confirmed (the stronger claim) and iron (the worst
+ * subset) is the direction that cannot flatter the site's own headline.
  */
 /* M14: the existing daily rows arrive as their own argument, because they no
    longer live on the index row — they live in data/subs/<id>.json, which the
@@ -1045,16 +1069,20 @@ function mergeRecord(existing, existingDaily, incoming) {
     const prev = byDate.get(row.date);
     if (prev) supersededLosses += prev.losses;
     byDate.set(row.date, { date: row.date, requests: row.requests,
-                           losses: row.losses, wasted_tokens: row.wasted_tokens });
+                           losses: row.losses, pmnf: row.pmnf,
+                           wasted_tokens: row.wasted_tokens });
   }
   const daily = Array.from(byDate.values()).sort(function (a, b) {
     return a.date < b.date ? -1 : (a.date > b.date ? 1 : 0);
   });
 
-  const totals = { requests: 0, in_ttl_losses: 0, iron_losses: 0, wasted_tokens: 0 };
+  const totals = { requests: 0, confirmed_losses: 0, probable_losses: 0,
+                   iron_losses: 0, wasted_tokens: 0, pmnf_losses: 0 };
+  let mergedLosses = 0;
   for (let i = 0; i < daily.length; i++) {
     totals.requests += daily[i].requests;
-    totals.in_ttl_losses += daily[i].losses;
+    mergedLosses += daily[i].losses;
+    totals.pmnf_losses += daily[i].pmnf;
     totals.wasted_tokens += daily[i].wasted_tokens;
   }
   const exTotals = isPlainObject(existing.totals) ? existing.totals : {};
@@ -1062,7 +1090,13 @@ function mergeRecord(existing, existingDaily, incoming) {
   if (exIron > existingLosses) exIron = existingLosses;
   const keptIron = Math.max(0, exIron - supersededLosses);
   totals.iron_losses = Math.min(keptIron + incoming.totals.iron_losses,
-                                totals.in_ttl_losses);
+                                mergedLosses);
+  let exConf = isCount(exTotals.confirmed_losses) ? exTotals.confirmed_losses : 0;
+  if (exConf > existingLosses) exConf = existingLosses;
+  const keptConf = Math.max(0, exConf - supersededLosses);
+  totals.confirmed_losses = Math.min(keptConf + incoming.totals.confirmed_losses,
+                                     mergedLosses);
+  totals.probable_losses = mergedLosses - totals.confirmed_losses;
 
   // The period widens to the union of both, never narrows: a 3-day increment
   // must not shrink a 3-month record.
@@ -1119,6 +1153,7 @@ function fleetRowOf(d) {
     date: d.date,
     requests: isCount(d.requests) ? d.requests : 0,
     losses: isCount(d.losses) ? d.losses : 0,
+    pmnf: isCount(d.pmnf) ? d.pmnf : 0,
     wasted_tokens: isCount(d.wasted_tokens) ? d.wasted_tokens : 0,
     machines: isCount(d.machines) ? d.machines : 0
   };
@@ -1151,6 +1186,7 @@ function applyFleetDelta(fleet, oldDaily, newDaily) {
     if (!cur) continue;            // never covered by the series; nothing to take out
     cur.requests -= r.requests;
     cur.losses -= r.losses;
+    cur.pmnf -= r.pmnf;
     cur.wasted_tokens -= r.wasted_tokens;
     cur.machines -= 1;
   }
@@ -1158,11 +1194,13 @@ function applyFleetDelta(fleet, oldDaily, newDaily) {
     const r = newDaily[i];
     let cur = byDate.get(r.date);
     if (!cur) {
-      cur = { date: r.date, requests: 0, losses: 0, wasted_tokens: 0, machines: 0 };
+      cur = { date: r.date, requests: 0, losses: 0, pmnf: 0,
+              wasted_tokens: 0, machines: 0 };
       byDate.set(r.date, cur);
     }
     cur.requests += r.requests;
     cur.losses += r.losses;
+    cur.pmnf += r.pmnf;
     cur.wasted_tokens += r.wasted_tokens;
     cur.machines += 1;
   }
@@ -1177,6 +1215,7 @@ function applyFleetDelta(fleet, oldDaily, newDaily) {
       date: d.date,
       requests: Math.max(0, d.requests),
       losses: Math.max(0, d.losses),
+      pmnf: Math.max(0, d.pmnf),
       wasted_tokens: Math.max(0, d.wasted_tokens),
       machines: d.machines
     });

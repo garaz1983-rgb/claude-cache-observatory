@@ -297,10 +297,19 @@
     var o = isPlainObject(t) ? t : {};
     return {
       requests: intOf(o.requests),
-      in_ttl_losses: intOf(o.in_ttl_losses),
+      confirmed_losses: intOf(o.confirmed_losses),
+      probable_losses: intOf(o.probable_losses),
       iron_losses: intOf(o.iron_losses),
-      wasted_tokens: intOf(o.wasted_tokens)
+      wasted_tokens: intOf(o.wasted_tokens),
+      pmnf_losses: intOf(o.pmnf_losses),
+      excused_rebuilds: intOf(o.excused_rebuilds)
     };
+  }
+
+  // The two tiers summed — what "losses" means everywhere a single number is
+  // shown or compared.
+  function lossesOf(t) {
+    return intOf(t && t.confirmed_losses) + intOf(t && t.probable_losses);
   }
 
   function sanitizeDaily(rows) {
@@ -313,6 +322,7 @@
         date: d.date,
         requests: intOf(d.requests),
         losses: intOf(d.losses),
+        pmnf: intOf(d.pmnf),
         wasted_tokens: intOf(d.wasted_tokens)
       });
     }
@@ -359,11 +369,15 @@
     for (var i = 0; i < events.length; i++) {
       var e = events[i];
       if (!isPlainObject(e)) continue;
-      // Raw engine records carry a classification and only in-TTL/iron ones
-      // are kept. A record read back from storage has none (it is derived from
-      // gap_min on hydrate), so the absence of the field is not a rejection.
+      // v3: only the counted losses are kept — excused rebuilds and raw
+      // annotations never enter storage. A record read back from storage
+      // carries `tier` instead of `classification`.
       var cls = e.classification;
-      if (cls !== undefined && cls !== "in_ttl" && cls !== "iron") continue;
+      if (cls !== undefined && cls !== "confirmed" && cls !== "probable") continue;
+      var tier = cls === "confirmed" || e.tier === "confirmed"
+        ? "confirmed"
+        : (cls === "probable" || e.tier === "probable" ? "probable" : null);
+      if (tier === null) continue;   // neither a fresh loss nor a stored one
       var date = null, hour = null, time = null;
       if (isDateKey(e.date) && typeof e.hour === "number" && typeof e.time === "string") {
         date = e.date;
@@ -386,7 +400,10 @@
         time: time,
         gap_min: Math.round(gapMin * 1000) / 1000,
         tokens: intOf(e.cache_creation_tokens !== undefined ? e.cache_creation_tokens : e.tokens),
-        main: !(e.is_subagent === true || e.main === false)
+        main: !(e.is_subagent === true || e.main === false),
+        // The one judgment fact gap cannot re-derive: confirmed means cr was
+        // 0, and cr itself is (deliberately) not stored.
+        tier: tier
       });
     }
     out.sort(function (a, b) {
@@ -583,7 +600,7 @@
   function lossRate(totals) {
     var t = sanitizeTotals(totals);
     if (t.requests <= 0) return null;
-    return 100 * t.in_ttl_losses / t.requests;
+    return 100 * lossesOf(t) / t.requests;
   }
 
   function compareRuns(prev, cur) {
@@ -594,10 +611,9 @@
       cur_saved_at: strOf(cur.saved_at, 32),
       prev_period: prev.period_start + ".." + prev.period_end,
       cur_period: cur.period_start + ".." + cur.period_end,
-      losses_prev: intOf(prev.totals && prev.totals.in_ttl_losses),
-      losses_cur: intOf(cur.totals && cur.totals.in_ttl_losses),
-      losses_delta: intOf(cur.totals && cur.totals.in_ttl_losses) -
-                    intOf(prev.totals && prev.totals.in_ttl_losses),
+      losses_prev: lossesOf(prev.totals),
+      losses_cur: lossesOf(cur.totals),
+      losses_delta: lossesOf(cur.totals) - lossesOf(prev.totals),
       rate_prev: rp,
       rate_cur: rc,
       rate_delta: (rp === null || rc === null) ? null : rc - rp
@@ -638,7 +654,9 @@
           gap_min: e.gap_min,
           tokens: e.tokens,
           main: e.main,
-          classification: e.gap_min < IRON_MINUTES ? "iron" : "in_ttl"
+          // filterRange() recounts the tier split and iron from these.
+          classification: e.tier === "confirmed" ? "confirmed" : "probable",
+          iron: e.gap_min < IRON_MINUTES
         });
       });
     }

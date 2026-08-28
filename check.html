@@ -307,7 +307,7 @@ a{color:inherit}
       <summary>No folder access? Paste the CLI script's JSON output instead</summary>
       <div class="body">
         <p>On the machine with the logs, run <span class="mono">python scripts/check_cache_loss.py --json</span> (the script ships in this repo) and paste everything it prints below. The pasted JSON contains aggregates only: totals plus daily counts.</p>
-        <textarea id="pasteBox" spellcheck="false" placeholder='{"script_version": "cli-2.1", "totals": {...}, "daily": [...]}'></textarea>
+        <textarea id="pasteBox" spellcheck="false" placeholder='{"script_version": "cli-3.0", "totals": {...}, "daily": [...]}'></textarea>
         <div class="actions">
           <button id="pasteBtn" type="button">Render pasted JSON</button>
           <span class="hint">Note: the <span class="mono">--json</span> flag is an addition in this repo's copy of the script; the judgment rules are unchanged v2.1.</span>
@@ -320,17 +320,19 @@ a{color:inherit}
 
 <section id="results" hidden>
   <h2>2 · Your results</h2>
-  <p class="desc">TTL-strict judgment v2.1: only losses inside the cache TTL are counted; legitimate expiries are excluded.</p>
+  <p class="desc">Billing-shape judgment v3: what was charged decides, not what the diagnostic said. Only rebuilds inside the cache TTL count; legitimate expiries and declared prompt changes are excluded.</p>
   <div class="notice" id="pasteSrcNote" hidden>Rendered from pasted CLI JSON (aggregates only), so the hour-level heatmap is not available, and the dates stay as the CLI cut them: <b>UTC calendar days</b>. Without per-request detail this page cannot re-cut them into your own timezone. Everything else, including sharing, works the same.</div>
   <div class="notice" id="storeRestored" hidden></div>
 
   <div class="kpis">
     <div class="kpi"><div class="label">Requests scanned</div><div class="val" id="kRequests">–</div></div>
-    <div class="kpi crit"><div class="label">In-TTL losses</div><div class="val" id="kLosses">–</div><div class="note">inside 30 min (main) / 5 min (subagent)</div></div>
-    <div class="kpi crit"><div class="label">Iron losses</div><div class="val" id="kIron">–</div><div class="note">idle gap under 5 minutes</div></div>
+    <div class="kpi crit"><div class="label">Confirmed losses</div><div class="val" id="kConfirmed">–</div><div class="note">cache_read 0 inside the TTL — the whole cache was gone</div></div>
+    <div class="kpi crit"><div class="label">Probable losses</div><div class="val" id="kProbable">–</div><div class="note">prefix read back, 100k+ tokens re-created, no change declared</div></div>
+    <div class="kpi crit"><div class="label">Iron losses</div><div class="val" id="kIron">–</div><div class="note">a counted loss with idle under 5 minutes</div></div>
     <div class="kpi crit"><div class="label">Re-billed tokens</div><div class="val" id="kTokens">–</div><div class="note">cache writes charged again</div></div>
     <div class="kpi"><div class="label">Loss rate</div><div class="val" id="kRate">–</div><div class="note">in-TTL losses / requests</div></div>
   </div>
+  <p class="tz-note" id="judgeNote" hidden></p>
   <p class="tz-note" id="tzNote"></p>
 
   <!-- Detector health (M15). Sits directly under the numbers it qualifies:
@@ -368,12 +370,15 @@ a{color:inherit}
   </section>
 
   <details class="criteria">
-    <summary>How losses are judged (TTL-strict, v2.1)</summary>
+    <summary>How losses are judged (billing shape, v3)</summary>
     <div class="body">
       <ul>
-        <li><b>Candidate</b>: a record the server itself stamped with <span class="mono">message.diagnostics.cache_miss_reason = previous_message_not_found</span>. Nothing is inferred.</li>
-        <li><b>In-TTL loss</b>: the idle gap to the previous request in the same session file is under <b>30 minutes</b> (main session) or <b>5 minutes</b> (subagent). Longer gaps are legitimate TTL expiries and are <b>not</b> counted.</li>
-        <li><b>Iron loss</b>: idle gap under <b>5 minutes</b>, meaning no published TTL could have expired the cache.</li>
+        <li><b>What decides</b>: the billing fields of each request — <span class="mono">cache_read_input_tokens</span> and <span class="mono">cache_creation_input_tokens</span>. They are the bill itself, so they cannot be missing or misdescribed. The server's <span class="mono">cache_miss_reason</span> annotation describes the state of the <i>diagnostic</i>, not of the cache (Anthropic support, 2026-08: <span class="mono">previous_message_not_found</span> means "could not compare"), so no reason name is ever required to count a loss.</li>
+        <li><b>Confirmed loss</b>: idle gap to the previous request in the same session file under <b>30 minutes</b> (main) / <b>5 minutes</b> (subagent), <span class="mono">cache_read</span> is <b>0</b>, and cache was written. The whole cache was gone minutes after use.</li>
+        <li><b>Probable loss</b>: same gap window, the stable prefix <i>was</i> read back, but <b>100,000+ tokens</b> were re-created with no declared prompt change. Fleet-median writes are ~1,500 tokens and the 99th percentile is ~84,000, so this shape sits outside normal behaviour.</li>
+        <li><b>Excused rebuild</b> (never counted): either shape where the reason declares the prompt really changed (<span class="mono">messages/model/system/tools_changed</span>) — re-creating it is correct behaviour. An <b>unknown</b> reason name never excuses: judgment keeps working if the server invents a new one, and the census below surfaces the name.</li>
+        <li><b>Iron loss</b>: a counted loss with idle gap under <b>5 minutes</b>, meaning no published TTL could have expired the cache.</li>
+        <li><b>v2.1 series</b>: the old reason-based count (<span class="mono">previous_message_not_found</span> + gap under TTL) is still computed and shown for continuity. It tracked real degradation for months; it just is not the headline any more.</li>
         <li><b>Dedup</b>: one event per <span class="mono">requestId</span>; a later record of the same request may only back-fill a missing reason.</li>
         <li><b>Cost</b>: the re-billed cost of a loss is that request's <span class="mono">cache_creation_input_tokens</span>.</li>
       </ul>
@@ -665,8 +670,9 @@ function setScanProgress(done, total, st){
     fmtInt(done) + " / " + fmtInt(total) + " files";
   document.getElementById("progReq").textContent = fmtInt(st.requests) + " requests";
   var loss = document.getElementById("progLoss");
-  loss.textContent = fmtInt(st.in_ttl_losses) + " in-TTL losses";
-  loss.className = st.in_ttl_losses > 0 ? "prog-loss hit" : "prog-loss";
+  var stLosses = st.confirmed_losses + st.probable_losses;
+  loss.textContent = fmtInt(stLosses) + " losses";
+  loss.className = stLosses > 0 ? "prog-loss hit" : "prog-loss";
   document.getElementById("progMsg").textContent = "";
 }
 function showError(msg){
@@ -812,7 +818,7 @@ function validateDetector(v, errs){
   if(out.reasons && out.unknown_reasons !== undefined){
     var unknown = 0;
     Object.keys(out.reasons).forEach(function(k){
-      if(k !== "previous_message_not_found") unknown += out.reasons[k];
+      if(KNOWN_REASONS.indexOf(k) === -1) unknown += out.reasons[k];
     });
     if(unknown !== out.unknown_reasons){
       errs.push("detector.unknown_reasons " + out.unknown_reasons +
@@ -840,25 +846,27 @@ function validateCliJson(text){
     t = null;
   } else {
     Object.keys(t).forEach(function(k){
-      if(["requests", "in_ttl_losses", "iron_losses", "wasted_tokens"].indexOf(k) === -1) errs.push("unexpected field: totals." + k);
+      if(["requests", "confirmed_losses", "probable_losses", "iron_losses", "wasted_tokens", "pmnf_losses"].indexOf(k) === -1) errs.push("unexpected field: totals." + k);
     });
-    ["requests", "in_ttl_losses", "iron_losses", "wasted_tokens"].forEach(function(k){
+    ["requests", "confirmed_losses", "probable_losses", "iron_losses", "wasted_tokens", "pmnf_losses"].forEach(function(k){
       if(!isCountInt(t[k])) errs.push("totals." + k + ": must be a non-negative integer");
     });
-    if(isCountInt(t.requests) && isCountInt(t.in_ttl_losses) && t.in_ttl_losses > t.requests) errs.push("totals.in_ttl_losses exceeds totals.requests");
-    if(isCountInt(t.in_ttl_losses) && isCountInt(t.iron_losses) && t.iron_losses > t.in_ttl_losses) errs.push("totals.iron_losses exceeds totals.in_ttl_losses");
+    var tLosses = isCountInt(t.confirmed_losses) && isCountInt(t.probable_losses) ? t.confirmed_losses + t.probable_losses : null;
+    if(isCountInt(t.requests) && tLosses !== null && tLosses > t.requests) errs.push("totals confirmed+probable exceeds totals.requests");
+    if(tLosses !== null && isCountInt(t.iron_losses) && t.iron_losses > tLosses) errs.push("totals.iron_losses exceeds confirmed+probable");
+    if(isCountInt(t.requests) && isCountInt(t.pmnf_losses) && t.pmnf_losses > t.requests) errs.push("totals.pmnf_losses exceeds totals.requests");
   }
   var d = o.daily;
   if(!Array.isArray(d) || d.length === 0){
     errs.push("daily: must be a non-empty array");
   } else {
-    var sums = { requests: 0, losses: 0, wasted_tokens: 0 };
+    var sums = { requests: 0, losses: 0, pmnf: 0, wasted_tokens: 0 };
     var seenDates = {};
     var prevDate = "";
     d.forEach(function(e, i){
       if(!isObj(e)){ errs.push("daily[" + i + "]: must be an object"); return; }
       Object.keys(e).forEach(function(k){
-        if(["date", "requests", "losses", "wasted_tokens"].indexOf(k) === -1) errs.push("unexpected field: daily[" + i + "]." + k);
+        if(["date", "requests", "losses", "pmnf", "wasted_tokens"].indexOf(k) === -1) errs.push("unexpected field: daily[" + i + "]." + k);
       });
       if(typeof e.date !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(e.date)){
         errs.push("daily[" + i + "].date: must be YYYY-MM-DD");
@@ -868,7 +876,7 @@ function validateCliJson(text){
         if(e.date < prevDate) errs.push("daily[" + i + "].date: not in ascending order");
         prevDate = e.date;
       }
-      ["requests", "losses", "wasted_tokens"].forEach(function(k){
+      ["requests", "losses", "pmnf", "wasted_tokens"].forEach(function(k){
         if(!isCountInt(e[k])) errs.push("daily[" + i + "]." + k + ": must be a non-negative integer");
         else sums[k] += e[k];
       });
@@ -876,22 +884,24 @@ function validateCliJson(text){
     });
     if(t){
       if(isCountInt(t.requests) && sums.requests !== t.requests) errs.push("daily requests sum " + sums.requests + " != totals.requests " + t.requests);
-      if(isCountInt(t.in_ttl_losses) && sums.losses !== t.in_ttl_losses) errs.push("daily losses sum " + sums.losses + " != totals.in_ttl_losses " + t.in_ttl_losses);
+      var tl = t.confirmed_losses + t.probable_losses;
+      if(isCountInt(t.confirmed_losses) && isCountInt(t.probable_losses) && sums.losses !== tl) errs.push("daily losses sum " + sums.losses + " != totals confirmed+probable " + tl);
+      if(isCountInt(t.pmnf_losses) && sums.pmnf !== t.pmnf_losses) errs.push("daily pmnf sum " + sums.pmnf + " != totals.pmnf_losses " + t.pmnf_losses);
       if(isCountInt(t.wasted_tokens) && sums.wasted_tokens !== t.wasted_tokens) errs.push("daily wasted_tokens sum " + sums.wasted_tokens + " != totals.wasted_tokens " + t.wasted_tokens);
     }
   }
   var sv = o.script_version;
   if(sv !== undefined && (typeof sv !== "string" || sv.length === 0 || sv.length > 32 || !/^[A-Za-z0-9._-]+$/.test(sv))){
-    errs.push("script_version: must be a short tag like cli-2.1");
+    errs.push("script_version: must be a short tag like cli-3.0");
   }
   var det = validateDetector(o.detector, errs);
   if(errs.length) return { errors: errs };
   return {
     errors: [],
-    version: typeof sv === "string" ? sv : "cli-2.1",
+    version: typeof sv === "string" ? sv : "cli-3.0",
     result: {
-      totals: { requests: t.requests, in_ttl_losses: t.in_ttl_losses, iron_losses: t.iron_losses, wasted_tokens: t.wasted_tokens },
-      daily: d.map(function(e){ return { date: e.date, requests: e.requests, losses: e.losses, wasted_tokens: e.wasted_tokens }; }),
+      totals: { requests: t.requests, confirmed_losses: t.confirmed_losses, probable_losses: t.probable_losses, iron_losses: t.iron_losses, wasted_tokens: t.wasted_tokens, pmnf_losses: t.pmnf_losses },
+      daily: d.map(function(e){ return { date: e.date, requests: e.requests, losses: e.losses, pmnf: e.pmnf, wasted_tokens: e.wasted_tokens }; }),
       events: [],
       detector: det
     }
@@ -1088,6 +1098,8 @@ function updateHeatmapNote(){
    still originate in a file on disk, and a value out of a log file must
    never reach the DOM as markup. */
 var PMNF = "previous_message_not_found";
+/* Mirrors KNOWN_REASONS in assets/parse.js — census bookkeeping, never judgment. */
+var KNOWN_REASONS = [PMNF, "messages_changed", "model_changed", "system_changed", "tools_changed", "unavailable"];
 
 function censusTable(title, obj, alienTest){
   var wrap = document.createElement("div");
@@ -1148,13 +1160,14 @@ function renderDetector(){
   var known = reasons[PMNF] || 0;
 
   if(d.unknown_reasons > 0){
-    box.className = "det bad";
-    title.textContent = "The server stamped a reason this page does not recognise";
-    lead.textContent = "Every loss counted above was judged from " + PMNF + " alone. " +
-      fmtInt(d.unknown_reasons) + " request" + (d.unknown_reasons === 1 ? "" : "s") +
-      " in this scan carry a different reason, and not one of them could be judged — " +
-      "they were skipped entirely, whatever they were. Treat the loss figures above as " +
-      "a floor, not a total, and report the unrecognised value in the issue thread.";
+    box.className = "det warn";
+    title.textContent = "The server stamped a reason this page has not seen before";
+    lead.textContent = "Judgment reads the billing fields, so an unfamiliar name cannot hide " +
+      "a loss from the figures above. What it CAN hide is an excuse: if this new name " +
+      "declares a legitimate prompt change, the " + fmtInt(d.unknown_reasons) + " request" +
+      (d.unknown_reasons === 1 ? "" : "s") + " carrying it had their rebuilds counted " +
+      "instead of excused. Read the figures above as an upper bound on those requests, " +
+      "and report the name in the issue thread.";
   } else if(d.diagnosed_requests === 0 && t.requests > 0){
     box.className = "det warn";
     title.textContent = "Not one record in this scan carried a cache-miss reason";
@@ -1164,14 +1177,15 @@ function renderDetector(){
       (d.cold_writes === 1 ? "" : "s") + " in this scan wrote cache and read none back.";
   } else {
     box.className = "det ok";
-    title.textContent = "Detector health: the only reason present is the one this page knows";
+    title.textContent = "Detector health: every reason name in this scan is a known one";
     lead.textContent = "All " + fmtInt(d.diagnosed_requests) + " diagnosed request" +
-      (d.diagnosed_requests === 1 ? "" : "s") + " carry " + PMNF + ", so nothing was " +
-      "skipped for wearing a name this page cannot read.";
+      (d.diagnosed_requests === 1 ? "" : "s") + " carry names this page knows " +
+      "(the diagnostic annotations, or the four declared-change excuses), so no " +
+      "rebuild was counted that a known excuse should have covered.";
   }
 
   grid.appendChild(censusTable("cache_miss_reason values seen", reasons, function(k){
-    return k !== PMNF;
+    return KNOWN_REASONS.indexOf(k) === -1;
   }));
   grid.appendChild(censusTable("client versions in this scan", isObj(d.versions) ? d.versions : {}, null));
 
@@ -1197,10 +1211,20 @@ function renderResults(){
   rebuildView();
   var t = LAST.result.totals;
   document.getElementById("kRequests").textContent = fmtInt(t.requests);
-  document.getElementById("kLosses").textContent = fmtInt(t.in_ttl_losses);
+  var kl = t.confirmed_losses + t.probable_losses;
+  document.getElementById("kConfirmed").textContent = fmtInt(t.confirmed_losses);
+  document.getElementById("kProbable").textContent = fmtInt(t.probable_losses);
   document.getElementById("kIron").textContent = fmtInt(t.iron_losses);
+  var jn = document.getElementById("judgeNote");
+  if(jn){
+    var bits = [];
+    if(typeof t.excused_rebuilds === "number" && t.excused_rebuilds > 0) bits.push(fmtInt(t.excused_rebuilds) + " rebuild(s) excluded — their reason declared a prompt change (messages/model/system/tools)");
+    if(typeof t.pmnf_losses === "number") bits.push("v2.1 series (PMNF-based, kept for continuity): " + fmtInt(t.pmnf_losses));
+    jn.hidden = bits.length === 0;
+    jn.textContent = bits.join(" · ");
+  }
   document.getElementById("kTokens").textContent = fmtTok(t.wasted_tokens);
-  document.getElementById("kRate").textContent = t.requests > 0 ? (100 * t.in_ttl_losses / t.requests).toFixed(2) + "%" : "–";
+  document.getElementById("kRate").textContent = t.requests > 0 ? (100 * kl / t.requests).toFixed(2) + "%" : "–";
   updateTzNote();
   renderDetector();
   drawCharts();
@@ -1317,12 +1341,15 @@ function buildSubmitPayload(){
       period_end: r.daily[r.daily.length - 1].date,
       totals: {
         requests: r.totals.requests,
-        in_ttl_losses: r.totals.in_ttl_losses,
+        confirmed_losses: r.totals.confirmed_losses,
+        probable_losses: r.totals.probable_losses,
         iron_losses: r.totals.iron_losses,
-        wasted_tokens: r.totals.wasted_tokens
+        wasted_tokens: r.totals.wasted_tokens,
+        pmnf_losses: r.totals.pmnf_losses
       },
       daily: r.daily.map(function(d){
-        return { date: d.date, requests: d.requests, losses: d.losses, wasted_tokens: d.wasted_tokens };
+        return { date: d.date, requests: d.requests, losses: d.losses,
+                 pmnf: d.pmnf, wasted_tokens: d.wasted_tokens };
       })
     };
   }
@@ -1820,7 +1847,7 @@ function updateStoreCard(){
       " in this browser · last saved " + fmtWhen(lastRun.saved_at) +
       " (period " + lastRun.period_start + " to " + lastRun.period_end + ", " +
       fmtInt(lastRun.totals.requests) + " requests, " +
-      fmtInt(lastRun.totals.in_ttl_losses) + " in-TTL losses)");
+      fmtInt(lastRun.totals.confirmed_losses + lastRun.totals.probable_losses) + " losses)");
   }
   if(subs.length){
     var lastSub = subs[subs.length - 1];

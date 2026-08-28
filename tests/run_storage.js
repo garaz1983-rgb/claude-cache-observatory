@@ -225,7 +225,7 @@ var out = {
   hydrated_iron: (function () {
     var h = store.hydrate(run);
     var n = 0;
-    h.result.events.forEach(function (e) { if (e.classification === "iron") n += 1; });
+    h.result.events.forEach(function (e) { if (e.iron === true) n += 1; });
     return { iron_events: n, daily_len: h.result.daily.length, census: h.census !== null };
   })(),
   throwing: throwing,

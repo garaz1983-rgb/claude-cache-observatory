@@ -40,22 +40,26 @@ Checklist for a page change:
 
 ## parse.js and CLI judgment parity
 
-`assets/parse.js` (browser) and `scripts/check_cache_loss.py` (CLI, the v2.1 SSOT) must implement identical judgment rules:
+`assets/parse.js` (browser) and `scripts/check_cache_loss.py` (CLI, the v3 SSOT) must implement identical judgment rules:
 
-- PMNF candidates only (`message.diagnostics.cache_miss_reason` resolving to `previous_message_not_found`);
+- judgment reads the billing fields, never a reason name: with the idle gap to the previous request in the same file under 1800 s (main) / 300 s (subagent, marked by a `subagents` path segment) and no excusing reason, `cache_read == 0` with cache written is a **confirmed** loss and `cache_read > 0` with `cache_creation >= 100,000` (`PROBABLE_CC_MIN`, a fixed absolute threshold — never a per-scan percentile, or nothing is reproducible) is a **probable** loss; anything past the gap window is a legitimate expiry;
+- the four `EXCUSED_REASONS` (`messages/model/system/tools_changed`) turn either shape into an **excused rebuild**, counted in `excused_rebuilds` and never as a loss; an unknown reason name never excuses;
+- **iron** flags a counted loss with the gap under 300 s;
+- the v2.1 series is computed alongside, rule unchanged (`previous_message_not_found` with the gap under the TTL), as `pmnf_losses` and per-day `pmnf` — coexistence, not judgment;
 - dedup by `requestId` falling back to `message.id`, with later records of a seen request only back-filling a missing reason (same file only);
-- idle gap to the previous request in the same file: in-TTL when under 1800 s (main) / 300 s (subagent, marked by a `subagents` path segment); iron when under 300 s; anything longer is a legitimate expiry and not a loss;
-- wasted tokens = `cache_creation_input_tokens` of each in-TTL-lost request.
+- wasted tokens = `cache_creation_input_tokens` of each counted loss.
 
 Since M15 both engines also emit a `detector` block: a census of every
 `cache_miss_reason` value seen, every client `version`, and the requests that
 wrote cache while reading none back. It is **counting, not judgment** — it runs
 as its own loop over the same deduped records so that it is visible at a glance
 that it cannot feed back into classification, and no total or daily row depends
-on it. It exists because the rules above depend on one string: rename it
-server-side and every loss disappears into the "not a candidate" bucket while
-the page prints a confident zero. The census splits that bucket so the page can
-say "I no longer know" instead of "nothing happened". `tests/parity_check.py`
+on it. Under v2.1 it existed because judgment depended on one string. v3 judges the
+billing shape, so a renamed reason can no longer hide a loss — what an unknown
+name CAN hide is an excuse: if the server introduces a fifth *_changed-style
+declaration, its rebuilds are counted instead of excused until a human adds the
+name. The census (and `detector.unknown_reasons`, which counts names outside
+PMNF + the four excuses + `unavailable`) is how that human finds out. `tests/parity_check.py`
 compares the whole block between the engines AND against hand-computed
 expectations, because agreement alone would not catch a mistake made in both.
 

@@ -5,17 +5,19 @@ check.html lets the user narrow the shared period when a scan is longer than
 the API's 92-day cap. The payload must then be RECOMPUTED for that window:
 /api/submit re-derives every total from `daily` and rejects a payload whose
 sums disagree (04_DATA_MODEL.md, 06_FUNCTIONAL_SPEC.md; submit_contract_test
-case10). `iron_losses` has no daily column, so it has to be recounted from
-per-event classifications — never estimated.
+case10). The tier split (confirmed/probable) and `iron_losses` have no daily
+column, so they are recounted from per-event records — never estimated.
 
 This test drives assets/parse.js through node (tests/run_range.js) and checks,
 for each window:
 
   - sum(daily.requests)      == totals.requests
-  - sum(daily.losses)        == totals.in_ttl_losses
+  - sum(daily.losses)        == confirmed_losses + probable_losses
+  - sum(daily.pmnf)          == totals.pmnf_losses
   - sum(daily.wasted_tokens) == totals.wasted_tokens
-  - totals.iron_losses       == events with classification "iron" in-window
-  - totals.iron_losses      <= totals.in_ttl_losses (API sanity rule)
+  - totals tier counts       == events with that classification in-window
+  - totals.iron_losses       == counted events with iron true in-window
+  - totals.iron_losses      <= confirmed + probable (API sanity rule)
   - daily dates sorted, unique and inside [period_start, period_end]
   - the whole slice equals an independently recomputed expectation
 
@@ -102,18 +104,24 @@ def expected_slice(daily, events, lo, hi):
         return None
     rows.sort(key=lambda d: d["date"])
     first, last = rows[0]["date"], rows[-1]["date"]
-    iron = sum(1 for e in events
-               if e["classification"] == "iron" and first <= e["date"] <= last)
+    counted = [e for e in events
+               if e["classification"] in ("confirmed", "probable")
+               and first <= e["date"] <= last]
     return {
         "period_start": first,
         "period_end": last,
         "totals": {
             "requests": sum(r["requests"] for r in rows),
-            "in_ttl_losses": sum(r["losses"] for r in rows),
-            "iron_losses": iron,
+            "confirmed_losses": sum(1 for e in counted
+                                    if e["classification"] == "confirmed"),
+            "probable_losses": sum(1 for e in counted
+                                   if e["classification"] == "probable"),
+            "iron_losses": sum(1 for e in counted if e.get("iron") is True),
             "wasted_tokens": sum(r["wasted_tokens"] for r in rows),
+            "pmnf_losses": sum(r["pmnf"] for r in rows),
         },
-        "daily": [{k: r[k] for k in ("date", "requests", "losses", "wasted_tokens")}
+        "daily": [{k: r[k] for k in ("date", "requests", "losses", "pmnf",
+                                     "wasted_tokens")}
                   for r in rows],
     }
 
@@ -151,15 +159,18 @@ def check_slice_invariants(name, sl):
     t = sl["totals"]
     check(sum(d["requests"] for d in sl["daily"]) == t["requests"],
           "%s: sum(daily.requests) != totals.requests" % name)
-    check(sum(d["losses"] for d in sl["daily"]) == t["in_ttl_losses"],
-          "%s: sum(daily.losses) != totals.in_ttl_losses" % name)
+    check(sum(d["losses"] for d in sl["daily"])
+          == t["confirmed_losses"] + t["probable_losses"],
+          "%s: sum(daily.losses) != confirmed+probable" % name)
+    check(sum(d["pmnf"] for d in sl["daily"]) == t["pmnf_losses"],
+          "%s: sum(daily.pmnf) != totals.pmnf_losses" % name)
     check(sum(d["wasted_tokens"] for d in sl["daily"]) == t["wasted_tokens"],
           "%s: sum(daily.wasted_tokens) != totals.wasted_tokens" % name)
-    check(t["iron_losses"] <= t["in_ttl_losses"],
-          "%s: iron_losses %d > in_ttl_losses %d"
-          % (name, t["iron_losses"], t["in_ttl_losses"]))
-    check(t["in_ttl_losses"] <= t["requests"],
-          "%s: in_ttl_losses > requests" % name)
+    losses = t["confirmed_losses"] + t["probable_losses"]
+    check(t["iron_losses"] <= losses,
+          "%s: iron_losses %d > confirmed+probable %d"
+          % (name, t["iron_losses"], losses))
+    check(losses <= t["requests"], "%s: losses > requests" % name)
     dates = [d["date"] for d in sl["daily"]]
     check(dates == sorted(dates), "%s: daily dates not sorted" % name)
     check(len(set(dates)) == len(dates), "%s: duplicate daily dates" % name)
@@ -170,7 +181,7 @@ def check_slice_invariants(name, sl):
               "%s: daily %s outside the period" % (name, d["date"]))
         check(d["losses"] <= d["requests"],
               "%s: daily %s losses > requests" % (name, d["date"]))
-        check(set(d.keys()) == {"date", "requests", "losses", "wasted_tokens"},
+        check(set(d.keys()) == {"date", "requests", "losses", "pmnf", "wasted_tokens"},
               "%s: daily %s carries undefined fields %r" % (name, d["date"], set(d)))
 
 
@@ -239,7 +250,7 @@ def main():
               "parse.js MAX_PERIOD_DAYS=%r, expected %d"
               % (out["max_period_days"], MAX_PERIOD_DAYS))
 
-        iron_total = sum(1 for e in out["events"] if e["classification"] == "iron")
+        iron_total = sum(1 for e in out["events"] if e.get("iron") is True)
         check(iron_total == out["totals"]["iron_losses"],
               "fixture sanity: %d iron events vs totals.iron_losses %d"
               % (iron_total, out["totals"]["iron_losses"]))
@@ -266,7 +277,7 @@ def main():
         check(narrowed["daily"] != full["daily"],
               "the narrowed window kept every daily row (filter is a no-op?)")
         iron_dates = set(e["date"] for e in out["events"]
-                         if e["classification"] == "iron")
+                         if e.get("iron") is True)
         dropped = [d for d in dates if d in iron_dates and
                    not (narrowed["period_start"] <= d <= narrowed["period_end"])]
         check(dropped, "no iron-bearing day falls outside the narrowed window; "

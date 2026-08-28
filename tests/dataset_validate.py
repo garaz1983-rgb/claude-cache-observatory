@@ -99,11 +99,13 @@ MAX_CENSUS_KEYS = 16
 # Mirrors parseDay()'s shape test in functions/api/submit.js, same \Z reasoning.
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}\Z")
 
-TOTALS_FIELDS = ("requests", "in_ttl_losses", "iron_losses", "wasted_tokens")
-DAILY_FIELDS = ("requests", "losses", "wasted_tokens")
+TOTALS_FIELDS = ("requests", "confirmed_losses", "probable_losses",
+                 "iron_losses", "wasted_tokens", "pmnf_losses")
+DAILY_FIELDS = ("requests", "losses", "pmnf", "wasted_tokens")
 # fleet-series column -> the per-day column it sums
 FLEET_COLUMNS = (("requests", "requests"),
                  ("losses", "losses"),
+                 ("pmnf", "pmnf"),
                  ("wasted_tokens", "wasted_tokens"))
 
 
@@ -278,11 +280,15 @@ def validate(index_doc, daily_doc, details, identity_doc=None):
             if not _is_count(totals.get(f)):
                 err.append("index/%s: totals.%s %r is not a non-negative integer"
                            % (sub_id, f, totals.get(f)))
-        if _is_count(totals.get("iron_losses")) and _is_count(totals.get("in_ttl_losses")) \
-                and totals["iron_losses"] > totals["in_ttl_losses"]:
-            err.append("index/%s: iron_losses %d exceeds in_ttl_losses %d — iron "
-                       "is a SUBSET of in-TTL, so it can never be larger"
-                       % (sub_id, totals["iron_losses"], totals["in_ttl_losses"]))
+        _losses = ((totals.get("confirmed_losses") or 0)
+                   + (totals.get("probable_losses") or 0))
+        if _is_count(totals.get("iron_losses")) \
+                and _is_count(totals.get("confirmed_losses")) \
+                and _is_count(totals.get("probable_losses")) \
+                and totals["iron_losses"] > _losses:
+            err.append("index/%s: iron_losses %d exceeds confirmed+probable %d "
+                       "— iron is a SUBSET of the counted losses, so it can "
+                       "never be larger" % (sub_id, totals["iron_losses"], _losses))
 
         ps, pe = row.get("period_start"), row.get("period_end")
         if not _is_day(ps) or not _is_day(pe):
@@ -354,25 +360,27 @@ def validate(index_doc, daily_doc, details, identity_doc=None):
         # 🔴 the reader-checkable equality: the row's totals ARE the sum of its
         # own detail file. Nothing else in the dataset needs to be trusted to
         # verify this one.
-        for total_key, daily_key in (("requests", "requests"),
-                                     ("in_ttl_losses", "losses"),
-                                     ("wasted_tokens", "wasted_tokens")):
+        checks = [("requests", totals.get("requests"), "requests"),
+                  ("losses", _losses, "confirmed_losses+probable_losses"),
+                  ("pmnf", totals.get("pmnf_losses"), "pmnf_losses"),
+                  ("wasted_tokens", totals.get("wasted_tokens"), "wasted_tokens")]
+        for daily_key, total_val, total_name in checks:
             got = sum(d[daily_key] for d in daily)
-            if isinstance(totals.get(total_key), int) and got != totals[total_key]:
+            if isinstance(total_val, int) and got != total_val:
                 err.append("index/%s: totals.%s says %d but %s sums to %d"
-                           % (sub_id, total_key, totals[total_key],
-                              want_detail, got))
+                           % (sub_id, total_name, total_val, want_detail, got))
         dt = detail.get("totals")
         if dt != totals:
             err.append("%s: its own totals %r differ from the index row's %r"
                        % (want_detail, dt, totals))
 
         for d in daily:
-            slot = fleet.setdefault(d["date"], [0, 0, 0, 0])
+            slot = fleet.setdefault(d["date"], [0, 0, 0, 0, 0])
             slot[0] += d["requests"]
             slot[1] += d["losses"]
-            slot[2] += d["wasted_tokens"]
-            slot[3] += 1
+            slot[2] += d["pmnf"]
+            slot[3] += d["wasted_tokens"]
+            slot[4] += 1
 
     orphans = sorted(set(details) - seen_ids)
     for oid in orphans:
@@ -405,7 +413,7 @@ def validate(index_doc, daily_doc, details, identity_doc=None):
             continue
         date = d["date"]
         seen_days.append(date)
-        for f in ("requests", "losses", "wasted_tokens", "machines"):
+        for f in ("requests", "losses", "pmnf", "wasted_tokens", "machines"):
             if not _is_count(d.get(f)):
                 err.append("daily/%s: %s %r is not a non-negative integer"
                            % (date, f, d.get(f)))
@@ -418,9 +426,9 @@ def validate(index_doc, daily_doc, details, identity_doc=None):
             if d.get(col) != want[i]:
                 err.append("daily/%s: %s says %r but the detail files sum to %d"
                            % (date, col, d.get(col), want[i]))
-        if d.get("machines") != want[3]:
+        if d.get("machines") != want[4]:
             err.append("daily/%s: machines says %r but %d detail file(s) carry "
-                       "that date" % (date, d.get("machines"), want[3]))
+                       "that date" % (date, d.get("machines"), want[4]))
 
     if seen_days != sorted(seen_days):
         err.append("daily: rows are not in date order")

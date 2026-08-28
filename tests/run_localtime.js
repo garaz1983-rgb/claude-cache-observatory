@@ -150,7 +150,7 @@ function evtRowsOf(map) {
 function legacyEvtMap(events) {
   var m = new Map();
   events.forEach(function (e) {
-    if (e.classification !== "in_ttl" && e.classification !== "iron") return;
+    if (e.classification !== "confirmed" && e.classification !== "probable") return;
     var dh = legacyTsDateHour(e.timestamp);
     if (!dh) return;
     var key = dh.date + "#" + dh.hour;
@@ -363,7 +363,15 @@ var aggregateOnly = viewOut(lt.localize(
 /* baselines that never touch localtime.js */
 var legacyCensus = censusRowsOf(census);
 var legacy = {
-  daily_json: JSON.stringify(result.daily),
+  /* The pre-M12 page drew date/requests/losses/wasted from the engine rows.
+     v3 rows also carry `pmnf` (the legacy series), which that page never had,
+     so the baseline is the DRAWN projection — the identity being pinned is
+     "the conversion changes nothing the page shows at offset 0", not "the
+     engine's record shape never grows a field". */
+  daily_json: JSON.stringify(result.daily.map(function (d) {
+    return { date: d.date, requests: d.requests, losses: d.losses,
+             wasted_tokens: d.wasted_tokens };
+  })),
   census_json: JSON.stringify(legacyCensus),
   evt_json: JSON.stringify(evtRowsOf(legacyEvtMap(result.events))),
   evt_keys: Array.from(legacyEvtMap(result.events).keys()).sort()

@@ -428,9 +428,10 @@ def _land_foreign_commit():
     series counting a submission the index does not list."""
     index = json.loads(MOCK.files[INDEX_PATH])
     fleet = json.loads(MOCK.files[FLEET_PATH])
-    daily = [{"date": "2026-02-01", "requests": 40, "losses": 2, "wasted_tokens": 900}]
-    totals = {"requests": 40, "in_ttl_losses": 2, "iron_losses": 1,
-              "wasted_tokens": 900}
+    daily = [{"date": "2026-02-01", "requests": 40, "losses": 2, "pmnf": 2,
+              "wasted_tokens": 900}]
+    totals = {"requests": 40, "confirmed_losses": 2, "probable_losses": 0,
+              "iron_losses": 1, "wasted_tokens": 900, "pmnf_losses": 2}
     index["submissions"].append({
         "id": FOREIGN_ID, "submitted_at": "2026-01-01", "nickname": "f***",
         "plan": "pro", "client": "cli", "concurrent_sessions": "single",
@@ -441,10 +442,12 @@ def _land_foreign_commit():
     by_date = {d["date"]: d for d in fleet["days"]}
     for row in daily:
         slot = by_date.setdefault(row["date"], {"date": row["date"], "requests": 0,
-                                                "losses": 0, "wasted_tokens": 0,
+                                                "losses": 0, "pmnf": 0,
+                                                "wasted_tokens": 0,
                                                 "machines": 0})
         slot["requests"] += row["requests"]
         slot["losses"] += row["losses"]
+        slot["pmnf"] += row["pmnf"]
         slot["wasted_tokens"] += row["wasted_tokens"]
         slot["machines"] += 1
     fleet["days"] = [by_date[k] for k in sorted(by_date)]
@@ -868,11 +871,11 @@ def valid_payload(**over):
         "concurrent_sessions": "single",
         "period_start": "2026-08-01",
         "period_end": "2026-08-15",
-        "totals": {"requests": 1000, "in_ttl_losses": 10,
-                   "iron_losses": 5, "wasted_tokens": 12345},
+        "totals": {"requests": 1000, "confirmed_losses": 4, "probable_losses": 6,
+                   "iron_losses": 5, "wasted_tokens": 12345, "pmnf_losses": 3},
         "daily": [
-            {"date": "2026-08-01", "requests": 500, "losses": 4, "wasted_tokens": 6000},
-            {"date": "2026-08-15", "requests": 500, "losses": 6, "wasted_tokens": 6345},
+            {"date": "2026-08-01", "requests": 500, "losses": 4, "pmnf": 1, "wasted_tokens": 6000},
+            {"date": "2026-08-15", "requests": 500, "losses": 6, "pmnf": 2, "wasted_tokens": 6345},
         ],
         "script_version": "web-1.0",
     }
@@ -998,7 +1001,8 @@ def run_cases(xff_ip):
 
     # -- case3: losses > requests => 400 -------------------------------------
     bad = valid_payload()
-    bad["totals"] = dict(bad["totals"], in_ttl_losses=bad["totals"]["requests"] + 1)
+    bad["totals"] = dict(bad["totals"],
+                         confirmed_losses=bad["totals"]["requests"] + 1)
     status, data = post(bad)
     expect_schema_400("case3", status, data)
     print("PASS case3 losses>requests -> 400 schema")
@@ -1006,8 +1010,10 @@ def run_cases(xff_ip):
     # -- case4: period spans 93 days => 400 ----------------------------------
     bad = valid_payload(
         period_start="2026-01-01", period_end="2026-04-03",  # 93 days inclusive
-        daily=[{"date": "2026-01-01", "requests": 500, "losses": 4, "wasted_tokens": 6000},
-               {"date": "2026-01-02", "requests": 500, "losses": 6, "wasted_tokens": 6345}])
+        daily=[{"date": "2026-01-01", "requests": 500, "losses": 4, "pmnf": 1,
+                "wasted_tokens": 6000},
+               {"date": "2026-01-02", "requests": 500, "losses": 6, "pmnf": 2,
+                "wasted_tokens": 6345}])
     status, data = post(bad)
     expect_schema_400("case4", status, data)
     print("PASS case4 period 93 days -> 400 schema")
@@ -1026,8 +1032,8 @@ def run_cases(xff_ip):
     # 9b: all-zero totals — sums match (0=0), only the min-entries rule fires.
     status, data = post(valid_payload(
         daily=[],
-        totals={"requests": 0, "in_ttl_losses": 0,
-                "iron_losses": 0, "wasted_tokens": 0}))
+        totals={"requests": 0, "confirmed_losses": 0, "probable_losses": 0,
+                "iron_losses": 0, "wasted_tokens": 0, "pmnf_losses": 0}))
     expect_schema_400("case9b", status, data)
     check(any("at least 1" in str(d) for d in data["detail"]),
           "case9b: detail misses the min-entries rule: %r" % (data["detail"],))
@@ -1035,7 +1041,8 @@ def run_cases(xff_ip):
 
     # -- case10: daily sums != totals => 400 (each equality separately) ------
     for field, total_key in (("requests", "totals.requests"),
-                             ("losses", "totals.in_ttl_losses"),
+                             ("losses", "confirmed+probable"),
+                             ("pmnf", "totals.pmnf_losses"),
                              ("wasted_tokens", "totals.wasted_tokens")):
         bad = valid_payload()
         bad["daily"] = [dict(bad["daily"][0]), dict(bad["daily"][1])]
@@ -1376,11 +1383,13 @@ def scan_payload(start, days, requests, losses, wasted, iron, **over):
     """A submission covering `days` consecutive calendar days from `start`,
     with sum(daily) == totals by construction."""
     rows = [{"date": shift(start, i), "requests": requests,
-             "losses": losses, "wasted_tokens": wasted} for i in range(days)]
+             "losses": losses, "pmnf": losses, "wasted_tokens": wasted}
+            for i in range(days)]
     payload = valid_payload(
         period_start=rows[0]["date"], period_end=rows[-1]["date"], daily=rows,
-        totals={"requests": requests * days, "in_ttl_losses": losses * days,
-                "iron_losses": iron, "wasted_tokens": wasted * days})
+        totals={"requests": requests * days, "confirmed_losses": losses * days,
+                "probable_losses": 0, "iron_losses": iron,
+                "wasted_tokens": wasted * days, "pmnf_losses": losses * days})
     payload.update(over)
     return payload
 
@@ -1526,9 +1535,10 @@ def run_identity_cases():
     print("       after  %s..%s %s"
           % (row["period_start"], row["period_end"],
              json.dumps(row["totals"], sort_keys=True)))
-    print("       pre-M13 would have summed to requests=%d in_ttl_losses=%d"
+    print("       pre-M13 would have summed to requests=%d losses=%d"
           % (first["totals"]["requests"] + second["totals"]["requests"],
-             first["totals"]["in_ttl_losses"] + second["totals"]["in_ttl_losses"]))
+             first["totals"]["confirmed_losses"] + first["totals"]["probable_losses"]
+             + second["totals"]["confirmed_losses"] + second["totals"]["probable_losses"]))
 
     # -- case13: a value copied out of a PUBLIC file changes nothing ----------
     # M14 widened what "the public file" means and M14.1 moved the piece this
@@ -1801,7 +1811,8 @@ def run_fleet_cases():
     check(sorted(days) == ["2026-09-01", "2026-09-02", "2026-09-03"],
           "case21: fleet dates %r after one 3-day submission" % sorted(days))
     check(days["2026-09-01"] == {"date": "2026-09-01", "requests": 100,
-                                 "losses": 5, "wasted_tokens": 700, "machines": 1},
+                                 "losses": 5, "pmnf": 5, "wasted_tokens": 700,
+                                 "machines": 1},
           "case21: %r" % days["2026-09-01"])
 
     status, data = submit(scan_payload("2026-09-02", 3, 40, 1, 300, 1, anchors=b),
@@ -1911,10 +1922,11 @@ EXPECTED_COMMIT_ATTEMPTS = 6
 
 MALFORMED_ROWS = [
     ("a literal null", None),
-    ("no date key", {"requests": 10, "losses": 0, "wasted_tokens": 0}),
+    ("no date key", {"requests": 10, "losses": 0, "pmnf": 0, "wasted_tokens": 0}),
     ("a number instead of a row", 5),
     ("a date that is not a date",
-     {"date": "not-a-date", "requests": 10, "losses": 0, "wasted_tokens": 0}),
+     {"date": "not-a-date", "requests": 10, "losses": 0, "pmnf": 0,
+      "wasted_tokens": 0}),
     ("an emptied daily array", EMPTY_DAILY),
 ]
 
@@ -2154,7 +2166,7 @@ def run_m142_cases():
     expect_ok("case31 phantom base", status, data)
     land_fleet_days(fleet_doc()["days"] +
                     [{"date": "2026-01-15", "requests": 0, "losses": 0,
-                      "wasted_tokens": 0, "machines": 0}],
+                      "pmnf": 0, "wasted_tokens": 0, "machines": 0}],
                     "a fleet row no submission covers")
     status, data = submit(
         scan_payload("2026-09-04", 2, 10, 1, 20, 0, anchors=a), ip)
@@ -2185,7 +2197,7 @@ def run_m142_cases():
         scan_payload("2026-09-01", 3, 3, 1, 2, 0, anchors=a), ip)
     expect_ok("case31 clamp", status, data)
     for d in fleet_doc()["days"]:
-        for col in ("requests", "losses", "wasted_tokens", "machines"):
+        for col in ("requests", "losses", "pmnf", "wasted_tokens", "machines"):
             check(isinstance(d[col], int) and d[col] >= 0,
                   "🔴 case31: %s on %s is %r — a hand-edited series drove the "
                   "delta negative and a NEGATIVE count reached a public file"
@@ -2302,9 +2314,9 @@ def _mini_dataset(identities):
     """The smallest dataset that validates, plus whatever identity map is being
     tested against it. One row, one day, one detail file."""
     sub_id = "sub-20260824115135-75fb"
-    totals = {"requests": 10, "in_ttl_losses": 2, "iron_losses": 1,
-              "wasted_tokens": 40}
-    daily = [{"date": "2026-08-24", "requests": 10, "losses": 2,
+    totals = {"requests": 10, "confirmed_losses": 1, "probable_losses": 1,
+              "iron_losses": 1, "wasted_tokens": 40, "pmnf_losses": 2}
+    daily = [{"date": "2026-08-24", "requests": 10, "losses": 2, "pmnf": 2,
               "wasted_tokens": 40}]
     index = {"schema_version": 2, "submissions": [{
         "id": sub_id, "submitted_at": "2026-08-24", "nickname": "anonymous",

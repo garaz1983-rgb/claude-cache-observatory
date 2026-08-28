@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>캐시 유실 관측소</title>
-<meta name="description" content="Claude Code in-TTL 프롬프트 캐시 유실을 추적하는 커뮤니티 관측소. 자발적 제출자의 브라우저 로컬 파싱 집계만 수집.">
+<meta name="description" content="Claude Code 프롬프트 캐시 유실을 추적하는 커뮤니티 관측소. 자발적 제출자의 브라우저 로컬 파싱 집계만 수집.">
 <meta property="og:type" content="website">
 <meta property="og:title" content="캐시 유실 관측소">
 <meta property="og:description" content="Claude Code 프롬프트 캐시 유실을 브라우저에서 자가진단. 데이터는 내 기기를 떠나지 않습니다.">
@@ -387,7 +387,7 @@ a{color:inherit}
 
 <header>
   <h1>캐시 유실 관측소</h1>
-  <p class="sub">Claude Code in-TTL <span class="mono">previous_message_not_found</span> 프롬프트 캐시 유실을 보고한 기계 단위로 추적한다. 기계 1대가 1행이고, 같은 기계의 두 번째 제출은 행을 늘리지 않고 기존 행을 갱신한다. 아래 모든 수치는 자발적 제출자의 <b>브라우저에서 로컬로 파싱</b>되어, 본인이 승인한 집계 숫자만 제출된 것이다.</p>
+  <p class="sub">Claude Code 프롬프트 캐시 유실을 각 요청의 청구 필드로 판정해, 보고한 기계 단위로 추적한다. 기계 1대가 1행이고, 같은 기계의 두 번째 제출은 행을 늘리지 않고 기존 행을 갱신한다. 아래 모든 수치는 자발적 제출자의 <b>브라우저에서 로컬로 파싱</b>되어, 본인이 승인한 집계 숫자만 제출된 것이다.</p>
 </header>
 
 <div class="kpis">
@@ -420,15 +420,15 @@ a{color:inherit}
 
 <section id="secPreview">
   <h2>진단하면 이런 걸 본다 <span class="badge real h2-badge">운영자 기계 실측</span></h2>
-  <p class="desc">내 로그로 진단을 돌리면 돌아오는 화면이 이 모양이다. 아래 테두리 안의 숫자는 지어낸 값이 아니라 <b>운영자 기계 1대의 실측</b>이다(2026-05-28 ~ 2026-08-27, 91일, UTC+9). fleet 집계가 아니라 한 대짜리라서 테두리를 둘렀다. 만든 방법은 <span class="mono">scripts/build_preview.js</span>에 있고, 결과 파일은 <span class="mono">assets/preview.js</span>다.</p>
+  <p class="desc">내 로그로 진단을 돌리면 돌아오는 화면이 이 모양이다. 아래 테두리 안의 숫자는 지어낸 값이 아니라 <b>운영자 기계 1대의 실측</b>이다(<span id="pvPeriod">기간은 데이터 파일이 말한다</span>). fleet 집계가 아니라 한 대짜리라서 테두리를 둘렀다. 만든 방법은 <span class="mono">scripts/build_preview.js</span>에 있고, 결과 파일은 <span class="mono">assets/preview.js</span>다.</p>
   <div class="demo">
     <p class="demo-note"><b>시간대가 왜 여기만 보이나:</b> 제출 스키마에는 일별 집계만 있고 시간대 항목이 아예 없다. 제출만으로 언제 일하는지가 드러나지 않도록 일부러 뺐고, 그 결정은 그대로다. 이 화면의 시간대는 <b>운영자가 자기 기계 것을 스스로 공개한 것</b>이지 누구에게서 걷은 값이 아니다. 제출하는 사람의 시간대는 애초에 수집되지 않는다. requestId와 로그 파일 경로는 이 파일에 없다. 생성기가 그 둘이 들어간 파일은 쓰지 않고 중단한다.</p>
     <div class="kpis">
       <div class="kpi"><div class="label">스캔한 요청</div><div class="val" id="dRequests">–</div></div>
-      <div class="kpi crit"><div class="label">in-TTL 유실</div><div class="val" id="dLosses">–</div><div class="note">30분(메인) / 5분(서브에이전트) 안쪽</div></div>
+      <div class="kpi crit"><div class="label">유실 (확정+유력)</div><div class="val" id="dLosses">–</div><div class="note">30분(메인) / 5분(서브에이전트) 안쪽</div></div>
       <div class="kpi crit"><div class="label">iron 유실</div><div class="val" id="dIron">–</div><div class="note">유휴 간격 5분 미만</div></div>
       <div class="kpi crit"><div class="label">재과금 토큰</div><div class="val" id="dTokens">–</div><div class="note">다시 과금된 캐시 생성 토큰</div></div>
-      <div class="kpi"><div class="label">유실률</div><div class="val" id="dRate">–</div><div class="note">in-TTL 유실 / 요청</div></div>
+      <div class="kpi"><div class="label">유실률</div><div class="val" id="dRate">–</div><div class="note">유실 / 요청</div></div>
     </div>
     <div class="card">
       <canvas id="demoDaily" height="230"></canvas>
@@ -460,7 +460,7 @@ a{color:inherit}
 
 <section id="secFleet">
   <h2>Fleet 일별 유실률 추이 <span class="badge real h2-badge">실제 제출 데이터</span></h2>
-  <p class="desc">그날 요청 대비 in-TTL 유실 비율을 <b>보고한 기계 전체를 하나로 합쳐 한 선</b>으로 그린다. 선이 올라간다는 건 제출자가 늘었다는 뜻이 아니라 보낸 요청 중 잃은 비율이 커졌다는 뜻이다. 분모가 같은 날의 요청 수이기 때문이다. 유지되는 하락 계단은 수정 배포 시점을 가리킨다. <b>이 축의 하루는 모두 UTC 기준</b>이고 모든 제출에 같은 기준이 적용된다. 서로 다른 기계를 같은 날짜에 합산하는 일이 의미를 가지는 근거가 이것이다. 한 대만 보고한 날은 그 한 대의 유실률이다. 그래서 그날 몇 대가 보고했는지도 함께 그린다. 날짜마다 기계 수가 달라지면 각 날짜 뒤에 옅은 세로 막대로 나타나고, 모든 날이 같은 수인 동안에는 범례가 그 수를 글로 적는다.</p>
+  <p class="desc">그날 요청 대비 집계 유실 비율을 <b>보고한 기계 전체를 하나로 합쳐 한 선</b>으로 그린다. 선이 올라간다는 건 제출자가 늘었다는 뜻이 아니라 보낸 요청 중 잃은 비율이 커졌다는 뜻이다. 분모가 같은 날의 요청 수이기 때문이다. 유지되는 하락 계단은 수정 배포 시점을 가리킨다. <b>이 축의 하루는 모두 UTC 기준</b>이고 모든 제출에 같은 기준이 적용된다. 서로 다른 기계를 같은 날짜에 합산하는 일이 의미를 가지는 근거가 이것이다. 한 대만 보고한 날은 그 한 대의 유실률이다. 그래서 그날 몇 대가 보고했는지도 함께 그린다. 날짜마다 기계 수가 달라지면 각 날짜 뒤에 옅은 세로 막대로 나타나고, 모든 날이 같은 수인 동안에는 범례가 그 수를 글로 적는다.</p>
   <p class="desc">기계마다 한 선씩 그리는 게 이전 설계였다. 제출 1건일 때는 읽히지만 50건이면 읽을 수 없고, 방문자마다 모든 제출자의 일별 이력 전체를 내려받게 만든다. 기계별 숫자가 사라진 건 아니다. <a href="#secSubs">제출 목록</a>의 각 행이 그 행의 합계가 곧 그 합인 파일을 링크한다.</p>
   <div class="card">
     <div class="err" id="fleetErr" hidden><a class="mono" href="../data/daily.json">data/daily.json</a>을 불러오지 못했다. 일자별 시계열이 없거나 읽을 수 없어서 이 그래프만 비어 있다. 페이지의 나머지는 영향을 받지 않는다.</div>
@@ -490,7 +490,7 @@ a{color:inherit}
       <div class="tbl-scroll">
         <table class="subs env" id="envExampleTable">
           <thead><tr>
-            <th>값 <span class="mono">(예시)</span></th><th>표본 수 (n)</th><th>합산 요청</th><th>in-TTL 유실</th><th>유실률</th>
+            <th>값 <span class="mono">(예시)</span></th><th>표본 수 (n)</th><th>합산 요청</th><th>유실</th><th>유실률</th>
           </tr></thead>
           <tbody></tbody>
         </table>
@@ -499,7 +499,7 @@ a{color:inherit}
     <div class="tbl-scroll" id="envTableWrap">
       <table class="subs env" id="envTable">
         <thead><tr>
-          <th>값</th><th>표본 수 (n)</th><th>합산 요청</th><th>in-TTL 유실</th><th>유실률</th>
+          <th>값</th><th>표본 수 (n)</th><th>합산 요청</th><th>유실</th><th>유실률</th>
         </tr></thead>
         <tbody></tbody>
       </table>
@@ -509,7 +509,7 @@ a{color:inherit}
       <div class="body tbl-scroll">
         <table class="subs">
           <thead><tr>
-            <th>닉네임</th><th>클라이언트</th><th>플랜</th><th>동시 세션</th><th>총 요청</th><th>in-TTL</th><th>유실률</th>
+            <th>닉네임</th><th>클라이언트</th><th>플랜</th><th>동시 세션</th><th>총 요청</th><th>유실</th><th>유실률</th>
           </tr></thead>
           <tbody></tbody>
         </table>
@@ -568,7 +568,7 @@ a{color:inherit}
         <th aria-sort="none"><button type="button" class="sort-btn" data-sort="nickname">닉네임<span class="sort-ind" aria-hidden="true">↕</span></button></th>
         <th aria-sort="none"><button type="button" class="sort-btn" data-sort="period">기간<span class="sort-ind" aria-hidden="true">↕</span></button></th>
         <th aria-sort="none"><button type="button" class="sort-btn" data-sort="requests">총 요청<span class="sort-ind" aria-hidden="true">↕</span></button></th>
-        <th aria-sort="none"><button type="button" class="sort-btn" data-sort="in_ttl">in-TTL<span class="sort-ind" aria-hidden="true">↕</span></button></th>
+        <th aria-sort="none"><button type="button" class="sort-btn" data-sort="in_ttl">유실<span class="sort-ind" aria-hidden="true">↕</span></button></th>
         <th aria-sort="none"><button type="button" class="sort-btn" data-sort="iron">iron<span class="sort-ind" aria-hidden="true">↕</span></button></th>
         <th aria-sort="none"><button type="button" class="sort-btn" data-sort="tokens">재과금 토큰<span class="sort-ind" aria-hidden="true">↕</span></button></th>
         <th aria-sort="none"><button type="button" class="sort-btn" data-sort="rate">유실률<span class="sort-ind" aria-hidden="true">↕</span></button></th>
@@ -587,9 +587,11 @@ a{color:inherit}
   <p class="desc">무엇을 유실로 판정하는지, 그리고 왜 모든 단계를 직접 검증할 수 있는지.</p>
   <div class="card">
     <ul class="rules">
-      <li><b>근거 데이터</b>: 로컬 세션 로그(<span class="mono">~/.claude/projects/**/*.jsonl</span>)에 서버가 직접 찍은 진단 필드 <span class="mono">message.diagnostics.cache_miss_reason = previous_message_not_found</span>. 추정이 아니라 서버가 표시한 레코드만 후보다.</li>
-      <li><b>TTL-strict 판정</b>: 같은 세션 파일에서 직전 요청과의 유휴 간격이 <b>30분 미만</b>(메인 세션) / <b>5분 미만</b>(서브에이전트)일 때만 유실로 집계. 그보다 길면 정당한 TTL 만료로 보고 <b>제외</b>한다.</li>
-      <li><b>iron 유실</b>: 유휴 간격 <b>5분 미만</b>인 부분집합. 공표된 어떤 TTL로도 만료됐을 수 없는 구간.</li>
+      <li><b>근거 데이터 (v3)</b>: 로컬 세션 로그(<span class="mono">~/.claude/projects/**/*.jsonl</span>) 각 요청의 청구 필드 <span class="mono">cache_read_input_tokens</span>와 <span class="mono">cache_creation_input_tokens</span>. 청구 그 자체다. 서버의 <span class="mono">cache_miss_reason</span> 주석은 캐시가 아니라 진단 기능의 상태를 말하므로(Anthropic 지원 답변, 2026-08) 유실을 세는 데 사유 이름이 필요 없다. 사유 이름의 유일한 힘은 면책이다. <span class="mono">*_changed</span> 4종은 프롬프트가 실제로 바뀌었다는 선언이라 그 재생성을 집계에서 뺀다.</li>
+      <li><b>판정</b>: 같은 세션 파일에서 직전 요청과의 유휴 간격이 <b>30분 미만</b>(메인) / <b>5분 미만</b>(서브에이전트)이고 면책 사유가 없을 때, <span class="mono">cache_read</span>가 0인데 캐시를 새로 썼으면 <b>확정 유실</b>(캐시 전체가 사라짐), 프리픽스는 읽혔는데 <b>10만 토큰 이상</b>을 재생성했으면 <b>유력 유실</b>(전체 쓰기 중앙값 약 1,500 / p99 약 84,000). 그보다 긴 간격은 정당한 만료로 <b>제외</b>한다.</li>
+      <li><b>iron 유실</b>: 집계된 유실 중 유휴 간격 <b>5분 미만</b>인 부분집합. 공표된 어떤 TTL로도 만료됐을 수 없는 구간.</li>
+      <li><b>v2.1 계열 병존</b>: 옛 사유 기반 집계(<span class="mono">previous_message_not_found</span> + TTL 안쪽 간격)도 <span class="mono">pmnf</span>로 일별·행별로 계속 계산한다. 같은 자로 몇 달을 잰 시계열은 자를 바꾼 뒤에도 그대로 가치가 있다.</li>
+      <li><b>재작성 고지 (2026-08)</b>: 위 규칙은 Anthropic 지원이 사유 필드가 그 무게를 감당하지 못한다고 확인해 준 뒤 v2.1 사유 기반 판정을 대체한 것이다. 이 페이지의 수치는 v3 수치이고, 변경 전 수치와 양방향으로 다르다. 재과금이 미미한 사유-단독 이벤트는 빠졌고, 옛 규칙이 못 보던 재생성(사유가 개명됐거나 아예 없는데 청구는 유실 모양인 것)은 들어왔다. 자를 조용히 바꾸는 쪽이 더 쌌겠지만 더 나빴을 것이다.</li>
       <li><b>중복 제거 · 비용</b>: <span class="mono">requestId</span> 기준으로 중복을 제거하고, 유실 1건의 재과금 비용은 그 요청의 <span class="mono">cache_creation_input_tokens</span>다.</li>
       <li><b>요청이 어느 날짜로 세어지나</b>: 이 관측소와 여기 쌓인 모든 제출은 하루를 <b>UTC</b>로 자른다. 여러 나라의 제출을 날짜별로 더하는 자리라, 각자의 현지 날짜로 자르면 전체 일별 합계가 어긋나기 때문이다. <a href="check.html">진단 페이지</a>는 일부러 반대다. 한 사람의 자기 진단이므로 그래프·히트맵·건별 시각을 <b>읽는 사람의 현지 시각</b>으로 그리고, 그 시간대는 브라우저에서 읽어 와 화면에 이름으로 적는다. 요청도 총계도 같고 날짜 경계만 움직이므로, 자정 근처의 요청은 그쪽에서 본 날짜와 여기의 날짜가 하루 다를 수 있다. 진단 페이지의 전송 미리보기가 보내기 전에 이 차이를 알려 준다.</li>
     </ul>
@@ -616,7 +618,7 @@ a{color:inherit}
       </ul>
     </div></details>
     <details class="faq"><summary>돌리면 내 Claude 계정에 영향이 있나?</summary><div class="body">없다. 로그 파일을 읽기만 한다. Anthropic 계정이나 API와는 어떤 통신도 하지 않는다.</div></details>
-    <details class="faq"><summary>in-TTL 유실이 나왔다. 이제 뭐를 하나?</summary><div class="body"><a href="https://github.com/anthropics/claude-code/issues/87966">GitHub #87966</a>에 결과를 남겨 달라. 0이 나왔어도 똑같이 가치 있는 데이터다. 정상 계정의 존재도 원인 특정에 필요하다.</div></details>
+    <details class="faq"><summary>유실이 나왔다. 이제 뭐를 하나?</summary><div class="body"><a href="https://github.com/anthropics/claude-code/issues/87966">GitHub #87966</a>에 결과를 남겨 달라. 0이 나왔어도 똑같이 가치 있는 데이터다. 정상 계정의 존재도 원인 특정에 필요하다.</div></details>
     <details class="faq"><summary>제출하면 뭐가 공개되나?</summary><div class="body">미리보기로 승인한 집계·일별 숫자와 선택 입력한 닉네임뿐이다. 제출 이력 전체가 repo 커밋으로 남아 누구나 감사할 수 있다.</div></details>
     <details class="faq"><summary>Anthropic 공식 사이트인가?</summary><div class="body">아니다. Anthropic과 무관한 커뮤니티 도구다.</div></details>
     <div class="links">
@@ -714,7 +716,7 @@ function buildFleetModel(days){
 function renderKpis(subs){
   var losses = 0, tokens = 0, minD = null, maxD = null;
   subs.forEach(function(s){
-    losses += s.totals.in_ttl_losses;
+    losses += s.totals.confirmed_losses + s.totals.probable_losses;
     tokens += s.totals.wasted_tokens;
     if(minD === null || s.period_start < minD) minD = s.period_start;
     if(maxD === null || s.period_end > maxD) maxD = s.period_end;
@@ -749,7 +751,7 @@ function renderLegend(days){
     : "보고된 날 없음";
   el.innerHTML =
     "<span><i class='chip line' style='background:" + ObservatoryCharts.PALETTE[0] +
-      "'></i>전체 유실률: 그날의 in-TTL 유실 ÷ 그날의 요청, 전 기계 합산</span>" +
+      "'></i>전체 유실률: 그날의 집계 유실 ÷ 그날의 요청, 전 기계 합산</span>" +
     "<span>" + (uniform ? "" :
       "<i class='chip' style='background:var(--ink);opacity:.16'></i>") +
       esc(cover) + "</span>";
@@ -800,10 +802,10 @@ var SORT_KEYS = {
   nickname: { num:false, get:function(s){ return String(s.nickname || "anonymous").toLowerCase(); } },
   period:   { num:false, get:function(s){ return String(s.period_start) + "|" + String(s.period_end); } },
   requests: { num:true,  get:function(s){ return s.totals.requests; } },
-  in_ttl:   { num:true,  get:function(s){ return s.totals.in_ttl_losses; } },
+  in_ttl:   { num:true,  get:function(s){ return s.totals.confirmed_losses + s.totals.probable_losses; } },
   iron:     { num:true,  get:function(s){ return s.totals.iron_losses; } },
   tokens:   { num:true,  get:function(s){ return s.totals.wasted_tokens; } },
-  rate:     { num:true,  get:function(s){ return s.totals.requests > 0 ? 100 * s.totals.in_ttl_losses / s.totals.requests : null; } },
+  rate:     { num:true,  get:function(s){ return s.totals.requests > 0 ? 100 * (s.totals.confirmed_losses + s.totals.probable_losses) / s.totals.requests : null; } },
   plan:     { num:false, get:function(s){ return String(s.plan || "unknown"); } },
   client:   { num:false, get:function(s){ return String(s.client || "unknown"); } },
   sessions: { num:false, get:function(s){ return String(s.concurrent_sessions || "unknown"); } }
@@ -972,14 +974,15 @@ function renderDetectorFleet(subs){
 function renderTable(subs){
   var tb = document.querySelector("#subsTable tbody");
   tb.innerHTML = sortedForTable(subs).map(function(s){
-    var rate = s.totals.requests > 0 ? 100 * s.totals.in_ttl_losses / s.totals.requests : null;
+    var lossesOf = s.totals.confirmed_losses + s.totals.probable_losses;
+    var rate = s.totals.requests > 0 ? 100 * lossesOf / s.totals.requests : null;
     var mine = MINE_IDS.has(s.id);
     return "<tr" + (mine ? " class='mine'" : "") + ">" +
       "<td class='nick'>" + esc(s.nickname || "anonymous") +
         (mine ? "<span class='mine-tag'>내 제출</span>" : "") + "</td>" +
       "<td>" + esc(s.period_start) + " ~ " + esc(s.period_end) + "</td>" +
       "<td>" + fmtInt(s.totals.requests) + "</td>" +
-      "<td class='crit'>" + fmtInt(s.totals.in_ttl_losses) + "</td>" +
+      "<td class='crit'>" + fmtInt(lossesOf) + "</td>" +
       "<td>" + fmtInt(s.totals.iron_losses) + "</td>" +
       "<td class='crit'>" + fmtInt(s.totals.wasted_tokens) + "</td>" +
       (rate === null ? "<td class='na'>표본 부족</td>"
@@ -1046,7 +1049,7 @@ function envGroups(subs, axis){
     if(!g){ g = { value: k, n: 0, requests: 0, losses: 0 }; m.set(k, g); }
     g.n++;
     g.requests += s.totals.requests;
-    g.losses += s.totals.in_ttl_losses;
+    g.losses += s.totals.confirmed_losses + s.totals.probable_losses;
   });
   var out = Array.from(m.values());
   out.forEach(function(g){
@@ -1198,14 +1201,15 @@ function renderEnv(){
     // 위 제출 목록과 같은 규칙이다. 요청이 0건이면 유실률을 계산할 수 없으므로
     // 0.00%로 찍지 않고 숨긴다. M11.2 전까지 이 줄이 ": 0"이라 같은 제출을 두고
     // 두 표가 서로 다른 말을 했다. 하필 이 표가 확인하러 여는 표다.
-    var rate = s.totals.requests > 0 ? 100 * s.totals.in_ttl_losses / s.totals.requests : null;
+    var lossesOf = s.totals.confirmed_losses + s.totals.probable_losses;
+    var rate = s.totals.requests > 0 ? 100 * lossesOf / s.totals.requests : null;
     return "<tr>" +
       "<td class='nick'>" + esc(s.nickname || "anonymous") + "</td>" +
       "<td>" + esc(s.client || "unknown") + "</td>" +
       "<td>" + esc(s.plan || "unknown") + "</td>" +
       "<td>" + esc(s.concurrent_sessions || "unknown") + "</td>" +
       "<td>" + fmtInt(s.totals.requests) + "</td>" +
-      "<td class='crit'>" + fmtInt(s.totals.in_ttl_losses) + "</td>" +
+      "<td class='crit'>" + fmtInt(lossesOf) + "</td>" +
       (rate === null ? "<td class='na'>표본 부족</td>"
                      : "<td>" + fmtPct(rate) + "</td>") +
       "</tr>";
@@ -1282,6 +1286,12 @@ function drawAll(){
 
 function renderDemoKpis(){
   var t = window.ObservatoryPreview.totals;
+  var pv = document.getElementById("pvPeriod");
+  if(pv && window.ObservatoryPreview.period){
+    var P0 = window.ObservatoryPreview;
+    pv.textContent = P0.period.start + " ~ " + P0.period.end + ", " +
+      P0.days.length + "일, " + P0.offsetLabel;
+  }
   document.getElementById("dRequests").textContent = fmtInt(t.requests);
   document.getElementById("dLosses").textContent = fmtInt(t.losses);
   document.getElementById("dIron").textContent = fmtInt(t.iron);

@@ -48,10 +48,13 @@ MAX_PERIOD_DAYS = 92
 # Every key the stored object is allowed to carry, per level.
 RUN_KEYS = {"saved_at", "source", "script_version", "period_start", "period_end",
             "totals", "daily", "census", "events", "events_saved", "anchors"}
-TOTALS_KEYS = {"requests", "in_ttl_losses", "iron_losses", "wasted_tokens"}
-DAILY_KEYS = {"date", "requests", "losses", "wasted_tokens"}
+TOTALS_KEYS = {"requests", "confirmed_losses", "probable_losses", "iron_losses",
+               "wasted_tokens", "pmnf_losses", "excused_rebuilds"}
+DAILY_KEYS = {"date", "requests", "losses", "pmnf", "wasted_tokens"}
 CENSUS_KEYS = {"date", "hours"}
-EVENT_KEYS = {"date", "hour", "time", "gap_min", "tokens", "main"}
+# `tier` is stored because it cannot be re-derived: iron is a gap fact, but
+# confirmed-vs-probable is a billing fact (cr == 0 or not) and cr is not kept.
+EVENT_KEYS = {"date", "hour", "time", "gap_min", "tokens", "main", "tier"}
 SUBMISSION_KEYS = {"period_start", "period_end", "submitted_at", "id"}
 
 # Key names that must never appear anywhere in the serialised state.
@@ -249,7 +252,7 @@ def main():
               run["period_end"] == out["daily"][-1]["date"],
               "stored period bounds do not match the daily rows")
         engine_losses = sum(1 for e in out["raw_events"]
-                            if e["classification"] in ("in_ttl", "iron"))
+                            if e["classification"] in ("confirmed", "probable"))
         check(engine_losses > 0, "fixture sanity: no in-TTL events in the sample")
         print("PASS round trip: %d daily rows, %d census rows, %d events preserved exactly"
               % (len(run["daily"]), len(run["census"] or []), len(run["events"] or [])))

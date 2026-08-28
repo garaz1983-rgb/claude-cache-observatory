@@ -44,10 +44,13 @@ HOSTILE_DIR = os.path.join(HERE, "fixtures_hostile")
 CLI_SCRIPT = os.path.join(SITE_DIR, "scripts", "check_cache_loss.py")
 RUNNER = os.path.join(HERE, "run_parse.js")
 
-# fixtures_hostile/: 2 requests, one in-TTL PMNF loss whose
-# cache_creation_input_tokens is the STRING "777" — must coerce to 0.
-HOSTILE_EXPECTED = {"requests": 2, "in_ttl_losses": 1, "iron_losses": 0,
-                    "wasted_tokens": 0}
+# fixtures_hostile/: 2 requests; cache_creation_input_tokens is the STRING
+# "777" — must coerce to 0. v3: a coerced cc of 0 cannot be a confirmed loss
+# (cc > 0 required), so nothing is counted; the v2.1 series still counts the
+# PMNF, which is exactly the coexistence the two series exist to express.
+HOSTILE_EXPECTED = {"requests": 2, "confirmed_losses": 0, "probable_losses": 0,
+                    "iron_losses": 0, "wasted_tokens": 0, "pmnf_losses": 1,
+                    "excused_rebuilds": 0}
 
 DETECTOR_DIR = os.path.join(HERE, "fixtures_detector")
 
@@ -80,8 +83,38 @@ DETECTOR_EXPECTED = {
         "(other)": 6,
     },
 }
-DETECTOR_TOTALS = {"requests": 30, "in_ttl_losses": 2, "iron_losses": 2,
-                   "wasted_tokens": 12000}
+# v3 re-derivation, by hand: b/e (PMNF, cr=0) stay counted — now as
+# confirmed — and h (cr=0, cc=3000, reason renamed to brand_new_reason) is
+# counted TOO: v2.1 could not see it, v3 judges the billing shape and an
+# unknown name never excuses. c (renamed reason, cr=100, cc=6000) stays
+# invisible — under the probable threshold — so the census is still load-
+# bearing for it.
+DETECTOR_TOTALS = {"requests": 30, "confirmed_losses": 3, "probable_losses": 0,
+                   "iron_losses": 3, "wasted_tokens": 15000, "pmnf_losses": 2,
+                   "excused_rebuilds": 0}
+
+V3_DIR = os.path.join(HERE, "fixtures_v3")
+
+# Hand-computed from tests/fixtures_v3/main_v3_shapes.jsonl (see the module
+# docstring of the M18 patch script, mirrored here) — so a bug present in
+# BOTH engines still fails. One main file, all gaps 60s: r1 confirmed
+# (cr==0), r2 probable AT the 100,000 threshold, r3 one token below it,
+# r4-r7 the four excused reasons, r8 unavailable in a normal shape, r9 PMNF
+# counted by the v2.1 series only, r10 an unknown reason that does not
+# excuse, r11 confirmed and PMNF at once.
+V3_EXPECTED_TOTALS = {
+    "requests": 13,
+    "confirmed_losses": 3,     # r1, r11, r12 — one more than probable ON
+                               # PURPOSE: a swapped tier assignment must not be
+                               # able to hide behind equal counts
+    "probable_losses": 2,      # r2 (boundary), r10 (unknown name)
+    "iron_losses": 5,          # all five counted losses have 60s gaps
+    "wasted_tokens": 540000,   # 50,000 + 100,000 + 120,000 + 200,000 + 70,000
+    "pmnf_losses": 2,          # r9 (legacy-only) + r11
+    "excused_rebuilds": 4,     # r4..r7
+}
+V3_EXPECTED_DAILY = [{"date": "2026-08-20", "requests": 13, "losses": 5,
+                      "pmnf": 2, "wasted_tokens": 540000}]
 
 NODE_FALLBACKS = [
     r"C:\Program Files\nodejs\node.exe",
@@ -170,6 +203,33 @@ def check_detector(node, errors):
                               % (key, label, got, want))
 
 
+def check_v3(node, errors):
+    """Both engines over the v3 shape fixture: totals AND daily equal to the
+    hand-computed expectation, plus the invariants that must hold for any
+    input. This is where the 100,000 boundary, the four excuses, the
+    unknown-name-does-not-excuse rule and the v2.1 coexistence case live."""
+    with tempfile.TemporaryDirectory() as tmp_root:
+        cli = run_cli(tmp_root, V3_DIR, json_mode=True)
+    js = run_js(node, V3_DIR)
+
+    for label, doc in (("js", js), ("cli", cli)):
+        got_totals = doc.get("totals") or {}
+        for key, want in sorted(V3_EXPECTED_TOTALS.items()):
+            if got_totals.get(key) != want:
+                errors.append("v3 totals.%s(%s): %r != %r"
+                              % (key, label, got_totals.get(key), want))
+        got_daily = doc.get("daily") or []
+        if got_daily != V3_EXPECTED_DAILY:
+            errors.append("v3 daily(%s): %s != expected %s"
+                          % (label, json.dumps(got_daily, sort_keys=True),
+                             json.dumps(V3_EXPECTED_DAILY, sort_keys=True)))
+        # Invariants for ANY input, not just this fixture.
+        c = got_totals.get("confirmed_losses") or 0
+        p = got_totals.get("probable_losses") or 0
+        if (got_totals.get("iron_losses") or 0) > c + p:
+            errors.append("v3(%s): iron exceeds confirmed+probable" % label)
+
+
 def parse_cli_output(out):
     """Parse the CLI's monthly table + TOTAL row into dicts of ints."""
     months = {}
@@ -182,18 +242,18 @@ def parse_cli_output(out):
         if head != "TOTAL" and not re.fullmatch(r"\d{4}-\d{2}", head):
             continue
         try:
-            nums = [int(t.replace(",", ""))
-                    for t in (toks[1], toks[2], toks[3], toks[4], toks[5], toks[7], toks[8])]
+            nums = [int(t.replace(",", "")) for t in toks[1:9]]
         except ValueError:
             continue  # header line
         row = {
             "requests": nums[0],
             "cache_write": nums[1],
-            "pmnf_raw": nums[2],
-            "in_ttl_losses": nums[3],
+            "confirmed_losses": nums[2],
+            "probable_losses": nums[3],
             "wasted_tokens": nums[4],
             "iron_losses": nums[5],
-            "iron_wasted": nums[6],
+            "excused_rebuilds": nums[6],
+            "pmnf_losses": nums[7],
         }
         if head == "TOTAL":
             total = row
@@ -240,9 +300,12 @@ def main():
     totals = js.get("totals") or {}
     expected_totals = {
         "requests": cli_total["requests"],
-        "in_ttl_losses": cli_total["in_ttl_losses"],
+        "confirmed_losses": cli_total["confirmed_losses"],
+        "probable_losses": cli_total["probable_losses"],
         "iron_losses": cli_total["iron_losses"],
         "wasted_tokens": cli_total["wasted_tokens"],
+        "pmnf_losses": cli_total["pmnf_losses"],
+        "excused_rebuilds": cli_total["excused_rebuilds"],
     }
     for key, want in sorted(expected_totals.items()):
         got = totals.get(key)
@@ -251,15 +314,15 @@ def main():
 
     daily = js.get("daily") or []
     rollup = {}
-    day_sums = {"requests": 0, "losses": 0, "wasted_tokens": 0}
+    day_sums = {"requests": 0, "losses": 0, "pmnf": 0, "wasted_tokens": 0}
     dates = []
     for day in daily:
         date = str(day.get("date", ""))
         dates.append(date)
         month = date[:7]
         acc = rollup.setdefault(
-            month, {"requests": 0, "losses": 0, "wasted_tokens": 0})
-        for key in ("requests", "losses", "wasted_tokens"):
+            month, {"requests": 0, "losses": 0, "pmnf": 0, "wasted_tokens": 0})
+        for key in ("requests", "losses", "pmnf", "wasted_tokens"):
             value = day.get(key)
             if not isinstance(value, int):
                 errors.append("daily[%s].%s: not an int: %r" % (date, key, value))
@@ -276,22 +339,27 @@ def main():
     for month in sorted(set(rollup) & set(cli_months)):
         got = rollup[month]
         want = cli_months[month]
-        pairs = [("requests", "requests"),
-                 ("losses", "in_ttl_losses"),
-                 ("wasted_tokens", "wasted_tokens")]
-        for js_key, cli_key in pairs:
-            if got[js_key] != want[cli_key]:
+        pairs = [("requests", want["requests"]),
+                 ("losses", want["confirmed_losses"] + want["probable_losses"]),
+                 ("pmnf", want["pmnf_losses"]),
+                 ("wasted_tokens", want["wasted_tokens"])]
+        for js_key, cli_val in pairs:
+            if got[js_key] != cli_val:
                 errors.append("month %s %s: js=%r cli=%r"
-                              % (month, js_key, got[js_key], want[cli_key]))
+                              % (month, js_key, got[js_key], cli_val))
 
-    consistency = [("requests", "requests"),
-                   ("losses", "in_ttl_losses"),
-                   ("wasted_tokens", "wasted_tokens")]
-    for day_key, total_key in consistency:
-        if day_sums[day_key] != totals.get(total_key):
+    consistency = [
+        ("requests", totals.get("requests"), "requests"),
+        ("losses", (totals.get("confirmed_losses") or 0)
+                   + (totals.get("probable_losses") or 0),
+         "confirmed+probable"),
+        ("pmnf", totals.get("pmnf_losses"), "pmnf_losses"),
+        ("wasted_tokens", totals.get("wasted_tokens"), "wasted_tokens"),
+    ]
+    for day_key, total_val, total_name in consistency:
+        if day_sums[day_key] != total_val:
             errors.append("daily sum %s=%r != totals.%s=%r"
-                          % (day_key, day_sums[day_key],
-                             total_key, totals.get(total_key)))
+                          % (day_key, day_sums[day_key], total_name, total_val))
 
     # JS-only hostile fixtures: malformed cc must coerce to 0, never leak
     # a non-int into totals (the DOM XSS vector the coercion closes).
@@ -302,6 +370,7 @@ def main():
             errors.append("hostile totals.%s: js=%r want=%r" % (key, got, want))
 
     check_detector(node, errors)
+    check_v3(node, errors)
 
     if errors:
         print("PARITY_FAIL (%d diff%s):" % (len(errors), "s" if len(errors) > 1 else ""))

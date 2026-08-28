@@ -1,28 +1,41 @@
 /*
  * parse.js — claude-cache-observatory diagnosis engine (Milestone 1).
  *
- * Judgment-rule parity with scripts/check_cache_loss.py v2.1 (the SSOT).
+ * Judgment-rule parity with scripts/check_cache_loss.py v3 (the SSOT).
  * Any change to the rules below must be mirrored there (and vice versa).
  *
- * Rules (v2.1, TTL-strict):
- *   - Only records whose message.diagnostics.cache_miss_reason resolves to
- *     the PMNF reason (previous_message_not_found) are loss candidates.
+ * Rules (v3, billing-shape judgment — M18):
+ *   - Judgment reads the BILL, not the annotation. cache_read (cr) and
+ *     cache_creation (cc) cannot be missing or misdescribed — they are what
+ *     was charged. The reason field describes the state of the diagnostic
+ *     (Anthropic support, 2026-08-28: PMNF means "could not compare", not
+ *     "the cache was lost"), so no reason NAME is ever required to count a
+ *     loss. Names have exactly one power: the four EXCUSED_REASONS declare
+ *     the prompt prefix really changed, which makes re-creating it correct.
  *   - Dedup by requestId (falling back to message.id). A later record of an
  *     already-seen requestId may back-fill a missing reason (same file only).
- *   - Idle gap to the previous request in the same file decides the class:
- *       in-TTL : gap < 30 min (main session) / gap < 5 min (subagent)
- *       iron   : gap < 5 min (counted within in-TTL)
- *       expired: everything else — legitimate expiry, NOT a loss.
- *   - wasted_tokens = cache_creation_input_tokens of each in-TTL-lost request.
+ *   - Idle gap to the previous request in the same file, then the shape:
+ *       confirmed: gap < TTL, cr == 0, cc > 0, reason not excused — the whole
+ *                  cache gone minutes after use (Anthropic's own definition
+ *                  of a real miss).
+ *       probable : gap < TTL, cr > 0, cc >= 100,000, reason not excused —
+ *                  prefix read back, conversation body re-created at a scale
+ *                  outside the normal distribution (fleet p99 measured
+ *                  83,844; judged-loss median 205,288).
+ *       excused  : either shape, reason in EXCUSED_REASONS. Counted in
+ *                  totals.excused_rebuilds, never as a loss.
+ *       iron     : a counted loss with gap < 5 min (subset flag).
+ *     TTL windows unchanged: 30 min main / 5 min subagent.
+ *   - wasted_tokens = cache_creation_input_tokens of each counted loss.
+ *   - The v2.1 series (PMNF && gap < TTL) is computed alongside, rule
+ *     unchanged, as totals.pmnf_losses and per-day `pmnf`: it tracked real
+ *     degradation for months, and a series measured with the same ruler is
+ *     worth more than a corrected ruler with no history.
  *
- * Detector census (M15) — counting, never judgment. The rules above ask one
- * yes/no question per request ("is the reason PMNF?"), and everything that
- * answers no falls into one silent bucket that mixes two very different
- * things: records carrying no cache-miss diagnostic at all (the normal case)
- * and records carrying a reason this build does not recognise (the dangerous
- * one). If the server ever renames the reason, every loss lands in that
- * bucket and the page reports a confident zero. The census splits the bucket
- * open so the page can say "I no longer know" instead of "nothing happened".
+ * Detector census (M15) — counting, never judgment. v3 no longer keys on any
+ * reason NAME, which shrinks the renamed-reason failure mode, but the census
+ * stays: a brand-new annotation should read as "a name I have not seen",
+ * on screen, instead of silently joining the unexcused bucket.
  * It changes no total and no daily row.
  *
  * Input : array of {name, text} — one entry per *.jsonl file (name may carry
@@ -67,6 +80,25 @@
   var MAIN_TTL_SECONDS = 1800;
   var SUBAGENT_TTL_SECONDS = 300;
   var IRON_SECONDS = 300;
+  /* The only power a reason name has: excusing a rebuild. An UNKNOWN name
+     does not excuse — judgment must keep working when the server invents a
+     new one, and the census is where a human meets it. */
+  var EXCUSED_REASONS = ["messages_changed", "model_changed",
+                         "system_changed", "tools_changed"];
+  /* Fixed absolute threshold, never a per-scan percentile: the same request
+     must classify the same way whatever else is in the folder, or nothing is
+     reproducible. Value rationale measured 2026-08-28: fleet p99 = 83,844
+     (outside the top 1% of normal writes), judged-loss median = 205,288. */
+  var PROBABLE_CC_MIN = 100000;
+  /* Census bookkeeping only, never judgment: the names whose appearance is
+     ORDINARY. PMNF and unavailable are diagnostic-state annotations; the four
+     excuses declare a prompt change. Anything else is a name the maintainers
+     have not seen, and under v3 the risk it carries is inverted from v2.1:
+     it cannot hide a loss (judgment reads the bill), but it COULD be a new
+     excuse-type declaration whose rebuilds are being counted instead of
+     excused. detector.unknown_reasons counts these. */
+  var KNOWN_REASONS = [PMNF_REASON, "messages_changed", "model_changed",
+                       "system_changed", "tools_changed", "unavailable"];
 
   /* Census keys reach a public JSON file, so a log file must never be able to
      put free text there: a value is kept verbatim only if it matches this
@@ -175,7 +207,9 @@
 
     // requestId dedup is global across files (CLI parity: one `seen` set).
     var seen = new Set();
-    var totals = { requests: 0, in_ttl_losses: 0, iron_losses: 0, wasted_tokens: 0 };
+    var totals = { requests: 0, confirmed_losses: 0, probable_losses: 0,
+                   iron_losses: 0, wasted_tokens: 0, pmnf_losses: 0,
+                   excused_rebuilds: 0 };
     var dailyMap = new Map();
     var events = [];
     var reasonCensus = new Map();
@@ -267,7 +301,7 @@
         if (r.rtype !== null && r.rtype !== undefined) {
           censusAdd(reasonCensus, r.rtype, false);
           detector.diagnosed_requests += 1;
-          if (r.rtype !== PMNF_REASON) detector.unknown_reasons += 1;
+          if (KNOWN_REASONS.indexOf(r.rtype) === -1) detector.unknown_reasons += 1;
         }
         // A full context write with nothing read back. Normal at session
         // start; it is only ever context for the reader, never a loss.
@@ -284,41 +318,57 @@
         var date = dateKeyOf(r);
         var day = dailyMap.get(date);
         if (!day) {
-          day = { date: date, requests: 0, losses: 0, wasted_tokens: 0 };
+          day = { date: date, requests: 0, losses: 0, pmnf: 0, wasted_tokens: 0 };
           dailyMap.set(date, day);
         }
         totals.requests += 1;
         day.requests += 1;
-        if (r.rtype !== PMNF_REASON) continue;
         var gap = i > 0 ? (r.epochMs - reqs[i - 1].epochMs) / 1000 : null;
-        if (gap === null) {
-          // PMNF with no prior request in the file: unclassifiable, not a loss.
+        var ttlSeconds = isSub ? SUBAGENT_TTL_SECONDS : MAIN_TTL_SECONDS;
+
+        // v2.1 legacy series, rule unchanged: PMNF with the gap under the
+        // TTL. Kept for continuity — it is a different question from the v3
+        // tiers below and the two overlap, so it is never added to them.
+        if (r.rtype === PMNF_REASON && gap !== null && gap < ttlSeconds) {
+          totals.pmnf_losses += 1;
+          day.pmnf += 1;
+        }
+
+        // v3 judgment: the billing shape decides; a reason name only excuses.
+        // No prior request = a session-start cold write, not a loss; a gap
+        // over the TTL = legitimate expiry, not a loss.
+        if (gap === null || gap >= ttlSeconds) continue;
+        var lossShape = (r.cr === 0 && r.cc > 0) ||
+                        (r.cr > 0 && r.cc >= PROBABLE_CC_MIN);
+        if (!lossShape) continue;
+        if (EXCUSED_REASONS.indexOf(r.rtype) !== -1) {
+          // The prompt prefix really changed; re-creating it is correct.
+          // Counted so the page can SAY how much it excused — an exclusion
+          // the reader cannot see is indistinguishable from a blind spot.
+          totals.excused_rebuilds += 1;
           events.push({
             file: name,
             requestId: r.rid,
             timestamp: r.timestamp,
             date: date,
             is_subagent: isSub,
-            gap_seconds: null,
+            gap_seconds: gap,
             cache_creation_tokens: r.cc,
-            classification: "no_prior_request"
+            cache_read_tokens: r.cr,
+            reason: r.rtype,
+            classification: "excused",
+            iron: false
           });
           continue;
         }
-        var ttlSeconds = isSub ? SUBAGENT_TTL_SECONDS : MAIN_TTL_SECONDS;
-        var inTtl = gap < ttlSeconds;
-        var classification = "expired";
-        if (inTtl) {
-          classification = "in_ttl";
-          totals.in_ttl_losses += 1;
-          totals.wasted_tokens += r.cc;
-          day.losses += 1;
-          day.wasted_tokens += r.cc;
-          if (gap < IRON_SECONDS) {
-            classification = "iron";
-            totals.iron_losses += 1;
-          }
-        }
+        var tier = r.cr === 0 ? "confirmed" : "probable";
+        var iron = gap < IRON_SECONDS;
+        if (tier === "confirmed") totals.confirmed_losses += 1;
+        else totals.probable_losses += 1;
+        if (iron) totals.iron_losses += 1;
+        totals.wasted_tokens += r.cc;
+        day.losses += 1;
+        day.wasted_tokens += r.cc;
         events.push({
           file: name,
           requestId: r.rid,
@@ -327,7 +377,10 @@
           is_subagent: isSub,
           gap_seconds: gap,
           cache_creation_tokens: r.cc,
-          classification: classification
+          cache_read_tokens: r.cr,
+          reason: r.rtype,
+          classification: tier,
+          iron: iron
         });
       }
     }
@@ -355,7 +408,8 @@
       return {
         files: fileCount,
         requests: totals.requests,
-        in_ttl_losses: totals.in_ttl_losses,
+        confirmed_losses: totals.confirmed_losses,
+        probable_losses: totals.probable_losses,
         iron_losses: totals.iron_losses,
         wasted_tokens: totals.wasted_tokens
       };
@@ -394,6 +448,10 @@
 
   function isDateKey(v) {
     return typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v);
+  }
+
+  function isCountLike(v) {
+    return typeof v === "number" && isFinite(v) && v >= 0;
   }
 
   // Inclusive calendar-day span, matching the API's (end-start)/86400000+1.
@@ -441,6 +499,7 @@
         date: d.date,
         requests: d.requests,
         losses: d.losses,
+        pmnf: isCountLike(d.pmnf) ? d.pmnf : 0,
         wasted_tokens: d.wasted_tokens
       });
     }
@@ -448,24 +507,29 @@
     daily.sort(function (a, b) {
       return a.date < b.date ? -1 : (a.date > b.date ? 1 : 0);
     });
-    var totals = { requests: 0, in_ttl_losses: 0, iron_losses: 0, wasted_tokens: 0 };
+    var totals = { requests: 0, confirmed_losses: 0, probable_losses: 0,
+                   iron_losses: 0, wasted_tokens: 0, pmnf_losses: 0 };
     for (i = 0; i < daily.length; i++) {
       totals.requests += daily[i].requests;
-      totals.in_ttl_losses += daily[i].losses;
       totals.wasted_tokens += daily[i].wasted_tokens;
+      totals.pmnf_losses += daily[i].pmnf;
     }
     var first = daily[0].date;
     var last = daily[daily.length - 1].date;
-    // iron is a subset of in-TTL, so recounting it over the same days keeps
-    // the API's iron_losses <= in_ttl_losses invariant automatically. Never
-    // estimate it: a source without events (pasted CLI JSON) must not use
+    // The daily rows carry only the combined loss count, so the tier split is
+    // recounted from the events over the same days — which also keeps the
+    // API's sum(daily.losses) == confirmed+probable invariant automatic.
+    // Never estimate: a source without events (pasted CLI JSON) must not use
     // this path at all.
     var events = Array.isArray(result.events) ? result.events : [];
     for (i = 0; i < events.length; i++) {
       var e = events[i];
-      if (!isPlainObject(e) || e.classification !== "iron") continue;
+      if (!isPlainObject(e)) continue;
+      if (e.classification !== "confirmed" && e.classification !== "probable") continue;
       if (!isDateKey(e.date) || e.date < first || e.date > last) continue;
-      totals.iron_losses += 1;
+      if (e.classification === "confirmed") totals.confirmed_losses += 1;
+      else totals.probable_losses += 1;
+      if (e.iron === true) totals.iron_losses += 1;
     }
     return { period_start: first, period_end: last, totals: totals, daily: daily };
   }

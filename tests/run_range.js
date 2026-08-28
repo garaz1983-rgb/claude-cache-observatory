@@ -13,7 +13,7 @@
  *   start/end may be null (unbounded on that side).
  *
  * Prints one JSON object on stdout:
- *   { totals, daily, events: [{date, classification}], slices, clamps, spans }
+ *   { totals, daily, events: [{date, classification, iron}], slices, clamps, spans }
  *
  * The engine's raw daily/events are echoed so the checker can recompute the
  * expected slice on its own rather than trusting the same code twice.
@@ -54,7 +54,7 @@ var out = {
   totals: result.totals,
   daily: result.daily,
   events: result.events.map(function (e) {
-    return { date: e.date, classification: e.classification };
+    return { date: e.date, classification: e.classification, iron: e.iron === true };
   }),
   max_period_days: engine.MAX_PERIOD_DAYS,
   slices: (job.ranges || []).map(function (r) {

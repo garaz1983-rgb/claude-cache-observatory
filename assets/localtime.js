@@ -343,7 +343,9 @@
       var e = events[i];
       if (!isPlainObject(e)) continue;
       var cls = e.classification;
-      if (cls !== undefined && cls !== "in_ttl" && cls !== "iron") continue;
+      // v3 (M18): the counted losses are confirmed/probable; excused events
+      // exist in the stream but are not losses and must not shade the heatmap.
+      if (cls !== "confirmed" && cls !== "probable") continue;
       var ms = eventMs(e);
       if (ms === null) continue;
       var p = partsAt(ms, offsetAt);

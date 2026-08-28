@@ -303,7 +303,7 @@ a{color:inherit}
       <summary>폴더 접근이 안 되면? CLI 스크립트의 JSON 출력 붙여넣기</summary>
       <div class="body">
         <p>로그가 있는 기기에서 <span class="mono">python scripts/check_cache_loss.py --json</span>(이 repo에 포함된 스크립트)을 실행하고, 출력 전체를 아래에 붙여넣는다. 붙여넣는 JSON에는 집계만 담긴다: 총계와 일별 카운트.</p>
-        <textarea id="pasteBox" spellcheck="false" placeholder='{"script_version": "cli-2.1", "totals": {...}, "daily": [...]}'></textarea>
+        <textarea id="pasteBox" spellcheck="false" placeholder='{"script_version": "cli-3.0", "totals": {...}, "daily": [...]}'></textarea>
         <div class="actions">
           <button id="pasteBtn" type="button">붙여넣은 JSON 렌더</button>
           <span class="hint">참고: <span class="mono">--json</span> 플래그는 이 repo 사본에 추가된 것이고, 판정 규칙은 v2.1 그대로다.</span>
@@ -316,17 +316,19 @@ a{color:inherit}
 
 <section id="results" hidden>
   <h2>2 · 내 결과</h2>
-  <p class="desc">TTL-strict 판정 v2.1: 캐시 TTL 안쪽에서 일어난 유실만 집계하고, 정당한 만료는 제외한다.</p>
+  <p class="desc">청구 모양 판정 v3: 진단이 뭐라고 말했는가가 아니라 실제로 청구된 것이 판정한다. TTL 안쪽의 재생성만 집계하고, 정당한 만료와 선언된 프롬프트 변경은 제외한다.</p>
   <div class="notice" id="pasteSrcNote" hidden>붙여넣은 CLI JSON(집계 전용)으로 렌더되어 시간대별 히트맵은 표시되지 않고, 날짜도 CLI가 자른 그대로 <b>UTC 달력 기준</b>이다. 요청 단위 정보가 없어 이 페이지가 현지 시각으로 다시 자를 수 없기 때문이다. 공유를 포함한 나머지 기능은 동일하게 동작한다.</div>
   <div class="notice" id="storeRestored" hidden></div>
 
   <div class="kpis">
     <div class="kpi"><div class="label">스캔한 요청</div><div class="val" id="kRequests">–</div></div>
-    <div class="kpi crit"><div class="label">in-TTL 유실</div><div class="val" id="kLosses">–</div><div class="note">30분(메인) / 5분(서브에이전트) 안쪽</div></div>
-    <div class="kpi crit"><div class="label">iron 유실</div><div class="val" id="kIron">–</div><div class="note">유휴 간격 5분 미만</div></div>
+    <div class="kpi crit"><div class="label">확정 유실</div><div class="val" id="kConfirmed">–</div><div class="note">TTL 안쪽에서 cache_read 0. 캐시 전체가 사라짐</div></div>
+    <div class="kpi crit"><div class="label">유력 유실</div><div class="val" id="kProbable">–</div><div class="note">프리픽스는 읽혔는데 10만+ 토큰 재생성, 변경 선언 없음</div></div>
+    <div class="kpi crit"><div class="label">iron 유실</div><div class="val" id="kIron">–</div><div class="note">집계된 유실 중 유휴 5분 미만</div></div>
     <div class="kpi crit"><div class="label">재과금 토큰</div><div class="val" id="kTokens">–</div><div class="note">다시 과금된 캐시 생성 토큰</div></div>
     <div class="kpi"><div class="label">유실률</div><div class="val" id="kRate">–</div><div class="note">in-TTL 유실 / 요청</div></div>
   </div>
+  <p class="tz-note" id="judgeNote" hidden></p>
   <p class="tz-note" id="tzNote"></p>
 
   <!-- 탐지기 상태 (M15). 이 패널이 한정하는 수치 바로 아래에 둔다. 페이지가
@@ -364,12 +366,15 @@ a{color:inherit}
   </section>
 
   <details class="criteria">
-    <summary>유실 판정 기준 (TTL-strict, v2.1)</summary>
+    <summary>유실 판정 기준 (청구 모양, v3)</summary>
     <div class="body">
       <ul>
-        <li><b>후보</b>: 서버가 직접 <span class="mono">message.diagnostics.cache_miss_reason = previous_message_not_found</span>를 찍은 레코드만. 추정은 없다.</li>
-        <li><b>in-TTL 유실</b>: 같은 세션 파일에서 직전 요청과의 유휴 간격이 <b>30분 미만</b>(메인 세션) / <b>5분 미만</b>(서브에이전트)일 때. 그보다 길면 정당한 TTL 만료로 보고 집계하지 <b>않는다</b>.</li>
-        <li><b>iron 유실</b>: 유휴 간격 <b>5분 미만</b>. 공표된 어떤 TTL로도 캐시가 만료됐을 수 없다.</li>
+        <li><b>무엇이 판정하나</b>: 각 요청의 청구 필드 <span class="mono">cache_read_input_tokens</span>와 <span class="mono">cache_creation_input_tokens</span>. 청구 그 자체라 누락도 오표기도 없다. 서버의 <span class="mono">cache_miss_reason</span> 주석은 캐시가 아니라 <i>진단 기능</i>의 상태를 말한다(Anthropic 지원 답변, 2026-08: <span class="mono">previous_message_not_found</span>는 "비교하지 못했다"는 뜻). 그래서 유실을 세는 데 어떤 사유 이름도 필요하지 않다.</li>
+        <li><b>확정 유실</b>: 같은 세션 파일에서 직전 요청과의 유휴 간격이 <b>30분 미만</b>(메인) / <b>5분 미만</b>(서브에이전트)이고, <span class="mono">cache_read</span>가 <b>0</b>인데 캐시를 새로 썼다. 몇 분 전에 쓰던 캐시 전체가 사라진 것이다.</li>
+        <li><b>유력 유실</b>: 같은 간격 조건에서 프리픽스는 읽혔는데, 선언된 변경 없이 <b>10만 토큰 이상</b>을 재생성했다. 전체 요청의 쓰기 중앙값은 약 1,500토큰, 99퍼센타일이 약 84,000토큰이라 이 모양은 정상 분포 밖이다.</li>
+        <li><b>설명된 재생성</b> (집계 안 함): 위 모양인데 사유가 프롬프트가 실제로 바뀌었다고 선언한 경우(<span class="mono">messages/model/system/tools_changed</span>). 재생성이 올바른 동작이다. <b>모르는</b> 사유 이름은 면책이 아니다. 서버가 새 이름을 만들어도 판정은 계속 동작하고, 그 이름은 아래 인구조사에 뜬다.</li>
+        <li><b>iron 유실</b>: 집계된 유실 중 유휴 간격 <b>5분 미만</b>. 공표된 어떤 TTL로도 캐시가 만료됐을 수 없다.</li>
+        <li><b>v2.1 계열</b>: 옛 사유 기반 집계(<span class="mono">previous_message_not_found</span> + TTL 안쪽 간격)도 계속 계산해 함께 보여준다. 몇 달간 실제 악화를 추적한 시계열이고, 헤드라인 자리만 내려온 것이다.</li>
         <li><b>중복 제거</b>: <span class="mono">requestId</span>당 1건. 같은 요청의 후속 레코드는 빠진 사유를 보강하는 데만 쓴다.</li>
         <li><b>비용</b>: 유실 1건의 재과금 비용 = 그 요청의 <span class="mono">cache_creation_input_tokens</span>.</li>
       </ul>
@@ -659,8 +664,9 @@ function setScanProgress(done, total, st){
     fmtInt(done) + " / " + fmtInt(total) + " 파일";
   document.getElementById("progReq").textContent = fmtInt(st.requests) + " 요청";
   var loss = document.getElementById("progLoss");
-  loss.textContent = "in-TTL 유실 " + fmtInt(st.in_ttl_losses) + "건";
-  loss.className = st.in_ttl_losses > 0 ? "prog-loss hit" : "prog-loss";
+  var stLosses = st.confirmed_losses + st.probable_losses;
+  loss.textContent = "유실 " + fmtInt(stLosses) + "건";
+  loss.className = stLosses > 0 ? "prog-loss hit" : "prog-loss";
   document.getElementById("progMsg").textContent = "";
 }
 function showError(msg){
@@ -801,7 +807,7 @@ function validateDetector(v, errs){
   if(out.reasons && out.unknown_reasons !== undefined){
     var unknown = 0;
     Object.keys(out.reasons).forEach(function(k){
-      if(k !== "previous_message_not_found") unknown += out.reasons[k];
+      if(KNOWN_REASONS.indexOf(k) === -1) unknown += out.reasons[k];
     });
     if(unknown !== out.unknown_reasons){
       errs.push("detector.unknown_reasons " + out.unknown_reasons +
@@ -828,25 +834,27 @@ function validateCliJson(text){
     t = null;
   } else {
     Object.keys(t).forEach(function(k){
-      if(["requests", "in_ttl_losses", "iron_losses", "wasted_tokens"].indexOf(k) === -1) errs.push("정의되지 않은 필드: totals." + k);
+      if(["requests", "confirmed_losses", "probable_losses", "iron_losses", "wasted_tokens", "pmnf_losses"].indexOf(k) === -1) errs.push("정의되지 않은 필드: totals." + k);
     });
-    ["requests", "in_ttl_losses", "iron_losses", "wasted_tokens"].forEach(function(k){
+    ["requests", "confirmed_losses", "probable_losses", "iron_losses", "wasted_tokens", "pmnf_losses"].forEach(function(k){
       if(!isCountInt(t[k])) errs.push("totals." + k + ": 0 이상의 정수여야 한다");
     });
-    if(isCountInt(t.requests) && isCountInt(t.in_ttl_losses) && t.in_ttl_losses > t.requests) errs.push("totals.in_ttl_losses가 totals.requests를 초과한다");
-    if(isCountInt(t.in_ttl_losses) && isCountInt(t.iron_losses) && t.iron_losses > t.in_ttl_losses) errs.push("totals.iron_losses가 totals.in_ttl_losses를 초과한다");
+    var tLosses = isCountInt(t.confirmed_losses) && isCountInt(t.probable_losses) ? t.confirmed_losses + t.probable_losses : null;
+    if(isCountInt(t.requests) && tLosses !== null && tLosses > t.requests) errs.push("totals confirmed+probable이 totals.requests를 초과한다");
+    if(tLosses !== null && isCountInt(t.iron_losses) && t.iron_losses > tLosses) errs.push("totals.iron_losses가 confirmed+probable을 초과한다");
+    if(isCountInt(t.requests) && isCountInt(t.pmnf_losses) && t.pmnf_losses > t.requests) errs.push("totals.pmnf_losses가 totals.requests를 초과한다");
   }
   var d = o.daily;
   if(!Array.isArray(d) || d.length === 0){
     errs.push("daily: 비어 있지 않은 배열이어야 한다");
   } else {
-    var sums = { requests: 0, losses: 0, wasted_tokens: 0 };
+    var sums = { requests: 0, losses: 0, pmnf: 0, wasted_tokens: 0 };
     var seenDates = {};
     var prevDate = "";
     d.forEach(function(e, i){
       if(!isObj(e)){ errs.push("daily[" + i + "]: 객체여야 한다"); return; }
       Object.keys(e).forEach(function(k){
-        if(["date", "requests", "losses", "wasted_tokens"].indexOf(k) === -1) errs.push("정의되지 않은 필드: daily[" + i + "]." + k);
+        if(["date", "requests", "losses", "pmnf", "wasted_tokens"].indexOf(k) === -1) errs.push("정의되지 않은 필드: daily[" + i + "]." + k);
       });
       if(typeof e.date !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(e.date)){
         errs.push("daily[" + i + "].date: YYYY-MM-DD 형식이어야 한다");
@@ -856,7 +864,7 @@ function validateCliJson(text){
         if(e.date < prevDate) errs.push("daily[" + i + "].date: 오름차순이 아니다");
         prevDate = e.date;
       }
-      ["requests", "losses", "wasted_tokens"].forEach(function(k){
+      ["requests", "losses", "pmnf", "wasted_tokens"].forEach(function(k){
         if(!isCountInt(e[k])) errs.push("daily[" + i + "]." + k + ": 0 이상의 정수여야 한다");
         else sums[k] += e[k];
       });
@@ -864,22 +872,24 @@ function validateCliJson(text){
     });
     if(t){
       if(isCountInt(t.requests) && sums.requests !== t.requests) errs.push("daily requests 합 " + sums.requests + " != totals.requests " + t.requests);
-      if(isCountInt(t.in_ttl_losses) && sums.losses !== t.in_ttl_losses) errs.push("daily losses 합 " + sums.losses + " != totals.in_ttl_losses " + t.in_ttl_losses);
+      var tl = t.confirmed_losses + t.probable_losses;
+      if(isCountInt(t.confirmed_losses) && isCountInt(t.probable_losses) && sums.losses !== tl) errs.push("daily losses 합 " + sums.losses + " != totals confirmed+probable " + tl);
+      if(isCountInt(t.pmnf_losses) && sums.pmnf !== t.pmnf_losses) errs.push("daily pmnf 합 " + sums.pmnf + " != totals.pmnf_losses " + t.pmnf_losses);
       if(isCountInt(t.wasted_tokens) && sums.wasted_tokens !== t.wasted_tokens) errs.push("daily wasted_tokens 합 " + sums.wasted_tokens + " != totals.wasted_tokens " + t.wasted_tokens);
     }
   }
   var sv = o.script_version;
   if(sv !== undefined && (typeof sv !== "string" || sv.length === 0 || sv.length > 32 || !/^[A-Za-z0-9._-]+$/.test(sv))){
-    errs.push("script_version: cli-2.1 같은 짧은 태그여야 한다");
+    errs.push("script_version: cli-3.0 같은 짧은 태그여야 한다");
   }
   var det = validateDetector(o.detector, errs);
   if(errs.length) return { errors: errs };
   return {
     errors: [],
-    version: typeof sv === "string" ? sv : "cli-2.1",
+    version: typeof sv === "string" ? sv : "cli-3.0",
     result: {
-      totals: { requests: t.requests, in_ttl_losses: t.in_ttl_losses, iron_losses: t.iron_losses, wasted_tokens: t.wasted_tokens },
-      daily: d.map(function(e){ return { date: e.date, requests: e.requests, losses: e.losses, wasted_tokens: e.wasted_tokens }; }),
+      totals: { requests: t.requests, confirmed_losses: t.confirmed_losses, probable_losses: t.probable_losses, iron_losses: t.iron_losses, wasted_tokens: t.wasted_tokens, pmnf_losses: t.pmnf_losses },
+      daily: d.map(function(e){ return { date: e.date, requests: e.requests, losses: e.losses, pmnf: e.pmnf, wasted_tokens: e.wasted_tokens }; }),
       events: [],
       detector: det
     }
@@ -1064,6 +1074,8 @@ function updateHeatmapNote(){
    붙여넣기 경로에서 한 번 더 검사하지만, 그래도 출처는 디스크의 파일이다.
    로그 파일에서 나온 값이 마크업으로 DOM에 들어가는 일은 없어야 한다. */
 var PMNF = "previous_message_not_found";
+/* assets/parse.js의 KNOWN_REASONS 미러. 인구조사 전용, 판정에는 안 쓴다. */
+var KNOWN_REASONS = [PMNF, "messages_changed", "model_changed", "system_changed", "tools_changed", "unavailable"];
 
 function censusTable(title, obj, alienTest){
   var wrap = document.createElement("div");
@@ -1122,12 +1134,12 @@ function renderDetector(){
   var reasons = isObj(d.reasons) ? d.reasons : {};
 
   if(d.unknown_reasons > 0){
-    box.className = "det bad";
-    title.textContent = "서버가 이 페이지는 모르는 사유값을 찍고 있다";
-    lead.textContent = "위에서 센 유실은 전부 " + PMNF + " 하나만 보고 판정한 것이다. " +
-      "이 스캔에는 다른 사유값을 단 요청이 " + fmtInt(d.unknown_reasons) + "건 있고, " +
-      "그 " + fmtInt(d.unknown_reasons) + "건은 무엇이었든 판정 자체가 되지 않고 통째로 " +
-      "건너뛰어졌다. 위 수치는 총계가 아니라 하한으로 읽어야 한다. 못 알아본 사유값은 " +
+    box.className = "det warn";
+    title.textContent = "서버가 이 페이지가 처음 보는 사유 이름을 찍고 있다";
+    lead.textContent = "판정은 청구 필드로 하므로 낯선 이름이 유실을 숨기지는 못한다. " +
+      "숨길 수 있는 건 면책이다. 이 새 이름이 정당한 프롬프트 변경 선언이라면, 그 이름을 " +
+      "단 " + fmtInt(d.unknown_reasons) + "건의 재생성은 면책되는 대신 유실로 집계됐다. " +
+      "위 수치를 그 " + fmtInt(d.unknown_reasons) + "건에 한해 상한으로 읽고, 이름을 " +
       "이슈 스레드에 알려 달라.";
   } else if(d.diagnosed_requests === 0 && t.requests > 0){
     box.className = "det warn";
@@ -1138,13 +1150,14 @@ function renderDetector(){
       "요청이 " + fmtInt(d.cold_writes) + "건이다.";
   } else {
     box.className = "det ok";
-    title.textContent = "탐지기 상태: 이 페이지가 아는 사유값만 나타났다";
+    title.textContent = "탐지기 상태: 이 스캔의 사유 이름은 전부 아는 것들이다";
     lead.textContent = "진단이 붙은 요청 " + fmtInt(d.diagnosed_requests) + "건이 전부 " +
-      PMNF + "다. 이름을 못 알아봐서 건너뛴 건은 없다.";
+      "아는 이름(진단 상태 주석 또는 변경 선언 면책 4종)이다. 아는 면책이 덮었어야 할 " +
+      "재생성이 유실로 집계된 일은 없다.";
   }
 
   grid.appendChild(censusTable("관측된 cache_miss_reason 값", reasons, function(k){
-    return k !== PMNF;
+    return KNOWN_REASONS.indexOf(k) === -1;
   }));
   grid.appendChild(censusTable("이 스캔의 클라이언트 버전", isObj(d.versions) ? d.versions : {}, null));
 
@@ -1169,10 +1182,20 @@ function renderResults(){
   rebuildView();
   var t = LAST.result.totals;
   document.getElementById("kRequests").textContent = fmtInt(t.requests);
-  document.getElementById("kLosses").textContent = fmtInt(t.in_ttl_losses);
+  var kl = t.confirmed_losses + t.probable_losses;
+  document.getElementById("kConfirmed").textContent = fmtInt(t.confirmed_losses);
+  document.getElementById("kProbable").textContent = fmtInt(t.probable_losses);
   document.getElementById("kIron").textContent = fmtInt(t.iron_losses);
+  var jn = document.getElementById("judgeNote");
+  if(jn){
+    var bits = [];
+    if(typeof t.excused_rebuilds === "number" && t.excused_rebuilds > 0) bits.push("설명된 재생성 " + fmtInt(t.excused_rebuilds) + "건 제외(사유가 프롬프트 변경을 선언: messages/model/system/tools)");
+    if(typeof t.pmnf_losses === "number") bits.push("v2.1 기준(PMNF, 연속 시계열): " + fmtInt(t.pmnf_losses) + "건");
+    jn.hidden = bits.length === 0;
+    jn.textContent = bits.join(" · ");
+  }
   document.getElementById("kTokens").textContent = fmtTok(t.wasted_tokens);
-  document.getElementById("kRate").textContent = t.requests > 0 ? (100 * t.in_ttl_losses / t.requests).toFixed(2) + "%" : "–";
+  document.getElementById("kRate").textContent = t.requests > 0 ? (100 * kl / t.requests).toFixed(2) + "%" : "–";
   updateTzNote();
   renderDetector();
   drawCharts();
@@ -1285,12 +1308,15 @@ function buildSubmitPayload(){
       period_end: r.daily[r.daily.length - 1].date,
       totals: {
         requests: r.totals.requests,
-        in_ttl_losses: r.totals.in_ttl_losses,
+        confirmed_losses: r.totals.confirmed_losses,
+        probable_losses: r.totals.probable_losses,
         iron_losses: r.totals.iron_losses,
-        wasted_tokens: r.totals.wasted_tokens
+        wasted_tokens: r.totals.wasted_tokens,
+        pmnf_losses: r.totals.pmnf_losses
       },
       daily: r.daily.map(function(d){
-        return { date: d.date, requests: d.requests, losses: d.losses, wasted_tokens: d.wasted_tokens };
+        return { date: d.date, requests: d.requests, losses: d.losses,
+                 pmnf: d.pmnf, wasted_tokens: d.wasted_tokens };
       })
     };
   }
@@ -1769,7 +1795,7 @@ function updateStoreCard(){
     parts.push("저장된 진단 " + runs.length + "건 · 마지막 저장 " + fmtWhen(lastRun.saved_at) +
       " (기간 " + lastRun.period_start + " ~ " + lastRun.period_end + ", 요청 " +
       fmtInt(lastRun.totals.requests) + "건, in-TTL 유실 " +
-      fmtInt(lastRun.totals.in_ttl_losses) + "건)");
+      fmtInt(lastRun.totals.confirmed_losses + lastRun.totals.probable_losses) + "건)");
   }
   if(subs.length){
     var lastSub = subs[subs.length - 1];

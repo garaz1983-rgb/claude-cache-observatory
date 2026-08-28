@@ -132,18 +132,22 @@ MUTATIONS = [
     ("M05_ttl_branch_swap", PARSE_JS_REL,
      "isSub ? SUBAGENT_TTL_SECONDS : MAIN_TTL_SECONDS",
      "isSub ? MAIN_TTL_SECONDS : SUBAGENT_TTL_SECONDS", "parity"),
+    # v3: the TTL gate is one guard line; widening it by one instant lets a
+    # request AT the boundary (fixture a8, gap exactly 1800s) be counted.
     ("M06_in_ttl_boundary_lte", PARSE_JS_REL,
-     "var inTtl = gap < ttlSeconds;",
-     "var inTtl = gap <= ttlSeconds;", "parity"),
+     "if (gap === null || gap >= ttlSeconds) continue;",
+     "if (gap === null || gap > ttlSeconds) continue;", "parity"),
     ("M07_iron_boundary_lte", PARSE_JS_REL,
-     "if (gap < IRON_SECONDS) {",
-     "if (gap <= IRON_SECONDS) {", "parity"),
+     "var iron = gap < IRON_SECONDS;",
+     "var iron = gap <= IRON_SECONDS;", "parity"),
     ("M08_pmnf_string_changed", PARSE_JS_REL,
      '"previous_message_not_found"',
      '"previous_message_not_found_x"', "parity"),
+    # v3: PMNF no longer gates judgment; the line that still reads it is the
+    # legacy series, and inverting it makes pmnf count everything BUT PMNF.
     ("M09_pmnf_check_inverted", PARSE_JS_REL,
-     "if (r.rtype !== PMNF_REASON) continue;",
-     "if (r.rtype === PMNF_REASON) continue;", "parity"),
+     "if (r.rtype === PMNF_REASON && gap !== null && gap < ttlSeconds) {",
+     "if (r.rtype !== PMNF_REASON && gap !== null && gap < ttlSeconds) {", "parity"),
     ("M10_backfill_disabled", PARSE_JS_REL,
      "if (prev && prev.rtype === null && rtype) {",
      "if (false && prev && rtype) {", "parity"),
@@ -165,8 +169,8 @@ MUTATIONS = [
 
     # -- functions/api/submit.js: validation branches (submit contract) -----
     ("S16_losses_le_requests_flipped", SUBMIT_JS_REL,
-     "if (t.in_ttl_losses > t.requests) {",
-     "if (t.in_ttl_losses < t.requests) {", "contract"),
+     "if (losses > t.requests) {",
+     "if (losses < t.requests) {", "contract"),
     ("S17_period_span_widened", SUBMIT_JS_REL,
      "if (spanDays > MAX_PERIOD_DAYS) {",
      "if (spanDays > MAX_PERIOD_DAYS + 1) {", "contract"),
@@ -527,7 +531,7 @@ MUTATIONS = [
      "          if (r.rtype === PMNF_REASON) censusAdd(reasonCensus, r.rtype, false);",
      "parity"),
     ("D02_unknown_counter_dead", PARSE_JS_REL,
-     "          if (r.rtype !== PMNF_REASON) detector.unknown_reasons += 1;",
+     "          if (KNOWN_REASONS.indexOf(r.rtype) === -1) detector.unknown_reasons += 1;",
      "          if (false) detector.unknown_reasons += 1;", "parity"),
     ("D03_cold_write_ignores_the_read", PARSE_JS_REL,
      "        if (r.cc > 0 && r.cr === 0) detector.cold_writes += 1;",
@@ -552,8 +556,8 @@ MUTATIONS = [
      'CENSUS_KEY_RE = re.compile(r"^[A-Za-z0-9._-]{1,64}$")',
      'CENSUS_KEY_RE = re.compile(r"^.{1,64}$")', "parity"),
     ("D09_cli_missing_version_not_counted", CLI_PY_REL,
-     "        census_add(version_census, ver, True)",
-     "        census_add(version_census, ver, False)", "parity"),
+     "        census_add(version_census, meta.get(rid), True)",
+     "        census_add(version_census, meta.get(rid), False)", "parity"),
 
     # -- M15: the published vocabulary. These strings are the only part of the
     # public dataset that begins as free text on a stranger's disk, so the
@@ -623,6 +627,47 @@ MUTATIONS = [
      '  try{ return window.localStorage.getItem(AUTOSAVE_KEY) !== "off"; }',
      '  try{ return window.localStorage.getItem(AUTOSAVE_KEY) === "on"; }',
      "localtime"),
+    # -- M18: billing-shape judgment (v3). Each of these is one way the new
+    # rules could quietly stop meaning what the methodology page says they
+    # mean. All are killed by hand-computed expectations over fixtures_v3 (or
+    # the hostile/contract fixtures), never by mere engine agreement.
+    ("V01_threshold_lowered", PARSE_JS_REL,
+     "  var PROBABLE_CC_MIN = 100000;",
+     "  var PROBABLE_CC_MIN = 99999;", "parity"),
+    ("V02_threshold_raised", PARSE_JS_REL,
+     "  var PROBABLE_CC_MIN = 100000;",
+     "  var PROBABLE_CC_MIN = 100001;", "parity"),
+    # "confirmed" without cc>0 would count a coerced-to-0 hostile write.
+    ("V03_confirmed_ignores_cc", PARSE_JS_REL,
+     "        var lossShape = (r.cr === 0 && r.cc > 0) ||",
+     "        var lossShape = (r.cr === 0) ||", "parity"),
+    ("V04_excuse_list_shrunk", PARSE_JS_REL,
+     '''  var EXCUSED_REASONS = ["messages_changed", "model_changed",
+                         "system_changed", "tools_changed"];''',
+     '''  var EXCUSED_REASONS = ["messages_changed", "model_changed",
+                         "system_changed"];''', "parity"),
+    # The inverse failure: ANY named reason excuses, and a server that invents
+    # a name silently empties the count — exactly what v3 exists to prevent.
+    ("V05_any_name_excuses", PARSE_JS_REL,
+     "        if (EXCUSED_REASONS.indexOf(r.rtype) !== -1) {",
+     "        if (r.rtype !== null && r.rtype !== PMNF_REASON) {", "parity"),
+    ("V06_tier_swapped", PARSE_JS_REL,
+     'var tier = r.cr === 0 ? "confirmed" : "probable";',
+     'var tier = r.cr === 0 ? "probable" : "confirmed";', "parity"),
+    ("V07_legacy_series_dead", PARSE_JS_REL,
+     '''          totals.pmnf_losses += 1;
+          day.pmnf += 1;''',
+     '''          void 0;
+          void 0;''', "parity"),
+    ("V08_excuses_never_fire", PARSE_JS_REL,
+     "          totals.excused_rebuilds += 1;",
+     "          totals.excused_rebuilds += 1; /*fallthrough*/ } if (false) {", "parity"),
+    ("V09_fleet_pmnf_dropped", SUBMIT_JS_REL,
+     "    cur.pmnf += r.pmnf;",
+     "    cur.pmnf += 0;", "contract"),
+    ("V10_pmnf_sum_unchecked", SUBMIT_JS_REL,
+     "  if (sumPmnf !== t.pmnf_losses) {",
+     "  if (false) {", "contract"),
 ]
 
 

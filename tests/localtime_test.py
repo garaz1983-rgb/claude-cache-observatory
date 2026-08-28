@@ -106,16 +106,22 @@ NODE_FALLBACKS = [
 # tests/fixtures_tz, as the engines bucket it: this is what the submission
 # payload carries, and it must not move no matter what the screen shows.
 TZ_UTC_DAILY = [
-    {"date": "2026-08-23", "requests": 2, "losses": 1, "wasted_tokens": 86300},
-    {"date": "2026-08-24", "requests": 2, "losses": 1, "wasted_tokens": 91700},
-    {"date": "2026-08-25", "requests": 2, "losses": 1, "wasted_tokens": 40000},
+    {"date": "2026-08-23", "requests": 2, "losses": 1, "pmnf": 1, "wasted_tokens": 86300},
+    {"date": "2026-08-24", "requests": 2, "losses": 1, "pmnf": 1, "wasted_tokens": 91700},
+    {"date": "2026-08-25", "requests": 2, "losses": 1, "pmnf": 1, "wasted_tokens": 40000},
 ]
-TZ_TOTALS = {"requests": 6, "in_ttl_losses": 3, "iron_losses": 0,
-             "wasted_tokens": 218000}
+# v3: the same three events, now counted as confirmed (cr == 0), and the
+# v2.1 series counts them too (they are PMNF with short gaps) — coexistence.
+TZ_TOTALS = {"requests": 6, "confirmed_losses": 3, "probable_losses": 0,
+             "iron_losses": 0, "wasted_tokens": 218000, "pmnf_losses": 3,
+             "excused_rebuilds": 0}
 
 # The same six records read on three different clocks.
 TZ_LOCAL_DAILY = {
-    0: TZ_UTC_DAILY,
+    # Offset 0 keeps the same days; the VIEW rows are rebuilt by localtime.js
+    # and carry only what the charts draw, so no `pmnf` here (the continuity
+    # series is drawn from the UTC rows, which do carry it).
+    0: [{k: v for k, v in row.items() if k != "pmnf"} for row in TZ_UTC_DAILY],
     # Seoul: the 23:12Z loss is a morning loss, and the 15:03Z one has already
     # crossed into the next day while its own UTC day is still running.
     540: [
@@ -163,16 +169,21 @@ EXPECTED_LABELS = {
 # Two requests inside one UTC hour (the second an in-TTL loss of 50,000 tokens,
 # the pair the defect was measured on), then a second pair stamped in its own
 # +05:30 offset rather than as "...Z".
-SUBHOUR_TOTALS = {"requests": 4, "in_ttl_losses": 2, "iron_losses": 0,
-                  "wasted_tokens": 57000}
+SUBHOUR_TOTALS = {"requests": 4, "confirmed_losses": 2, "probable_losses": 0,
+                  "iron_losses": 0, "wasted_tokens": 57000, "pmnf_losses": 2,
+                  "excused_rebuilds": 0}
 SUBHOUR_UTC_DAILY = [
-    {"date": "2026-08-23", "requests": 2, "losses": 1, "wasted_tokens": 50000},
-    {"date": "2026-08-24", "requests": 2, "losses": 1, "wasted_tokens": 7000},
+    {"date": "2026-08-23", "requests": 2, "losses": 1, "pmnf": 1, "wasted_tokens": 50000},
+    {"date": "2026-08-24", "requests": 2, "losses": 1, "pmnf": 1, "wasted_tokens": 7000},
 ]
+# View rows are rebuilt by localtime.js and carry only what the charts draw —
+# no `pmnf` (same reasoning as TZ_LOCAL_DAILY[0]).
+SUBHOUR_VIEW_DAILY = [{k: v for k, v in row.items() if k != "pmnf"}
+                     for row in SUBHOUR_UTC_DAILY]
 SUBHOUR_LOCAL_DAILY = {
-    0: SUBHOUR_UTC_DAILY,
-    330: SUBHOUR_UTC_DAILY,
-    345: SUBHOUR_UTC_DAILY,
+    0: SUBHOUR_VIEW_DAILY,
+    330: SUBHOUR_VIEW_DAILY,
+    345: SUBHOUR_VIEW_DAILY,
     540: [{"date": "2026-08-24", "requests": 4, "losses": 2, "wasted_tokens": 57000}],
 }
 # (offset, local date, local hour, requests in that cell, losses in that cell).
@@ -313,11 +324,14 @@ def sum_daily(rows, key):
 def check_sums(tag, data):
     """Invariant 1, on one fixture set: nothing is created, dropped or split."""
     totals = data["totals"]
+    losses = totals["confirmed_losses"] + totals["probable_losses"]
     utc = data["utc_daily"]
     check(sum_daily(utc, "requests") == totals["requests"],
           "%s: engine daily requests != totals" % tag)
-    check(sum_daily(utc, "losses") == totals["in_ttl_losses"],
-          "%s: engine daily losses != totals" % tag)
+    check(sum_daily(utc, "losses") == losses,
+          "%s: engine daily losses != confirmed+probable" % tag)
+    check(sum_daily(utc, "pmnf") == totals["pmnf_losses"],
+          "%s: engine daily pmnf != totals.pmnf_losses" % tag)
     check(sum_daily(utc, "wasted_tokens") == totals["wasted_tokens"],
           "%s: engine daily wasted_tokens != totals" % tag)
     for off, view in sorted(data["views"].items(), key=lambda kv: int(kv[0])):
@@ -325,18 +339,18 @@ def check_sums(tag, data):
         check(s["requests"] == totals["requests"],
               "%s off=%s: local requests %d != totals %d"
               % (tag, off, s["requests"], totals["requests"]))
-        check(s["losses"] == totals["in_ttl_losses"],
+        check(s["losses"] == losses,
               "%s off=%s: local losses %d != totals %d"
-              % (tag, off, s["losses"], totals["in_ttl_losses"]))
+              % (tag, off, s["losses"], losses))
         check(s["wasted_tokens"] == totals["wasted_tokens"],
               "%s off=%s: local wasted_tokens %d != totals %d"
               % (tag, off, s["wasted_tokens"], totals["wasted_tokens"]))
         check(view["census_total"] == totals["requests"],
               "%s off=%s: local census total %r != totals.requests %d"
               % (tag, off, view["census_total"], totals["requests"]))
-        check(len(view["events"]) == totals["in_ttl_losses"],
+        check(len(view["events"]) == losses,
               "%s off=%s: %d localised events for %d losses"
-              % (tag, off, len(view["events"]), totals["in_ttl_losses"]))
+              % (tag, off, len(view["events"]), losses))
         dates = [r["date"] for r in view["daily"]]
         check(dates == sorted(dates) and len(set(dates)) == len(dates),
               "%s off=%s: local daily dates not sorted/unique: %r" % (tag, off, dates))
@@ -549,7 +563,8 @@ def check_payload(tag, data, discriminating):
     localises to the same rows), but at least one must, or the guard would pass
     while guarding nothing — main() asserts that separately.
     """
-    utc_daily = [{k: d[k] for k in ("date", "requests", "losses", "wasted_tokens")}
+    utc_daily = [{k: d[k] for k in ("date", "requests", "losses", "pmnf",
+                               "wasted_tokens")}
                  for d in data["utc_daily"]]
     first, last = utc_daily[0]["date"], utc_daily[-1]["date"]
     for page in PAGES:
@@ -567,9 +582,12 @@ def check_payload(tag, data, discriminating):
                   "%s %s (%s): payload period %s..%s, engine %s..%s, screen %r"
                   % (tag, page, path, pay["period_start"], pay["period_end"],
                      first, last, got["view_period"]))
-            check(pay["totals"]["requests"] == data["totals"]["requests"] and
-                  pay["totals"]["in_ttl_losses"] == data["totals"]["in_ttl_losses"] and
-                  pay["totals"]["wasted_tokens"] == data["totals"]["wasted_tokens"],
+            t = data["totals"]
+            check(pay["totals"]["requests"] == t["requests"] and
+                  pay["totals"]["confirmed_losses"] == t["confirmed_losses"] and
+                  pay["totals"]["probable_losses"] == t["probable_losses"] and
+                  pay["totals"]["pmnf_losses"] == t["pmnf_losses"] and
+                  pay["totals"]["wasted_tokens"] == t["wasted_tokens"],
                   "%s %s (%s): payload totals %r != engine totals %r"
                   % (tag, page, path, pay["totals"], data["totals"]))
             # M13: the fingerprint has to leave with the payload. Nothing
@@ -686,7 +704,8 @@ def check_host(data):
     totals = data["totals"]
     check(host["view"]["sums"]["requests"] == totals["requests"],
           "host view lost requests")
-    check(host["view"]["sums"]["losses"] == totals["in_ttl_losses"],
+    check(host["view"]["sums"]["losses"]
+          == totals["confirmed_losses"] + totals["probable_losses"],
           "host view lost losses")
     check(host["view"]["census_total"] == totals["requests"],
           "host view lost census requests")
