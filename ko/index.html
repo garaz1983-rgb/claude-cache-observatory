@@ -420,7 +420,7 @@ a{color:inherit}
 
 <section id="secPreview">
   <h2>진단하면 이런 걸 본다 <span class="badge real h2-badge">운영자 기계 실측</span></h2>
-  <p class="desc">내 로그로 진단을 돌리면 돌아오는 화면이 이 모양이다. 아래 테두리 안의 숫자는 지어낸 값이 아니라 <b>운영자 기계 1대의 실측</b>이다(<span id="pvPeriod">기간은 데이터 파일이 말한다</span>). fleet 집계가 아니라 한 대짜리라서 테두리를 둘렀다. 만든 방법은 <span class="mono">scripts/build_preview.js</span>에 있고, 결과 파일은 <span class="mono">assets/preview.js</span>다.</p>
+  <p class="desc">내 로그로 진단을 돌리면 돌아오는 화면이 이 모양이다. 아래 테두리 안의 숫자는 지어낸 값이 아니라 <b>운영자 기계 1대의 실측</b>이다(<span id="pvPeriod">기간은 데이터 파일이 말한다</span>). fleet 집계가 아니라 한 대짜리라서 테두리를 둘렀다. 아래 fleet 섹션과 숫자가 다른 이유는 창이 달라서다. 이 블록은 진단 페이지의 기본 제출 창(최근 92일)이고, fleet 행은 그 기계가 보고한 전체 기간의 합산이다. 만든 방법은 <span class="mono">scripts/build_preview.js</span>에 있고, 결과 파일은 <span class="mono">assets/preview.js</span>다.</p>
   <div class="demo">
     <p class="demo-note"><b>시간대가 왜 여기만 보이나:</b> 제출 스키마에는 일별 집계만 있고 시간대 항목이 아예 없다. 제출만으로 언제 일하는지가 드러나지 않도록 일부러 뺐고, 그 결정은 그대로다. 이 화면의 시간대는 <b>운영자가 자기 기계 것을 스스로 공개한 것</b>이지 누구에게서 걷은 값이 아니다. 제출하는 사람의 시간대는 애초에 수집되지 않는다. requestId와 로그 파일 경로는 이 파일에 없다. 생성기가 그 둘이 들어간 파일은 쓰지 않고 중단한다.</p>
     <div class="kpis">
