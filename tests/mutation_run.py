@@ -361,9 +361,13 @@ MUTATIONS = [
     # away: no daily rows, no merge. Merging against rows that failed to load
     # recomputes the row's totals from the incoming submission alone and
     # deletes that machine's history from a public file.
+    # previousDetail is a const, so the tolerant-assignment form of this mutant
+    # no longer BUILDS (it took the whole gate down as an infra failure). The
+    # dead-guard form expresses the same defect - a missing history flows on -
+    # and stays valid code.
     ("S57_merge_without_history", SUBMIT_JS_REL,
      "      if (previousDetail === null) return { ok: false };",
-     "      if (previousDetail === null) previousDetail = { daily: [], hourly: null };", "contract"),
+     "      if (false) return { ok: false };", "contract"),
     ("S58_detail_totals_zeroed", SUBMIT_JS_REL,
      "    totals: fields.totals,",
      "    totals: { requests: 0, in_ttl_losses: 0, iron_losses: 0, wasted_tokens: 0 },",
