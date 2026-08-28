@@ -3,7 +3,7 @@
   "id": "sub-20260827051712-9265",
   "period_start": "2026-04-11",
   "period_end": "2026-08-28",
-  "totals": {"requests": 238095, "confirmed_losses": 92, "probable_losses": 322, "iron_losses": 327, "wasted_tokens": 108854315, "pmnf_losses": 302},
+  "totals": {"requests": 238175, "confirmed_losses": 87, "probable_losses": 327, "iron_losses": 323, "wasted_tokens": 108854315, "pmnf_losses": 302},
   "daily": [
     {"date": "2026-04-11", "requests": 271, "losses": 0, "pmnf": 0, "wasted_tokens": 0},
     {"date": "2026-04-15", "requests": 35, "losses": 0, "pmnf": 0, "wasted_tokens": 0},
@@ -135,6 +135,6 @@
     {"date": "2026-08-25", "requests": 1862, "losses": 14, "pmnf": 16, "wasted_tokens": 4687940},
     {"date": "2026-08-26", "requests": 926, "losses": 0, "pmnf": 0, "wasted_tokens": 0},
     {"date": "2026-08-27", "requests": 4073, "losses": 10, "pmnf": 6, "wasted_tokens": 2306945},
-    {"date": "2026-08-28", "requests": 1252, "losses": 5, "pmnf": 5, "wasted_tokens": 1729954}
+    {"date": "2026-08-28", "requests": 1332, "losses": 5, "pmnf": 5, "wasted_tokens": 1729954}
   ]
 }
