@@ -27,8 +27,11 @@
  * point and the page states it: the maintainer publishes their own hours by
  * choice; a submitter's hours are never collected in the first place.
  *
- * The window matches what the check page offers by default (the most recent
- * 92 days), so the preview's totals are the totals of the rows it draws.
+ * The published asset is generated over the FULL scan (--days above the
+ * history length), so its window and totals line up with the machine's fleet
+ * row — two different numbers for the same machine on one page read as an
+ * error, whichever one is right. Any remaining gap is snapshot drift: losses
+ * that happen after generation join the fleet row at the next submission.
  *
  * Usage:
  *   node scripts/build_preview.js <logRoot> [--days 92] [--out assets/preview.js]
