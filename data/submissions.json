@@ -4,24 +4,24 @@
     {
       "id": "sub-20260827051712-9265",
       "submitted_at": "2026-08-27",
-      "updated_at": "2026-08-28",
+      "updated_at": "2026-08-29",
       "nickname": "anonymous",
       "plan": "unknown",
       "client": "unknown",
       "concurrent_sessions": "unknown",
       "period_start": "2026-04-11",
-      "period_end": "2026-08-28",
+      "period_end": "2026-08-29",
       "totals": {
-        "requests": 238175,
-        "confirmed_losses": 87,
-        "probable_losses": 327,
-        "iron_losses": 323,
-        "wasted_tokens": 108854315,
-        "pmnf_losses": 302
+        "requests": 242509,
+        "confirmed_losses": 84,
+        "probable_losses": 354,
+        "iron_losses": 301,
+        "wasted_tokens": 117639620,
+        "pmnf_losses": 336
       },
-      "daily_days": 131,
+      "daily_days": 132,
       "detail": "data/subs/sub-20260827051712-9265.json",
-      "script_version": "web-1.0",
+      "script_version": "web-2.0",
       "detector": {
         "reasons": [
           "messages_changed",

@@ -131,6 +131,7 @@
     {"date": "2026-08-25", "requests": 1862, "losses": 14, "pmnf": 16, "wasted_tokens": 4687940, "machines": 1},
     {"date": "2026-08-26", "requests": 926, "losses": 0, "pmnf": 0, "wasted_tokens": 0, "machines": 1},
     {"date": "2026-08-27", "requests": 4073, "losses": 10, "pmnf": 6, "wasted_tokens": 2306945, "machines": 1},
-    {"date": "2026-08-28", "requests": 1332, "losses": 5, "pmnf": 5, "wasted_tokens": 1729954, "machines": 1}
+    {"date": "2026-08-28", "requests": 4184, "losses": 21, "pmnf": 27, "wasted_tokens": 7867948, "machines": 1},
+    {"date": "2026-08-29", "requests": 1482, "losses": 8, "pmnf": 12, "wasted_tokens": 2647311, "machines": 1}
   ]
 }
