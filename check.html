@@ -381,6 +381,7 @@ a{color:inherit}
         <li><b>v2.1 series</b>: the old reason-based count (<span class="mono">previous_message_not_found</span> + gap under TTL) is still computed and shown for continuity. It tracked real degradation for months; it just is not the headline any more.</li>
         <li><b>Dedup</b>: one event per <span class="mono">requestId</span>; a later record of the same request may only back-fill a missing reason.</li>
         <li><b>Cost</b>: the re-billed cost of a loss is that request's <span class="mono">cache_creation_input_tokens</span>.</li>
+        <li><b>Account switching is invisible to this check.</b> Prompt caches are scoped to the organization and never shared across accounts, so the first big rewrite after logging into a different account is legitimate re-caching, not a loss. But session logs carry no account identifier, so this page cannot tell the two apart. If you rotate accounts, read <b>confirmed</b> and <b>probable</b> as upper bounds. One telltale from a rotating machine (2026-08-29): a miss whose immediately preceding message is your own "continue where we left off" phrase, typed right after a re-login — on that machine 18% of counted losses matched this pattern.</li>
       </ul>
     </div>
   </details>
